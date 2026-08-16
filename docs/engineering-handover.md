@@ -468,6 +468,9 @@ Initial direction:
 - Include timeout, cancellation, and process cleanup inside the CLI rather than requiring operator scripts.
 - Do not require LLDB attachment for a successful run.
 - Make the deployment transport replaceable so a future Raspberry Pi or LAN agent can receive a development-signed IPA from the WSL or another Linux build host.
+- Keep a native in-process USB transport as deferred, non-blocking work. It is not a
+  prerequisite for Gate 4 or Gate 5 while the qualified external transport remains the
+  supported path.
 
 The current WSL host is on the same physical LAN as the iPhone and uses WSL mirrored
 networking, making it a better wireless test environment than a public VPS.
@@ -1267,6 +1270,31 @@ Required recurring integration coverage:
 - Minimum entitlement and capability set included in version 1.
 - Whether the initial WSL x86_64 environment becomes a supported production host or remains a proof environment alongside a future native Linux host.
 - Whether build and release environments are persistent or created ephemerally.
+
+## Deferred Non-Blocking Tasks
+
+### Native USB Transport
+
+Implement a native `DeviceKit` backend in the Swift CLI that can replace the external
+`usbmuxd` process for the direct USB connection path. This is intentionally deferred and
+must not block Gate 4 wireless proof or Gate 5 productization.
+
+Scope and acceptance criteria when this task is eventually promoted:
+
+- Access and claim the Apple mobile-device USB interface on supported Linux hosts.
+- Implement USB transfer framing and the usbmux v2 multiplexing protocol in-process,
+  including correct short-packet/ZLP behavior through WSL USBIP.
+- Support device discovery, connection lifecycle, cancellation, bounded diagnostics,
+  and deterministic cleanup without a stale daemon or helper process.
+- Preserve pairing records as credentials and reuse the existing replaceable
+  `DeviceInstaller`/`DeviceKit` boundary rather than coupling USB details to `run`.
+- Add protocol-level unit fixtures plus physical-device qualification for discovery,
+  lockdown connectivity, installation, disconnect/reconnect, timeout, and cancellation.
+- Demonstrate behavior equivalent to or better than the qualified external transport
+  before making it the default; retain no silent fallback between native and external
+  implementations.
+- Review licensing and provenance for any adapted libusb, usbmuxd, or libimobiledevice
+  protocol material before committing an implementation.
 
 ## Recommended Next Work
 

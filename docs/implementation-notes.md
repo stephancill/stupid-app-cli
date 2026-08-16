@@ -927,3 +927,23 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
   install, and launch lifecycle into `DeviceKit`; provision pinned and checksummed
   Python and usbmux transport dependencies; and prove three consecutive unplugged runs
   without stale helper cleanup.
+
+## 2026-08-16 - Deferred Native USB Transport Task
+
+### Decision
+
+- Added a future task for a native Swift `DeviceKit` USB backend that directly owns the
+  Apple mobile-device USB interface and usbmux v2 framing instead of requiring an
+  external `usbmuxd` process for the direct USB connection path.
+- Classified the task as explicitly non-blocking. Gate 4 may proceed with the qualified
+  pinned helper transport, and Gate 5 does not require the native backend unless a later
+  architectural decision promotes it into scope.
+- Recorded eventual acceptance criteria covering WSL USBIP packet boundaries,
+  discovery and connection lifecycle, pairing-record handling, cancellation and cleanup,
+  protocol fixtures, physical-device qualification, replaceable transport boundaries,
+  fail-loud backend selection, and third-party licensing/provenance review.
+
+### Verification
+
+- Documentation-only backlog change; no source, configuration, command behavior, or
+  proof-gate status changed.
