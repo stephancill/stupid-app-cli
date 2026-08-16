@@ -2,9 +2,9 @@ import ArgumentParser
 import Foundation
 
 @main
-struct IOSDev: AsyncParsableCommand {
+struct StupidApp: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
-        commandName: "iosdev",
+        commandName: "stupid-app",
         abstract: "Build, sign, deploy, and release iOS apps without Xcode.",
         subcommands: [SDKCommand.self]
     )

@@ -1,4 +1,4 @@
-# iosdev
+# stupid-app
 
 A CLI for creating, building, signing, wirelessly deploying, and releasing iOS
 applications without requiring Xcode or macOS at runtime.
@@ -12,9 +12,8 @@ Linux, and cross-compile and link a minimal SwiftUI app to an ARM64 Mach-O.
 - `Sources/SDKCore` — cross-platform primitives: SHA-256 wrapper (`swift-crypto`),
   the SDK export manifest model, host triple / Swift version probing, and safe archive
   listing/validation.
-- `Sources/iosdev-sdk-export` — macOS-only exporter. Produces a device-only, checksummed
-  iPhoneOS Swift SDK bundle from an installed Xcode.
-- `Sources/iosdev` — cross-platform CLI. Currently implements `sdk import`.
+- `Sources/stupid-app` — the cross-platform CLI. Implements `sdk export` (macOS-only in
+  effect, fails loudly elsewhere) and `sdk import`.
 - `docs/sdk-export-format.md` — the SDK bundle archive and manifest specification.
 - `docs/engineering-handover.md` — the maintained engineering source of truth.
 - `docs/implementation-notes.md` — the chronological engineering log.
@@ -22,7 +21,7 @@ Linux, and cross-compile and link a minimal SwiftUI app to an ARM64 Mach-O.
 ## Export (macOS)
 
 ```bash
-swift run iosdev-sdk-export \
+swift run stupid-app sdk export \
   --xcode /Applications/Xcode.app \
   --host x86_64-unknown-linux-gnu \
   --target arm64-apple-ios \
@@ -37,7 +36,7 @@ Linux-hosted Darwin toolset (`ld64.lld`, `libtool`, `dsymutil`) by version and c
 
 ```bash
 swift build
-.build/debug/iosdev sdk import ios-dev-arm64-apple-ios-x86_64-unknown-linux-gnu.artifactbundle.tar.zst \
+.build/debug/stupid-app sdk import ios-dev-arm64-apple-ios-x86_64-unknown-linux-gnu.artifactbundle.tar.zst \
   --expected-sha256 <sha256>
 ```
 

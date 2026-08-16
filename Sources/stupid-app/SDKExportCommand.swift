@@ -2,15 +2,17 @@ import ArgumentParser
 import Foundation
 import SDKCore
 
-@main
-struct IOSDevSDKExport: AsyncParsableCommand {
+/// `stupid-app sdk export`: builds a device-only, checksummed Swift SDK bundle from an
+/// installed Xcode installation. Runs on macOS; the artifact is imported elsewhere with
+/// `stupid-app sdk import`.
+struct SDKExportCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
-        commandName: "iosdev-sdk-export",
+        commandName: "export",
         abstract: "Export a device-only, checksummed Swift SDK bundle from an installed Xcode.",
         discussion: """
         Produces a tar.zst archive containing a SwiftPM artifact bundle for cross-compiling
-        arm64-apple-ios on a Linux host. The archive is imported on Linux with
-        `iosdev sdk import`.
+        arm64-apple-ios on a Linux host. Requires an installed Xcode on this Mac. The archive
+        is imported on a supported Linux host with `stupid-app sdk import`.
         """
     )
 
@@ -41,7 +43,7 @@ struct IOSDevSDKExport: AsyncParsableCommand {
             try FileManager.default.createDirectory(at: scratchURL, withIntermediateDirectories: true)
         } else {
             scratchURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent("iosdev-sdk-export-\(UUID().uuidString)")
+                .appendingPathComponent("stupid-app-sdk-export-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: scratchURL, withIntermediateDirectories: true)
         }
         defer { try? FileManager.default.removeItem(at: scratchURL) }

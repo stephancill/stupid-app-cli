@@ -263,3 +263,49 @@ swift build --swift-sdk ios-dev
 - The proof used a hand-authored SwiftPM package. The planner/packer synthesis (xtool
   `PackLib` adaptation) and the `-platform_version` injection remain for later gates.
 - USB pairing, wireless deployment, signing, and release upload are untouched.
+
+## 2026-08-16 - Product Naming And Single Executable
+
+### Summary
+
+- Decided the product and executable name: `stupid-app` (singular), and the
+  project-level configuration filename `stupid-app.yml`.
+- Folded the standalone macOS exporter executable into the CLI as the `sdk export`
+  subcommand. The package now builds one executable, `stupid-app`, instead of two.
+
+### Naming Decision
+
+- Chose `stupid-app` over `iosdev` (the then-working name) and over `stupid-apps`.
+- CLI precedent favors a singular noun root: `docker`, `flutter`, `pod`, `xcodebuild`.
+  Tools that manage apps as a resource use `apps` as a subcommand, not the root
+  (`heroku apps:create`). This CLI is project-scoped like `pod`/`flutter`, so a plural
+  root added nothing.
+- `stupid-app` also separates the tool from the WSL distribution name `iosdev-ubuntu`,
+  which is an operational environment and remains unchanged.
+
+### Single Executable
+
+- Removed the `iosdev-sdk-export` target and its separate `@main`. The exporter body
+  moved into the main target as `SDKExportCommand` (`stupid-app sdk export`), registered
+  under the existing `sdk` command group next to `sdk import`.
+- The exporter code already compiled on Linux (Foundation, `Process`,
+  `FoundationNetworking`), so the single binary keeps a uniform command surface on every
+  platform. `sdk export` fails loudly on a host without an installed Xcode, matching the
+  "fail loudly" and one-time-Mac-export invariants.
+- The bundle manifest `generator` string changed from `iosdev-sdk-export` to `stupid-app`.
+  The manifest format version is unchanged and the importer does not depend on the
+  generator string, so previously exported bundles remain importable.
+- Updated the SDK bundle spec: the archive is `tar.zst` (documented as gzip previously),
+  and archive/bundle naming uses the `<target-triple>-<host-triple>` form the exporter
+  actually emits.
+
+### Verification
+
+- `swift build` succeeds; the linked binary is `stupid-app`.
+- `swift test` passes all 5 SHA-256 tests.
+- `stupid-app --help`, `stupid-app sdk --help`, and `stupid-app sdk export --help` show
+  the expected surface: root, `sdk export`, and `sdk import`.
+
+### Follow-Up
+
+- `iosdev-ubuntu` remains the active WSL test host name; it is unrelated to the CLI name.

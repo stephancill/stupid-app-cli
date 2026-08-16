@@ -2,12 +2,12 @@ import ArgumentParser
 import Foundation
 import SDKCore
 
-/// `iosdev sdk import`: validates a checksummed SDK archive and registers it with
+/// `stupid-app sdk import`: validates a checksummed SDK archive and registers it with
 /// SwiftPM via `swift sdk install` after an atomic, verified activation.
 struct SDKImportCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "import",
-        abstract: "Validate and install an iosdev SDK archive.",
+        abstract: "Validate and install a stupid-app SDK archive.",
         discussion: """
         Verifies the archive checksum, extracts it into a temporary sibling directory with
         strict path validation, verifies every declared file checksum and the host Swift /
@@ -15,7 +15,7 @@ struct SDKImportCommand: AsyncParsableCommand {
         """
     )
 
-    @Argument(help: "Path to the SDK archive produced by iosdev-sdk-export (.tar.zst).")
+    @Argument(help: "Path to the SDK archive produced by `stupid-app sdk export` (.tar.zst).")
     var archive: String
 
     @Option(name: .customLong("expected-sha256"), help: "Expected archive SHA-256 to verify against.")
@@ -45,7 +45,7 @@ struct SDKImportCommand: AsyncParsableCommand {
 
         // 3. Safe extract into a temporary sibling directory.
         let scratch = FileManager.default.temporaryDirectory
-            .appendingPathComponent("iosdev-import-\(UUID().uuidString)")
+            .appendingPathComponent("stupid-app-import-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: scratch) }
 

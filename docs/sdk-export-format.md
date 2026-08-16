@@ -5,25 +5,25 @@ exporter produces and the Linux importer consumes. It is part of the Gate 0 proo
 
 ## Archive
 
-The export is a single POSIX tar archive compressed with gzip:
+The export is a single POSIX tar archive compressed with `zstd`:
 
 ```
-ios-sdk-<iphoneos-sdk-version>-<host-triple>.tar.gz
+ios-dev-<target-triple>-<host-triple>.artifactbundle.tar.zst
 ```
 
 The archive contains exactly one SwiftPM artifact bundle directory named
-`ios-dev-<iphoneos-sdk-version>-<host-triple>.artifactbundle/`. SwiftPM owns the
+`ios-dev-<target-triple>-<host-triple>.artifactbundle/`. SwiftPM owns the
 installation layout, so the importer registers the validated bundle with
 `swift sdk install` rather than inventing its own registry.
 
 Example:
 
 ```
-ios-dev-26.2-x86_64-unknown-linux-gnu.artifactbundle/
+ios-dev-arm64-apple-ios-x86_64-unknown-linux-gnu.artifactbundle/
   info.json                 # SwiftPM artifact bundle manifest (schema 1.0)
   swift-sdk.json            # target triple configuration (schema 4.0)
   toolset.json              # linker/compiler toolset configuration
-  sdk-manifest.json         # iosdev export manifest (this document's schema)
+  sdk-manifest.json         # stupid-app export manifest (this document's schema)
   Developer/
     Platforms/iPhoneOS.platform/Developer/
       SDKs/iPhoneOS.sdk/          # the device-only iPhoneOS SDK
@@ -110,14 +110,14 @@ the artifact bundle root.
 
 ## `sdk-manifest.json`
 
-The iosdev export manifest. It records generator provenance, the validated source
+The `stupid-app` export manifest. It records generator provenance, the validated source
 Xcode/SDK/Swift versions, the host and target triples, and a canonical SHA-256 for every
 file in the bundle.
 
 ```json
 {
   "formatVersion": 1,
-  "generator": "iosdev-sdk-export",
+  "generator": "stupid-app",
   "generatorVersion": "0.1.0",
   "sourceXcode": {
     "version": "26.1.1",
@@ -168,7 +168,7 @@ The exporter must reject:
 
 ## Import Requirements
 
-The importer (`iosdev sdk import`) must:
+The importer (`stupid-app sdk import`) must:
 
 1. Verify the archive SHA-256 against the value recorded at export time.
 2. Extract to a temporary sibling directory using a safe archive reader that rejects

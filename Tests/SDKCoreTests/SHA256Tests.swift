@@ -38,7 +38,7 @@ struct SHA256Tests {
     @Test("file digest equals in-memory digest")
     func fileDigest() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "iosdev-sha256-tests-\(UUID().uuidString)"
+            "stupid-app-sha256-tests-\(UUID().uuidString)"
         )
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }

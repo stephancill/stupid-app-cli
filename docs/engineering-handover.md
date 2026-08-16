@@ -9,13 +9,15 @@ Historical work belongs in `docs/implementation-notes.md`. This document should 
 ## Current Status
 
 The project is in technical validation. Gate 0 (SDK and compiler proof) is complete: a
-device-only, checksummed iPhoneOS Swift SDK bundle is exported on macOS by the
-`iosdev-sdk-export` CLI, validated and imported on the isolated `iosdev-ubuntu` WSL host
-by `iosdev sdk import`, and a minimal SwiftUI app compiles and links to an ARM64 Mach-O
-using the imported SDK.
+device-only, checksummed iPhoneOS Swift SDK bundle is exported on macOS by
+`stupid-app sdk export`, validated and imported on the isolated `iosdev-ubuntu` WSL host
+by `stupid-app sdk import`, and a minimal SwiftUI app compiles and links to an ARM64
+Mach-O using the imported SDK.
 
-The working name used in examples is `iosdev`; the final product and executable names
-remain open decisions.
+Product and executable naming is decided: the CLI and package are `stupid-app`, the
+project-level configuration file is `stupid-app.yml`, and the SDK exporter is the
+`sdk export` subcommand of the same tool rather than a standalone executable. The WSL
+distribution name `iosdev-ubuntu` remains unchanged.
 
 ## Product Goal
 
@@ -52,10 +54,10 @@ Successful TestFlight processing and installation are the release correctness pr
 On a clean supported Linux host:
 
 ```bash
-iosdev sdk import ios-sdk.tar.zst
-iosdev new AcceptanceApp
+stupid-app sdk import ios-sdk.tar.zst
+stupid-app new AcceptanceApp
 cd AcceptanceApp
-iosdev build
+stupid-app build
 ```
 
 Acceptance conditions:
@@ -71,8 +73,8 @@ Acceptance conditions:
 On a supported Linux deployment host on the same LAN as the iPhone:
 
 ```bash
-iosdev device pair --usb
-iosdev run --network --udid <udid>
+stupid-app device pair --usb
+stupid-app run --network --udid <udid>
 ```
 
 Acceptance conditions:
@@ -87,8 +89,8 @@ Acceptance conditions:
 ### Distribution And TestFlight
 
 ```bash
-iosdev release archive
-iosdev release upload --wait
+stupid-app release archive
+stupid-app release upload --wait
 ```
 
 Acceptance conditions:
@@ -109,7 +111,7 @@ The first generated project should resemble:
 ```text
 AcceptanceApp/
 |-- Package.swift
-|-- iosdev.yml
+|-- stupid-app.yml
 |-- Info.plist
 |-- App.entitlements
 |-- Resources/
@@ -120,7 +122,7 @@ AcceptanceApp/
         `-- ContentView.swift
 ```
 
-Example `iosdev.yml`:
+Example `stupid-app.yml`:
 
 ```yaml
 version: 1
@@ -157,19 +159,20 @@ Inputs that must initially fail loudly:
 ## Proposed Command Surface
 
 ```text
-iosdev doctor
-iosdev sdk import <archive>
-iosdev new <name>
-iosdev build [--configuration debug|release]
-iosdev credentials add
-iosdev signing setup --development
-iosdev signing setup --distribution
-iosdev devices
-iosdev device pair --usb
-iosdev run --network --udid <udid>
-iosdev release archive
-iosdev release upload [--wait]
-iosdev release status
+stupid-app doctor
+stupid-app sdk export <host-triple>   (macOS only)
+stupid-app sdk import <archive>
+stupid-app new <name>
+stupid-app build [--configuration debug|release]
+stupid-app credentials add
+stupid-app signing setup --development
+stupid-app signing setup --distribution
+stupid-app devices
+stupid-app device pair --usb
+stupid-app run --network --udid <udid>
+stupid-app release archive
+stupid-app release upload [--wait]
+stupid-app release status
 ```
 
 The command surface is provisional until the proof gates complete. Keep build, signing, install, launch, upload, and status as separable operations even if convenience commands compose them.
@@ -201,18 +204,18 @@ Normal Linux use depends on a pre-exported, checksummed, device-only Swift SDK b
 Preferred preparation flow on a Mac:
 
 ```bash
-iosdev-sdk-export \
+stupid-app sdk export \
   --xcode /Applications/Xcode.app \
-  --target iphoneos \
   --host <linux-host-triple> \
-  --output ios-sdk.tar.zst
+  --target arm64-apple-ios \
+  --output <output-directory>
 ```
 
 The Linux CLI then validates and imports it:
 
 ```bash
-iosdev sdk import ios-sdk.tar.zst
-iosdev doctor
+stupid-app sdk import ios-sdk.tar.zst
+stupid-app doctor
 ```
 
 The bundle should contain only what the physical-device target requires:
@@ -906,8 +909,8 @@ This document records an engineering concern, not legal advice.
 - Record the validated host Swift and Xcode SDK pair.
 
 Status: **complete** on the isolated WSL host. The exporter, import format, and importer
-are implemented in this repository (`iosdev-sdk-export`, `docs/sdk-export-format.md`,
-`iosdev sdk import`). A minimal SwiftUI app built and linked to `Mach-O 64-bit arm64`
+are implemented in this repository (`stupid-app sdk export`, `docs/sdk-export-format.md`,
+`stupid-app sdk import`). A minimal SwiftUI app built and linked to `Mach-O 64-bit arm64`
 with a valid `LC_BUILD_VERSION`. Details, archive checksum, and fixture commands are in
 `docs/implementation-notes.md`.
 
@@ -1043,5 +1046,5 @@ pipeline is proven; the next concrete steps are:
    known-good Xcode artifact.
 
 Before substantial Gate 1 work, extend the CLI with typed project configuration
-(`iosdev new` / `iosdev.yml`) so signing proofs operate on real project inputs rather than
+(`stupid-app new` / `stupid-app.yml`) so signing proofs operate on real project inputs rather than
 hand-authored packages. Keep every command in `docs/implementation-notes.md` with outcomes.

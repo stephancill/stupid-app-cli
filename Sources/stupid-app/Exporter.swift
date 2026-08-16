@@ -5,7 +5,7 @@ import FoundationNetworking
 #endif
 
 /// macOS-side exporter that produces a device-only, checksummed Swift SDK bundle from an
-/// installed Xcode. This is the Gate 0 deliverable; the CLI in `main.swift` wraps it.
+/// installed Xcode. This is the Gate 0 deliverable; `SDKExportCommand` wraps it.
 struct Exporter {
     struct Options {
         var xcodeAppURL: URL
@@ -205,7 +205,7 @@ struct Exporter {
         }
         var request = URLRequest(url: source.url)
         request.httpMethod = "GET"
-        request.setValue("iosdev-sdk-export", forHTTPHeaderField: "User-Agent")
+        request.setValue("stupid-app", forHTTPHeaderField: "User-Agent")
         let (data, response) = try downloadSynchronously(request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
@@ -234,7 +234,7 @@ struct Exporter {
             throw failure
         }
         guard let data = box.data, let response = box.response else {
-            throw NSError(domain: "iosdev", code: 1, userInfo: [NSLocalizedDescriptionKey: "no response"])
+            throw NSError(domain: "stupid-app", code: 1, userInfo: [NSLocalizedDescriptionKey: "no response"])
         }
         return (data, response)
     }
@@ -296,7 +296,7 @@ struct Exporter {
         }
         return SDKManifest(
             formatVersion: SDKManifest.currentFormatVersion,
-            generator: "iosdev-sdk-export",
+            generator: "stupid-app",
             generatorVersion: "0.1.0",
             sourceXcode: SDKManifest.XcodeSource(version: xcode.0, build: xcode.1),
             iphoneosSDKVersion: iphoneosVersion,

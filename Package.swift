@@ -4,7 +4,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "iosdev",
+    name: "stupid-app",
     platforms: [
         .macOS(.v14)
     ],
@@ -20,14 +20,7 @@ let package = Package(
             ]
         ),
         .executableTarget(
-            name: "iosdev-sdk-export",
-            dependencies: [
-                "SDKCore",
-                .product(name: "ArgumentParser", package: "swift-argument-parser"),
-            ]
-        ),
-        .executableTarget(
-            name: "iosdev",
+            name: "stupid-app",
             dependencies: [
                 "SDKCore",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
