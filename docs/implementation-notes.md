@@ -309,3 +309,91 @@ swift build --swift-sdk ios-dev
 ### Follow-Up
 
 - `iosdev-ubuntu` remains the active WSL test host name; it is unrelated to the CLI name.
+
+## 2026-08-16 - Gate 1: Distribution Signing Proof
+
+### Summary
+
+- Pinned `apple-codesign`/`rcodesign` 0.29.0 into the ignored `third-party/` directory
+  and recorded the MPL-2.0 obligations and per-architecture checksums in
+  `docs/rcodesign-pin.md`.
+- Decided to provision `rcodesign` per host as a pinned **prebuilt release binary**
+  (static musl ELF) rather than compiling on each host. This removes a Rust toolchain
+  requirement from every supported host, including future ARM hosts. The source
+  checkout remains in `third-party/` for auditability.
+- Extended the CLI with typed project configuration (`stupid-app new`,
+  `stupid-app.yml`), an unsigned `.app` planner/packer (`stupid-app build`) that injects
+  the real SDK version into `LC_BUILD_VERSION`, an encrypted credential store
+  (`stupid-app credentials add`), distribution signing setup
+  (`stupid-app signing setup --kind distribution`), and distribution archive
+  (`stupid-app release archive`).
+- Registered a disposable bundle ID, imported an existing Apple Distribution identity,
+  created an App Store provisioning profile, built a minimal app, signed it once with
+  the pinned `rcodesign` (timestamps disabled), and packaged a distribution IPA on the
+  isolated WSL host.
+- Renamed the SDK artifact ID from `ios-dev` to `stupid-app-ios` to match the product.
+  The previously exported bundle remains importable; existing WSL installs still
+  register as `ios-dev` until re-exported/re-imported.
+
+### Decisions
+
+- **Signer sourcing:** prebuilt pinned binaries per target architecture, verified by
+  SHA-256. No Rust on supported hosts. Rationale: Apple ships no Linux signing tooling,
+  so a low-level signing kernel is required; prebuilt static binaries avoid adding a
+  compiler toolchain everywhere, directly minimizing target-host dependencies.
+- **Identity reuse:** the team already had active Apple Distribution certificates, so
+  minting a new one was blocked by Apple's certificate limit (HTTP 409). The CLI
+  therefore supports importing an existing identity (`--import-key --import-cert
+  --cert-id`) and reused the existing distribution identity for the proof rather than
+  minting a new certificate.
+- **Credential storage:** encrypted at rest with AES-256-GCM using an HKDF-SHA256 key
+  derived from a passphrase plus a random per-file salt; directory mode `0700`, secret
+  files mode `0600`, atomic writes, secret-bearing files outside the repository.
+- **Bundle ID display name:** the ASC `bundleIds` API rejects the bundle identifier as
+  a resource name; a human-readable name is derived from the identifier.
+
+### Verification
+
+- `stupid-app new AcceptanceApp` scaffolds the supported project shape without Xcode.
+- `stupid-app build` on WSL produced an unsigned `.app` with an ARM64 Mach-O executable
+  reporting `ios min 17.0.0 sdk 26.1.0` (real SDK version, not the deployment target).
+- Live ASC round-trip: bundle ID `<disposable-bundle-id>` registered; existing
+  distribution identity imported; `IOS_APP_STORE` profile created and downloaded; the
+  profile parses with zero provisioned devices (App Store shape) and the expected
+  entitlements.
+- `stupid-app release archive` on WSL produced `AcceptanceApp.ipa` with
+  `Payload/AcceptanceApp.app` containing the executable, `Info.plist`,
+  `_CodeSignature/CodeResources`, and `embedded.mobileprovision` (byte-for-byte the
+  downloaded profile).
+- Signature inspection (`rcodesign print-signature-info`) confirmed CodeDirectory,
+  RequirementSet, Entitlements, DER Entitlements, and CMS slots; entitlement plist
+  shows `application-identifier`, `com.apple.developer.team-identifier`, and
+  `get-task-allow=false`; the CMS chain chains to the Apple Root CA with
+  `signature_verifies: true`.
+- Independent macOS check on the Linux-produced artifact:
+  `codesign --verify --strict` reported "valid on disk" and "satisfies its Designated
+  Requirement"; `codesign -d` confirmed identifier, team identifier, and `get-task-allow
+  false`.
+- Tests: 19 pass across SDKCore, ProjectCore, and SigningKit (SHA-256 vectors, config
+  validation, CMS plist extraction from synthetic fixtures, entitlement derivation and
+  rejection).
+
+### Artifacts And Cleanup
+
+- The signed IPA and the temporary identity/profile material used during the proof were
+  deleted after verification. The registered bundle ID and App Store profile remain as
+  team resources; the bundle ID is disposable and can be removed after the proof.
+
+### Findings And Follow-Ups
+
+- `codesign`'s `--verify --strict` on macOS is a strong independent check that a Linux
+  `rcodesign` signature is structurally valid, but App Store Connect processing remains
+  the decisive compatibility test (Gate 2).
+- The packer's synthetic-package approach works unchanged on Linux; the real-SDK-version
+  linker flag injection is verified end-to-end.
+- App Store Connect still reports distribution certificate state as `null` for these
+  resources; certificate validity is better judged by the profile being created and
+  signature verification rather than that field.
+- Next gate: Gate 2 (Linux Build Upload proof) — implement the Build Upload API flow,
+  upload the Gate 1 IPA, resolve the exact build, poll processing, and install through
+  TestFlight.

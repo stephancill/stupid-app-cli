@@ -68,7 +68,7 @@ struct Exporter {
 
     var bundleName: String {
         let host = hostArchComponent(options.hostTriple)
-        return "ios-dev-\(options.targetTriple)-\(host).artifactbundle"
+        return "stupid-app-ios-\(options.targetTriple)-\(host).artifactbundle"
     }
 
     private func hostArchComponent(_ triple: String) -> String {
@@ -245,7 +245,7 @@ struct Exporter {
         let info = InfoJSON(
             schemaVersion: "1.0",
             artifacts: [
-                "ios-dev": InfoJSON.Artifact(
+                "stupid-app-ios": InfoJSON.Artifact(
                     type: "swiftSDK",
                     version: iphoneosVersion,
                     variants: [

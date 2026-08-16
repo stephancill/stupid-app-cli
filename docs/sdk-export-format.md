@@ -8,18 +8,18 @@ exporter produces and the Linux importer consumes. It is part of the Gate 0 proo
 The export is a single POSIX tar archive compressed with `zstd`:
 
 ```
-ios-dev-<target-triple>-<host-triple>.artifactbundle.tar.zst
+stupid-app-ios-<target-triple>-<host-triple>.artifactbundle.tar.zst
 ```
 
 The archive contains exactly one SwiftPM artifact bundle directory named
-`ios-dev-<target-triple>-<host-triple>.artifactbundle/`. SwiftPM owns the
+`stupid-app-ios-<target-triple>-<host-triple>.artifactbundle/`. SwiftPM owns the
 installation layout, so the importer registers the validated bundle with
 `swift sdk install` rather than inventing its own registry.
 
 Example:
 
 ```
-ios-dev-arm64-apple-ios-x86_64-unknown-linux-gnu.artifactbundle/
+stupid-app-ios-arm64-apple-ios-x86_64-unknown-linux-gnu.artifactbundle/
   info.json                 # SwiftPM artifact bundle manifest (schema 1.0)
   swift-sdk.json            # target triple configuration (schema 4.0)
   toolset.json              # linker/compiler toolset configuration
@@ -44,13 +44,13 @@ ios-dev-arm64-apple-ios-x86_64-unknown-linux-gnu.artifactbundle/
 ## `info.json`
 
 The standard SwiftPM artifact bundle manifest. Schema version `1.0`. The artifact ID
-(here `ios-dev`) is the selector passed to `swift build --swift-sdk`.
+(here `stupid-app-ios`) is the selector passed to `swift build --swift-sdk`.
 
 ```json
 {
   "schemaVersion": "1.0",
   "artifacts": {
-    "ios-dev": {
+    "stupid-app-ios": {
       "type": "swiftSDK",
       "version": "<iphoneos-sdk-version>",
       "variants": [

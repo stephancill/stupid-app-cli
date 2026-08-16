@@ -1,5 +1,5 @@
 {
-  "originHash" : "c20bdd67bd7aefc3b4b89167492baaf91daf55d0b07a331455bec0253a6a6178",
+  "originHash" : "171cb2f1a79d1011a5f572a3ae7edc994a6d03bf8a04301dfd8c4a49b7b48cb6",
   "pins" : [
     {
       "identity" : "swift-argument-parser",
@@ -20,12 +20,30 @@
       }
     },
     {
+      "identity" : "swift-certificates",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-certificates.git",
+      "state" : {
+        "revision" : "449dbbecd0f31e82b510ada227ca152caa8b5e98",
+        "version" : "1.19.4"
+      }
+    },
+    {
       "identity" : "swift-crypto",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-crypto.git",
       "state" : {
         "revision" : "95ba0316a9b733e92bb6b071255ff46263bbe7dc",
         "version" : "3.15.1"
+      }
+    },
+    {
+      "identity" : "yams",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/jpsim/Yams.git",
+      "state" : {
+        "revision" : "3d6871d5b4a5cd519adf233fbb576e0a2af71c17",
+        "version" : "5.4.0"
       }
     }
   ],

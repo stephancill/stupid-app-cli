@@ -14,10 +14,22 @@ device-only, checksummed iPhoneOS Swift SDK bundle is exported on macOS by
 by `stupid-app sdk import`, and a minimal SwiftUI app compiles and links to an ARM64
 Mach-O using the imported SDK.
 
+Gate 1 (distribution signing proof) is complete on the isolated WSL host. The CLI now
+scaffolds projects (`stupid-app new` + `stupid-app.yml`), plans and assembles an
+unsigned `.app` with the imported SDK (`stupid-app build`), manages encrypted App Store
+Connect credentials and a distribution identity (`stupid-app credentials add`,
+`stupid-app signing setup --kind distribution`), and produces a real Apple
+Distribution-signed IPA with `stupid-app release archive`. The pinned `rcodesign`
+0.29.0 signing kernel (prebuilt musl binaries, no Rust on target hosts) signs once with
+timestamps disabled; the output was independently verified with the project's own
+checks and with macOS `codesign --verify --strict`. See `docs/rcodesign-pin.md` for the
+signer pin and `docs/implementation-notes.md` for verification details.
+
 Product and executable naming is decided: the CLI and package are `stupid-app`, the
-project-level configuration file is `stupid-app.yml`, and the SDK exporter is the
-`sdk export` subcommand of the same tool rather than a standalone executable. The WSL
-distribution name `iosdev-ubuntu` remains unchanged.
+project-level configuration file is `stupid-app.yml`, the SDK artifact ID is
+`stupid-app-ios`, and the SDK exporter is the `sdk export` subcommand of the same tool
+rather than a standalone executable. The WSL distribution name `iosdev-ubuntu` remains
+unchanged.
 
 ## Product Goal
 
@@ -165,8 +177,8 @@ stupid-app sdk import <archive>
 stupid-app new <name>
 stupid-app build [--configuration debug|release]
 stupid-app credentials add
-stupid-app signing setup --development
 stupid-app signing setup --distribution
+stupid-app signing setup --development
 stupid-app devices
 stupid-app device pair --usb
 stupid-app run --network --udid <udid>
@@ -174,6 +186,10 @@ stupid-app release archive
 stupid-app release upload [--wait]
 stupid-app release status
 ```
+
+Implemented so far: `new`, `sdk export`, `sdk import`, `build`, `credentials add`,
+`signing setup --kind distribution`, and `release archive`. The `doctor`, `devices`,
+`device`, `release upload`, and `release status` commands are not yet implemented.
 
 The command surface is provisional until the proof gates complete. Keep build, signing, install, launch, upload, and status as separable operations even if convenience commands compose them.
 
@@ -185,17 +201,17 @@ The current recommendation is a Swift CLI because the supported host already nee
 
 Do not copy xtool's large development command wholesale. Keep these concerns as independent modules:
 
-- Configuration and project schema.
-- SDK import and compatibility checks.
-- SwiftPM graph planning.
-- Compilation and unsigned bundle assembly.
-- App Store Connect authentication and APIs.
-- Certificate and provisioning profile management.
-- Entitlement derivation and validation.
-- Code-signing adapter.
-- IPA packaging and verification.
-- Device pairing, discovery, installation, and launch.
-- Build Upload and TestFlight processing.
+- Configuration and project schema. (`ProjectCore`)
+- SDK import and compatibility checks. (`SDKCore`)
+- SwiftPM graph planning. (`BuildCore`)
+- Compilation and unsigned bundle assembly. (`BuildCore`)
+- App Store Connect authentication and APIs. (`ASCKit`)
+- Certificate and provisioning profile management. (`SigningKit` + `ASCKit`)
+- Entitlement derivation and validation. (`SigningKit`)
+- Code-signing adapter. (`SigningKit`)
+- IPA packaging and verification. (`SigningKit`)
+- Device pairing, discovery, installation, and launch. (not yet implemented)
+- Build Upload and TestFlight processing. (not yet implemented)
 
 ### SDK Export And Import
 
@@ -331,7 +347,17 @@ The public API can enable several capabilities but cannot associate every concre
 
 ### Signing Engine
 
-Use `apple-codesign`/`rcodesign` as the initial low-level signing engine. It has stronger implementations of Mach-O signing, nested bundle traversal, resource sealing, CMS, and XML/DER entitlements than xtool's current Zupersign integration.
+Use `apple-codesign`/`rcodesign` as the initial low-level signing engine. It has
+stronger implementations of Mach-O signing, nested bundle traversal, resource sealing,
+CMS, and XML/DER entitlements than xtool's current Zupersign integration.
+
+**Sourcing decision (Gate 1):** provision `rcodesign` per target host as a pinned
+**prebuilt release binary**, not a source compile. Upstream publishes statically linked
+`musl` binaries per architecture for every release, so no Rust toolchain is required on
+any supported host. The pinned source checkout lives in the ignored
+`third-party/apple-platform-rs` directory for auditability only. The exact pin,
+license (MPL-2.0), per-architecture checksums, and the macOS reproduction build are
+recorded in `docs/rcodesign-pin.md`.
 
 Treat it as a signing kernel, not an iOS workflow solution. The project must implement:
 
@@ -342,15 +368,28 @@ Treat it as a signing kernel, not an iOS workflow solution. The project must imp
 - IPA construction.
 - iOS-specific post-sign validation.
 
+Gate 1 implemented: profile CMS plist extraction (`MobileProvisionParser`), final
+entitlement derivation and profile reconciliation (`EntitlementDeriver`), profile
+embedding, one-signing-pass distribution signing with timestamps disabled
+(`RcodesignSigner`), and IPA packaging/verification (`IPAPacker`).
+
 Requirements for the proof:
 
-- Disable signing timestamps for iOS distribution signing. Timestamped distribution signatures have caused App Store rejection.
-- Pin the exact validated binary or source revision and its checksum.
+- Disable signing timestamps for iOS distribution signing. Timestamped distribution
+  signatures have caused App Store rejection. (Implemented: `--timestamp-url none`.)
+- Pin the exact validated binary or source revision and its checksum. (Recorded in
+  `docs/rcodesign-pin.md`.)
 - Compare signature structure against known-good Xcode-produced artifacts.
 - Run independent CMS, CodeDirectory, entitlement, and resource-seal checks.
-- Use completed App Store Connect processing and TestFlight installation as the final authority.
+- Use completed App Store Connect processing and TestFlight installation as the final
+  authority.
 
-Do not add a Zupersign fallback. Fail loudly if the validated signer is unavailable or its output fails verification.
+Gate 1 used the project's own Mach-O/signature inspection plus macOS
+`codesign --verify --strict` as independent checks. App Store processing and TestFlight
+installation are the Gate 2 proof.
+
+Do not add a Zupersign fallback. Fail loudly if the validated signer is unavailable or
+its output fails verification.
 
 ### Signing Pipelines
 
@@ -934,6 +973,23 @@ Exit condition: a clean Linux host reproducibly builds an unsigned minimal Swift
 - Package the IPA.
 - Verify signature, resources, profile, and entitlements independently.
 
+Status: **complete** on the isolated WSL host. `stupid-app new`, `stupid-app build`,
+`stupid-app credentials add`, `stupid-app signing setup --kind distribution`, and
+`stupid-app release archive` are implemented in this repository. The registered
+disposable bundle ID `<disposable-bundle-id>` was provisioned with a real App
+Store profile, an existing Apple Distribution identity was imported (the team already
+had active distribution certificates, so minting was blocked by Apple's limit), and a
+distribution IPA was built, signed once with the pinned `rcodesign` 0.29.0 binary
+(timestamps disabled), and packaged. Independent checks confirmed the ARM64 Mach-O,
+CodeDirectory/CMS/entitlements slots, zero provisioned devices, the embedded profile
+matching the downloaded App Store profile, and `codesign --verify --strict` passing on
+macOS for the Linux-produced signature. Details and exact commands are in
+`docs/implementation-notes.md`.
+
+Signer pin: `docs/rcodesign-pin.md`. The imported identity, profile, and bundle ID
+remain live team resources; the bundle ID is disposable and can be removed after the
+proof.
+
 Exit condition: local checks pass and the exact signed artifact is ready for upload.
 
 ### Gate 2: Linux Build Upload Proof
@@ -1033,18 +1089,24 @@ Required recurring integration coverage:
 
 ## Recommended Next Work
 
-Proceed to Gate 1 (distribution signing proof) on the same WSL host. The Gate 0 SDK
-pipeline is proven; the next concrete steps are:
+Proceed to Gate 2 (Linux Build Upload proof) on the same WSL host. Gate 1 leaves a
+verified distribution-signed IPA ready for upload; Gate 2 turns it into a validated
+App Store Connect build. The concrete next steps are:
 
-1. Pin and fetch `apple-platform-rs` / `rcodesign` into an ignored `third-party/` directory
-   and record the revision and MPL-2.0 obligations.
-2. Register a disposable explicit bundle ID through the public App Store Connect API.
-3. Create or import an Apple Distribution identity and an iOS App Store profile.
-4. Assemble a minimal unsigned app, sign it once with `rcodesign` (timestamps disabled),
-   and package the IPA.
-5. Verify signature, resources, profile, and entitlements independently against a
-   known-good Xcode artifact.
+1. Implement the Build Upload operations in `ASCKit` (`POST /v1/buildUploads`,
+   `POST /v1/buildUploadFiles`, executing returned `DeliveryFileUploadOperation`s with
+   exact URLs/methods/headers/ranges/checksums, then `PATCH` with
+   `uploaded=true`).
+2. Add `stupid-app release upload --wait` that uploads the Gate 1 IPA, polls Build
+   Upload to a terminal state, resolves the exact build by app + marketing version +
+   build number, and polls processing plus `buildBetaDetail` to internal TestFlight
+   readiness.
+3. Persist raw, redacted request outcomes for diagnosis and write the release
+   manifest (`docs/engineering-handover.md` Release Manifest section) recording
+   artifact SHA-256, bundle ID, versions, upload/build resource IDs, and processing
+   state.
+4. Install the processed build through TestFlight to complete the Gate 2 acceptance
+   proof.
 
-Before substantial Gate 1 work, extend the CLI with typed project configuration
-(`stupid-app new` / `stupid-app.yml`) so signing proofs operate on real project inputs rather than
-hand-authored packages. Keep every command in `docs/implementation-notes.md` with outcomes.
+Remaining gates after Gate 2: Gate 3 (development signing + USB install), Gate 4
+(wireless transport), Gate 5 (productize the CLI).
