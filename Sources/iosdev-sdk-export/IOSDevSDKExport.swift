@@ -1,0 +1,60 @@
+import ArgumentParser
+import Foundation
+import SDKCore
+
+@main
+struct IOSDevSDKExport: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "iosdev-sdk-export",
+        abstract: "Export a device-only, checksummed Swift SDK bundle from an installed Xcode.",
+        discussion: """
+        Produces a tar.zst archive containing a SwiftPM artifact bundle for cross-compiling
+        arm64-apple-ios on a Linux host. The archive is imported on Linux with
+        `iosdev sdk import`.
+        """
+    )
+
+    @Option(name: .customLong("xcode"), help: "Path to an installed Xcode.app.")
+    var xcodeApp: String = "/Applications/Xcode.app"
+
+    @Option(name: .customLong("host"), help: "Linux host triple, e.g. x86_64-unknown-linux-gnu.")
+    var hostTriple: String
+
+    @Option(name: .customLong("target"), help: "Target triple (default arm64-apple-ios).")
+    var targetTriple: String = "arm64-apple-ios"
+
+    @Option(name: .customLong("output"), help: "Directory in which to write the archive.")
+    var output: String = "."
+
+    @Option(name: .customLong("scratch"), help: "Temporary working directory (defaults to a system temp dir).")
+    var scratch: String?
+
+    mutating func run() async throws {
+        let xcodeURL = URL(fileURLWithPath: xcodeApp)
+        guard FileManager.default.fileExists(atPath: xcodeURL.path) else {
+            throw ExportError.xcodeMissing(xcodeURL)
+        }
+
+        let scratchURL: URL
+        if let scratch {
+            scratchURL = URL(fileURLWithPath: scratch)
+            try FileManager.default.createDirectory(at: scratchURL, withIntermediateDirectories: true)
+        } else {
+            scratchURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("iosdev-sdk-export-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: scratchURL, withIntermediateDirectories: true)
+        }
+        defer { try? FileManager.default.removeItem(at: scratchURL) }
+
+        let exporter = Exporter(options: .init(
+            xcodeAppURL: xcodeURL,
+            hostTriple: hostTriple,
+            targetTriple: targetTriple,
+            outputURL: URL(fileURLWithPath: output),
+            scratchURL: scratchURL
+        ))
+        let archive = try exporter.run()
+        print("Exported \(archive.path)")
+        print("SHA-256: \(try SHA256.file(at: archive))")
+    }
+}
