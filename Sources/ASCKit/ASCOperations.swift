@@ -70,6 +70,110 @@ public struct ASCOperations: Sendable {
         return try createBundleID(name: name, identifier: identifier)
     }
 
+    // MARK: - Devices
+
+    public struct Device: Sendable, Equatable {
+        public var id: String
+        public var name: String?
+        public var udid: String?
+        public var platform: String?
+        public var status: String?
+
+        public init(id: String, name: String? = nil, udid: String? = nil, platform: String? = nil, status: String? = nil) {
+            self.id = id
+            self.name = name
+            self.udid = udid
+            self.platform = platform
+            self.status = status
+        }
+    }
+
+    /// Lists registered iOS-capable devices.
+    public func listDevices() throws -> [Device] {
+        let response = try client.request(
+            method: .get,
+            path: "devices",
+            query: [URLQueryItem(name: "filter[platform]", value: "IOS")]
+        )
+        return try Self.decodeDeviceList(response.data)
+    }
+
+    /// Decodes a `DevicesResponse` payload.
+    public static func decodeDeviceList(_ data: Data) throws -> [Device] {
+        struct Envelope: Decodable {
+            struct Data: Decodable {
+                let id: String
+                struct Attributes: Decodable {
+                    let name: String?
+                    let udid: String?
+                    let platform: String?
+                    let status: String?
+                }
+                let attributes: Attributes
+            }
+            let data: [Data]
+        }
+        guard let envelope = try? JSONDecoder().decode(Envelope.self, from: data) else {
+            throw ASCError.malformedPayload("devices list")
+        }
+        return envelope.data.map {
+            Device(
+                id: $0.id,
+                name: $0.attributes.name,
+                udid: $0.attributes.udid,
+                platform: $0.attributes.platform,
+                status: $0.attributes.status
+            )
+        }
+    }
+
+    /// Finds the registered device resource for an exact UDID, if any.
+    public func findDevice(udid: String) throws -> Device? {
+        try listDevices().first { $0.udid == udid }
+    }
+
+    /// Registers a physical iOS device. The API returns HTTP 409 when the UDID is
+    /// already registered; callers should prefer `getOrRegisterDevice`.
+    public func registerDevice(udid: String, name: String) throws -> Device {
+        let response = try client.request(method: .post, path: "devices", body: [
+            "data": [
+                "type": "devices",
+                "attributes": [
+                    "name": name,
+                    "udid": udid,
+                    "platform": "IOS",
+                ],
+            ],
+        ])
+        return try Self.decodeCreatedDevice(response.data)
+    }
+
+    /// Decodes a `DeviceResponse` payload.
+    public static func decodeCreatedDevice(_ data: Data) throws -> Device {
+        struct Envelope: Decodable {
+            struct Data: Decodable {
+                let id: String
+                struct Attributes: Decodable {
+                    let udid: String?
+                }
+                let attributes: Attributes
+            }
+            let data: Data
+        }
+        guard let envelope = try? JSONDecoder().decode(Envelope.self, from: data) else {
+            throw ASCError.malformedPayload("devices create")
+        }
+        return Device(id: envelope.data.id, udid: envelope.data.attributes.udid)
+    }
+
+    /// Registers a device unless the UDID is already registered.
+    public func getOrRegisterDevice(udid: String, name: String) throws -> Device {
+        if let existing = try findDevice(udid: udid) {
+            return existing
+        }
+        return try registerDevice(udid: udid, name: name)
+    }
+
     // MARK: - Certificates
 
     public struct Certificate: Sendable {
@@ -78,12 +182,13 @@ public struct ASCOperations: Sendable {
         public var serialNumber: String?
     }
 
-    /// Fetches all distribution certificates (or their `id`s).
-    public func listDistributionCertificateIDs() throws -> [String] {
+    /// Fetches certificate resource IDs for an exact certificate type
+    /// (e.g. `DISTRIBUTION`, `DEVELOPMENT`).
+    public func listCertificateIDs(certificateType: String) throws -> [String] {
         let response = try client.request(
             method: .get,
             path: "certificates",
-            query: [URLQueryItem(name: "filter[certificateType]", value: "DISTRIBUTION")]
+            query: [URLQueryItem(name: "filter[certificateType]", value: certificateType)]
         )
         let data = response.data
         struct Envelope: Decodable {
@@ -96,15 +201,25 @@ public struct ASCOperations: Sendable {
         return envelope.data.map(\.id)
     }
 
-    /// Requests a new distribution certificate from a CSR. Returns the new certificate
-    /// resource ID and its PEM content (base64).
-    public func createDistributionCertificate(csrContent: String) throws -> Certificate {
+    /// Fetches all distribution certificate IDs.
+    public func listDistributionCertificateIDs() throws -> [String] {
+        try listCertificateIDs(certificateType: "DISTRIBUTION")
+    }
+
+    /// Fetches all development certificate IDs.
+    public func listDevelopmentCertificateIDs() throws -> [String] {
+        try listCertificateIDs(certificateType: "DEVELOPMENT")
+    }
+
+    /// Requests a new certificate of the given type from a CSR. Returns the new
+    /// certificate resource ID and its PEM content (base64).
+    public func createCertificate(csrContent: String, certificateType: String) throws -> Certificate {
         let response = try client.request(method: .post, path: "certificates", body: [
             "data": [
                 "type": "certificates",
                 "attributes": [
                     "csrContent": csrContent,
-                    "certificateType": "DISTRIBUTION",
+                    "certificateType": certificateType,
                 ],
             ],
         ])
@@ -130,24 +245,46 @@ public struct ASCOperations: Sendable {
         )
     }
 
+    /// Requests a new distribution certificate from a CSR.
+    public func createDistributionCertificate(csrContent: String) throws -> Certificate {
+        try createCertificate(csrContent: csrContent, certificateType: "DISTRIBUTION")
+    }
+
+    /// Requests a new development certificate from a CSR.
+    public func createDevelopmentCertificate(csrContent: String) throws -> Certificate {
+        try createCertificate(csrContent: csrContent, certificateType: "DEVELOPMENT")
+    }
+
     // MARK: - Profiles
 
-    /// Fetches the profile resource id for an exact profile name, if any.
-    public func findProfile(name: String) throws -> String? {
+    /// Provisioning profile types this project creates.
+    public enum ProfileType: String, Sendable {
+        case appStore = "IOS_APP_STORE"
+        case development = "IOS_APP_DEVELOPMENT"
+    }
+
+    /// Fetches the profile resource id for an exact profile name and type, if any.
+    public func findProfile(name: String, profileType: ProfileType = .appStore) throws -> String? {
         let response = try client.request(
             method: .get,
             path: "profiles",
             query: [
-                URLQueryItem(name: "filter[profileType]", value: "IOS_APP_STORE"),
+                URLQueryItem(name: "filter[profileType]", value: profileType.rawValue),
                 URLQueryItem(name: "filter[name]", value: name),
             ]
         )
-        let data = response.data
+        return try Self.matchProfileID(in: response.data, name: name, profileType: profileType)
+    }
+
+    /// Extracts the profile resource ID for an exact name from a `ProfilesResponse`
+    /// payload, tolerating the API's substring-ish name filter.
+    public static func matchProfileID(in data: Data, name: String, profileType: ProfileType) throws -> String? {
         struct Envelope: Decodable {
             struct Data: Decodable {
                 let id: String
                 struct Attributes: Decodable {
                     let name: String
+                    let profileType: String?
                     let profileState: String
                 }
                 let attributes: Attributes
@@ -157,17 +294,26 @@ public struct ASCOperations: Sendable {
         guard let envelope = try? JSONDecoder().decode(Envelope.self, from: data) else {
             throw ASCError.malformedPayload("profiles list")
         }
-        return envelope.data.first { $0.attributes.name == name }?.id
+        return envelope.data.first {
+            $0.attributes.name == name && ($0.attributes.profileType == nil || $0.attributes.profileType == profileType.rawValue)
+        }?.id
     }
 
-    /// Creates an iOS App Store profile for one bundle-ID resource and certificate.
-    public func createAppStoreProfile(name: String, bundleIDResourceID: String, certificateID: String) throws -> String {
-        let response = try client.request(method: .post, path: "profiles", body: [
+    /// Creates a profile of the given type for one bundle-ID resource, certificate,
+    /// and (for development profiles) one or more device resources.
+    public func createProfile(
+        name: String,
+        profileType: ProfileType,
+        bundleIDResourceID: String,
+        certificateID: String,
+        deviceIDs: [String]
+    ) throws -> String {
+        var body: [String: Any] = [
             "data": [
                 "type": "profiles",
                 "attributes": [
                     "name": name,
-                    "profileType": "IOS_APP_STORE",
+                    "profileType": profileType.rawValue,
                 ],
                 "relationships": [
                     "bundleId": [
@@ -178,16 +324,58 @@ public struct ASCOperations: Sendable {
                     ],
                 ],
             ],
-        ])
-        let data = response.data
+        ]
+        if !deviceIDs.isEmpty {
+            var data = body["data"] as! [String: Any]
+            var relationships = data["relationships"] as! [String: Any]
+            relationships["devices"] = [
+                "data": deviceIDs.map { ["type": "devices", "id": $0] },
+            ]
+            data["relationships"] = relationships
+            body["data"] = data
+        }
+        let response = try client.request(method: .post, path: "profiles", body: body)
+        return try Self.decodeCreatedResourceID(response.data, resource: "profiles create")
+    }
+
+    /// Decodes the `id` from a single-resource `ProfileResponse` payload.
+    public static func decodeCreatedResourceID(_ data: Data, resource: String) throws -> String {
         struct Envelope: Decodable {
             struct Data: Decodable { let id: String }
             let data: Data
         }
         guard let envelope = try? JSONDecoder().decode(Envelope.self, from: data) else {
-            throw ASCError.malformedPayload("profiles create")
+            throw ASCError.malformedPayload(resource)
         }
         return envelope.data.id
+    }
+
+    /// Creates an iOS App Store profile for one bundle-ID resource and certificate.
+    public func createAppStoreProfile(name: String, bundleIDResourceID: String, certificateID: String) throws -> String {
+        try createProfile(
+            name: name,
+            profileType: .appStore,
+            bundleIDResourceID: bundleIDResourceID,
+            certificateID: certificateID,
+            deviceIDs: []
+        )
+    }
+
+    /// Creates a device development profile for one bundle-ID resource, certificate,
+    /// and a single device (version 1 intentionally does not attach every device).
+    public func createDevelopmentProfile(
+        name: String,
+        bundleIDResourceID: String,
+        certificateID: String,
+        deviceID: String
+    ) throws -> String {
+        try createProfile(
+            name: name,
+            profileType: .development,
+            bundleIDResourceID: bundleIDResourceID,
+            certificateID: certificateID,
+            deviceIDs: [deviceID]
+        )
     }
 
     /// Downloads the decrypted provisioning profile content for a profile resource.

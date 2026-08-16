@@ -99,6 +99,38 @@ struct MobileProvisionParserTests {
         #expect(derived["com.apple.developer.team-identifier"] as? String == "TEAMID1234")
     }
 
+    @Test("entitlement derivation forces get-task-allow for development")
+    func developmentEntitlements() throws {
+        let profilePlist: [String: Any] = [
+            "TeamIdentifier": ["TEAMID1234"],
+            "Entitlements": [
+                "application-identifier": "TEAMID1234.net.example.app",
+                "com.apple.developer.team-identifier": "TEAMID1234",
+                "get-task-allow": true,
+            ] as [String: Any],
+        ]
+        let profile = MobileProvisionParser.ProvisioningProfile(plist: profilePlist)
+
+        let entitlementsURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("stupid-app-ent-test-\(UUID().uuidString).plist")
+        defer { try? FileManager.default.removeItem(at: entitlementsURL) }
+        try """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0"><dict/></plist>
+        """.write(to: entitlementsURL, atomically: true, encoding: .utf8)
+
+        let derived = try EntitlementDeriver.derive(
+            sourceURL: entitlementsURL,
+            configuration: .development,
+            bundleID: "net.example.app",
+            profile: profile,
+            teamID: "TEAMID1234"
+        )
+        #expect(derived["get-task-allow"] as? Bool == true)
+        #expect(derived["application-identifier"] as? String == "TEAMID1234.net.example.app")
+    }
+
     @Test("unsupported entitlement is rejected loudly")
     func unsupportedEntitlementRejected() throws {
         let profilePlist: [String: Any] = [

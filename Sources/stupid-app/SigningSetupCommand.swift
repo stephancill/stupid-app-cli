@@ -12,9 +12,8 @@ struct SigningCommand: AsyncParsableCommand {
     )
 }
 
-/// `stupid-app signing setup`: creates distribution (or development) identities and
-/// provisioning profiles through the App Store Connect public API. Gate 1 implements
-/// the distribution path; development setup is added in Gate 3.
+/// `stupid-app signing setup`: creates distribution or development identities and
+/// provisioning profiles through the App Store Connect public API.
 struct SigningSetupCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "setup",
@@ -26,7 +25,7 @@ struct SigningSetupCommand: AsyncParsableCommand {
         case development
     }
 
-    @Option(name: .customLong("kind"), help: "signing kind: distribution (Gate 1) or development (Gate 3).")
+    @Option(name: .customLong("kind"), help: "signing kind: distribution or development.")
     var kind: Kind = .distribution
 
     @Option(name: .customLong("bundle-id"), help: "Exact bundle identifier to provision.")
@@ -35,61 +34,74 @@ struct SigningSetupCommand: AsyncParsableCommand {
     @Option(name: .customLong("profile-name"), help: "Provisioning profile name prefix (defaults to bundle ID).")
     var profileName: String?
 
-    @Option(name: .customLong("import-key"), help: "Import an existing private key PEM for the distribution identity.")
+    @Option(name: .customLong("udid"), help: "Physical device UDID (development setup).")
+    var deviceUDID: String?
+
+    @Option(name: .customLong("device-name"), help: "Device display name used when registering (development setup).")
+    var deviceName: String?
+
+    @Option(name: .customLong("import-key"), help: "Import an existing private key PEM for the identity.")
     var importKeyPath: String?
 
-    @Option(name: .customLong("import-cert"), help: "Import an existing certificate PEM for the distribution identity.")
+    @Option(name: .customLong("import-cert"), help: "Import an existing certificate PEM for the identity.")
     var importCertPath: String?
 
     @Option(name: .customLong("cert-id"), help: "App Store Connect certificate resource ID when importing an existing identity.")
     var importCertID: String?
 
-    @Option(name: .customLong("credential-password"), help: "Credential store passphrase (or STUPID_APP_CREDENTIAL_PASSWORD).")
-    var credentialPassword: String?
-
     @Option(name: .customLong("home"), help: "Credential store directory.")
     var home: String?
 
     mutating func run() async throws {
-        guard kind == .distribution else {
-            throw SigningSetupError.unsupported("development signing lands in Gate 3; only --kind distribution is implemented.")
-        }
-
-        let env = ProcessInfo.processInfo.environment
-        let resolvedPassword = credentialPassword ?? env["STUPID_APP_CREDENTIAL_PASSWORD"]
-        guard let resolvedPassword else {
-            throw CredentialStore.Error.passphraseUnavailable("signing setup")
-        }
-        let homeURL = URL(fileURLWithPath: home ?? FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".stupid-app/credentials").path)
-        let store = CredentialStore(home: homeURL) { resolvedPassword }
-
-        let (apiKey, teamID) = try storedCredentialsOrEnv(resolvedPassword: resolvedPassword)
-        let client = ASCClient(jwt: {
-            try ASCJWTGenerator(key: apiKey).generate()
-        })
-        let operations = ASCOperations(client: client)
+        let context = try ASCContext.resolve(home: home, purpose: "signing setup")
+        let operations = context.operations()
+        let identityManager = IdentityManager(store: context.credentialStore)
 
         guard let bundleID else {
             throw SigningSetupError.bundleIDRequired
         }
-        let profileName = self.profileName ?? "\(bundleID) AppStore"
 
+        let importRequested = [importKeyPath, importCertPath, importCertID].filter { $0 != nil }.count
+        if importRequested > 0, importRequested != 3 {
+            throw SigningSetupError.partialImport
+        }
+
+        switch kind {
+        case .distribution:
+            try runDistribution(
+                operations: operations,
+                identityManager: identityManager,
+                context: context,
+                bundleID: bundleID
+            )
+        case .development:
+            try runDevelopment(
+                operations: operations,
+                identityManager: identityManager,
+                context: context,
+                bundleID: bundleID
+            )
+        }
+    }
+
+    // MARK: - Distribution
+
+    private func runDistribution(
+        operations: ASCOperations,
+        identityManager: IdentityManager,
+        context: ASCContext,
+        bundleID: String
+    ) throws {
         // 1. Disposable/real explicit bundle ID.
         let bundleResourceID = try operations.getOrCreateBundleID(name: bundleID, identifier: bundleID)
         print("Bundle ID \(bundleID) -> \(bundleResourceID)")
 
         // 2. Reuse an existing active distribution identity when present, else import
         // or mint one.
-        let identityManager = IdentityManager(store: store)
-        let importRequested = [importKeyPath, importCertPath, importCertID].filter { $0 != nil }.count
-        if importRequested > 0, importRequested != 3 {
-            throw SigningSetupError.partialImport
-        }
-        var identity: IdentityManager.DistributionIdentity
+        var identity: IdentityManager.SigningIdentity
         var certificateID: String
-        if store.exists(IdentityManager.Secret.distributionCert.rawValue),
-           store.exists(IdentityManager.Secret.distributionKey.rawValue) {
+        if context.credentialStore.exists(IdentityManager.Secret.distributionCert.rawValue),
+           context.credentialStore.exists(IdentityManager.Secret.distributionKey.rawValue) {
             identity = try identityManager.loadDistribution()
             guard let storedCertID = identity.certificateID, !storedCertID.isEmpty else {
                 throw SigningSetupError.storedIdentityMissingCertID
@@ -103,14 +115,14 @@ struct SigningSetupCommand: AsyncParsableCommand {
                 privateKeyPEM: privateKeyPEM,
                 certificatePEM: certificatePEM,
                 certificateID: importCertID,
-                teamID: teamID
+                teamID: context.teamID
             )
             certificateID = importCertID
             print("Imported distribution identity \(certificateID)")
         } else {
             let generated = try identityManager.generateKeyAndCSR(
-                commonName: "Apple Distribution: \(teamID) (\(teamID))",
-                teamID: teamID
+                commonName: "Apple Distribution: \(context.teamID) (\(context.teamID))",
+                teamID: context.teamID
             )
             let certificate = try operations.createDistributionCertificate(csrContent: generated.csr)
             certificateID = certificate.id
@@ -119,18 +131,19 @@ struct SigningSetupCommand: AsyncParsableCommand {
                 privateKeyPEM: generated.privateKeyPEM,
                 certificatePEM: certificatePEM,
                 certificateID: certificateID,
-                teamID: teamID
+                teamID: context.teamID
             )
             print("Minted distribution certificate \(certificateID)")
         }
 
         // 3. Ensure an IOS_APP_STORE profile for the bundle ID + certificate.
+        let profileName = self.profileName ?? "\(bundleID) AppStore"
         var profileID: String? = try operations.findProfile(name: profileName)
         if let profileID, let content = try? operations.downloadProfile(id: profileID) {
             // Gate 1 accepts an existing profile keyed to the certificate; deeper
             // validation is added in the signing verification step.
             print("Reusing profile \(profileID) (\(profileName))")
-            try storeProfile(content, profileName: profileName, home: homeURL)
+            try storeProfile(content, profileName: profileName, home: context.homeURL)
         } else {
             profileID = try operations.createAppStoreProfile(
                 name: profileName,
@@ -138,10 +151,89 @@ struct SigningSetupCommand: AsyncParsableCommand {
                 certificateID: certificateID
             )
             let content = try operations.downloadProfile(id: profileID!)
-            try storeProfile(content, profileName: profileName, home: homeURL)
+            try storeProfile(content, profileName: profileName, home: context.homeURL)
             print("Created profile \(profileID!) (\(profileName))")
         }
         print("Distribution signing setup complete.")
+    }
+
+    // MARK: - Development
+
+    private func runDevelopment(
+        operations: ASCOperations,
+        identityManager: IdentityManager,
+        context: ASCContext,
+        bundleID: String
+    ) throws {
+        // 1. Bundle ID and physical device.
+        let bundleResourceID = try operations.getOrCreateBundleID(name: bundleID, identifier: bundleID)
+        print("Bundle ID \(bundleID) -> \(bundleResourceID)")
+
+        guard let deviceUDID else {
+            throw SigningSetupError.udidRequired
+        }
+        let device = try operations.getOrRegisterDevice(udid: deviceUDID, name: deviceName ?? "iPhone")
+        print("Device \(device.id) (\(device.udid ?? deviceUDID))")
+
+        // 2. Reuse an existing active development identity when present, else import
+        // or mint one.
+        var identity: IdentityManager.SigningIdentity
+        var certificateID: String
+        if context.credentialStore.exists(IdentityManager.Secret.developmentCert.rawValue),
+           context.credentialStore.exists(IdentityManager.Secret.developmentKey.rawValue) {
+            identity = try identityManager.loadDevelopment()
+            guard let storedCertID = identity.certificateID, !storedCertID.isEmpty else {
+                throw SigningSetupError.storedIdentityMissingCertID
+            }
+            certificateID = storedCertID
+            print("Reusing stored development identity (\(certificateID))")
+        } else if let importKeyPath, let importCertPath, let importCertID {
+            let privateKeyPEM = try String(contentsOf: URL(fileURLWithPath: importKeyPath), encoding: .utf8)
+            let certificatePEM = try String(contentsOf: URL(fileURLWithPath: importCertPath), encoding: .utf8)
+            try identityManager.storeDevelopment(
+                privateKeyPEM: privateKeyPEM,
+                certificatePEM: certificatePEM,
+                certificateID: importCertID,
+                teamID: context.teamID
+            )
+            certificateID = importCertID
+            print("Imported development identity \(certificateID)")
+        } else {
+            let generated = try identityManager.generateKeyAndCSR(
+                commonName: "Apple Development: \(context.teamID) (\(context.teamID))",
+                teamID: context.teamID
+            )
+            let certificate = try operations.createDevelopmentCertificate(csrContent: generated.csr)
+            certificateID = certificate.id
+            let certificatePEM = try decodeCertificate(certificate.certificateContentBase64)
+            try identityManager.storeDevelopment(
+                privateKeyPEM: generated.privateKeyPEM,
+                certificatePEM: certificatePEM,
+                certificateID: certificateID,
+                teamID: context.teamID
+            )
+            print("Minted development certificate \(certificateID)")
+        }
+
+        // 3. Ensure an IOS_APP_DEVELOPMENT profile for the bundle ID + certificate +
+        // the selected device only (version 1 does not attach every device).
+        let profileName = self.profileName ?? "\(bundleID) Development"
+        var profileID: String? = try operations.findProfile(name: profileName, profileType: .development)
+        if let profileID, let content = try? operations.downloadProfile(id: profileID) {
+            print("Reusing profile \(profileID) (\(profileName))")
+            try storeProfile(content, profileName: profileName, home: context.homeURL)
+        } else {
+            profileID = try operations.createDevelopmentProfile(
+                name: profileName,
+                bundleIDResourceID: bundleResourceID,
+                certificateID: certificateID,
+                deviceID: device.id
+            )
+            let content = try operations.downloadProfile(id: profileID!)
+            try storeProfile(content, profileName: profileName, home: context.homeURL)
+            print("Created profile \(profileID!) (\(profileName))")
+        }
+        print("Development signing setup complete.")
     }
 
     private func decodeCertificate(_ base64: String) throws -> String {
@@ -169,28 +261,6 @@ struct SigningSetupCommand: AsyncParsableCommand {
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         print("Profile stored at \(url.path)")
     }
-
-    private func storedCredentialsOrEnv(resolvedPassword: String) throws -> (ASCKey, String) {
-        let homeURL = URL(fileURLWithPath: home ?? FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".stupid-app/credentials").path)
-        let store = CredentialStore(home: homeURL) { resolvedPassword }
-
-        // Prefer the encrypted store; fall back to the legacy env-based inputs.
-        if let storedTeamID = try? store.loadTeamID(), let storedKey = try? store.loadASCKey() {
-            return (storedKey, storedTeamID)
-        }
-
-        let env = ProcessInfo.processInfo.environment
-        let keyID = env["ASC_API_KEY_ID"]
-        let issuerID = env["ASC_API_ISSUER_ID"]
-        let p8Path = env["ASC_API_KEY_PATH"]
-        let teamID = env["DEVELOPER_TEAM_ID"]
-        guard let keyID, let issuerID, let p8Path, let teamID,
-              let pem = try? String(contentsOf: URL(fileURLWithPath: p8Path), encoding: .utf8) else {
-            throw CredentialStore.Error.passphraseUnavailable("load ASC key")
-        }
-        return (ASCKey(keyID: keyID, issuerID: issuerID, pem: pem), teamID)
-    }
 }
 
 enum SigningSetupError: Error, CustomStringConvertible {
@@ -198,6 +268,7 @@ enum SigningSetupError: Error, CustomStringConvertible {
     case bundleIDRequired
     case storedIdentityMissingCertID
     case partialImport
+    case udidRequired
 
     var description: String {
         switch self {
@@ -206,9 +277,11 @@ enum SigningSetupError: Error, CustomStringConvertible {
         case .bundleIDRequired:
             return "Provide --bundle-id to provision."
         case .storedIdentityMissingCertID:
-            return "The stored distribution identity has no certificate ID; delete the stored identity and rerun."
+            return "The stored signing identity has no certificate ID; delete the stored identity and rerun."
         case .partialImport:
             return "Importing requires all of --import-key, --import-cert, and --cert-id."
+        case .udidRequired:
+            return "Development setup requires --udid to register the physical device."
         }
     }
 }

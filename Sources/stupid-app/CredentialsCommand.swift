@@ -4,7 +4,7 @@ import ASCKit
 import SigningKit
 
 /// `stupid-app credentials`: manage App Store Connect and developer team credentials
-/// in the encrypted credential store.
+/// in the credential store.
 struct CredentialsCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "credentials",
@@ -14,7 +14,7 @@ struct CredentialsCommand: AsyncParsableCommand {
 }
 
 /// `stupid-app credentials add`: stores the App Store Connect API key and developer
-/// team ID in the encrypted credential store.
+/// team ID in the credential store.
 struct CredentialsAddCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "add",
@@ -33,22 +33,14 @@ struct CredentialsAddCommand: AsyncParsableCommand {
     @Option(name: .customLong("team-id"), help: "Apple Developer Team ID.")
     var teamID: String?
 
-    @Option(name: .customLong("credential-password"), help: "Passphrase for the credential store (or set STUPID_APP_CREDENTIAL_PASSWORD).")
-    var credentialPassword: String?
-
     @Option(name: .customLong("home"), help: "Credential store directory (default ~/.stupid-app/credentials).")
     var home: String?
 
     mutating func run() async throws {
         let env = ProcessInfo.processInfo.environment
-        let resolvedPassword = credentialPassword ?? env["STUPID_APP_CREDENTIAL_PASSWORD"]
         let homeURL = URL(fileURLWithPath: home ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".stupid-app/credentials").path)
-
-        guard let resolvedPassword else {
-            throw CredentialStore.Error.passphraseUnavailable("store credentials")
-        }
-        let store = CredentialStore(home: homeURL) { resolvedPassword }
+        let store = CredentialStore(home: homeURL)
 
         let keyID = self.keyID ?? env["ASC_API_KEY_ID"]
         let issuerID = self.issuerID ?? env["ASC_API_ISSUER_ID"]

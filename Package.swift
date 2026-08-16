@@ -14,12 +14,14 @@ let package = Package(
         .library(name: "BuildCore", targets: ["BuildCore"]),
         .library(name: "ASCKit", targets: ["ASCKit"]),
         .library(name: "SigningKit", targets: ["SigningKit"]),
+        .library(name: "DeviceKit", targets: ["DeviceKit"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
         .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
         .package(url: "https://github.com/apple/swift-certificates.git", from: "1.0.0"),
         .package(url: "https://github.com/jpsim/Yams.git", from: "5.1.3"),
+        .package(url: "https://github.com/tayloraswift/swift-png.git", from: "4.5.0"),
     ],
     targets: [
         .target(
@@ -35,10 +37,16 @@ let package = Package(
             ]
         ),
         .target(
+            name: "CLZFSE",
+            publicHeadersPath: "include"
+        ),
+        .target(
             name: "BuildCore",
             dependencies: [
+                "CLZFSE",
                 "ProjectCore",
                 "SDKCore",
+                .product(name: "PNG", package: "swift-png"),
             ]
         ),
         .target(
@@ -59,7 +67,15 @@ let package = Package(
                 "SDKCore",
                 .product(name: "Crypto", package: "swift-crypto"),
             ]
-        ),        .executableTarget(
+        ),
+        .target(
+            name: "DeviceKit",
+            dependencies: [
+                "BuildCore",
+                "SDKCore",
+            ]
+        ),
+        .executableTarget(
             name: "stupid-app",
             dependencies: [
                 "SDKCore",
@@ -67,6 +83,7 @@ let package = Package(
                 "BuildCore",
                 "ASCKit",
                 "SigningKit",
+                "DeviceKit",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ]
         ),
@@ -79,8 +96,20 @@ let package = Package(
             dependencies: ["ProjectCore"]
         ),
         .testTarget(
+            name: "BuildCoreTests",
+            dependencies: ["BuildCore", "CLZFSE"]
+        ),
+        .testTarget(
             name: "SigningKitTests",
             dependencies: ["SigningKit"]
+        ),
+        .testTarget(
+            name: "ASCKitTests",
+            dependencies: ["ASCKit", "SDKCore"]
+        ),
+        .testTarget(
+            name: "DeviceKitTests",
+            dependencies: ["DeviceKit"]
         ),
     ]
 )

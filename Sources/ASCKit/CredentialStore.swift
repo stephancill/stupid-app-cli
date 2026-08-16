@@ -1,35 +1,26 @@
-import Crypto
 import Foundation
 
-/// Encrypted, permission-hardened credential storage.
+/// Permission-hardened credential storage.
 ///
 /// Layout: one directory (mode `0700`) containing per-secret files (mode `0600`).
-/// Secret files are encrypted at rest with AES-256-GCM using a key derived from a
-/// passphrase via HKDF-SHA256 with a random per-file salt; the salt, nonce,
-/// ciphertext, and tag are stored in one combined blob. All writes are atomic
-/// (write-then-rename). Calling code never persists plaintext secrets.
+/// Secrets are stored as plaintext files readable and writable only by the owning
+/// user (root/sudo still has access by default). All writes are atomic
+/// (write-then-rename). Calling code never persists secrets in command output,
+/// logs, or manifests.
 public struct CredentialStore {
     public var home: URL
-    public var passphrase: () -> String?
 
-    public init(home: URL, passphrase: @escaping () -> String?) {
+    public init(home: URL) {
         self.home = home
-        self.passphrase = passphrase
     }
 
     public enum Error: Swift.Error, Equatable, Sendable, CustomStringConvertible {
-        case passphraseUnavailable(String)
-        case decryptionFailed(String)
-        case secretNotEncrypted(String)
+        case unreadableSecret(String)
 
         public var description: String {
             switch self {
-            case let .passphraseUnavailable(name):
-                return "A credential passphrase is required to \(name). Set STUPID_APP_CREDENTIAL_PASSWORD or pass --credential-password."
-            case let .decryptionFailed(name):
-                return "Could not decrypt '\(name)'. The credential passphrase may be wrong."
-            case let .secretNotEncrypted(name):
-                return "Refusing to read '\(name)': it is not an encrypted secret blob."
+            case let .unreadableSecret(name):
+                return "Could not read credential '\(name)'. Re-run `stupid-app credentials add` first."
             }
         }
     }
@@ -39,51 +30,24 @@ public struct CredentialStore {
         try setPermissions(home, mode: 0o700)
     }
 
-    /// Derives a per-secret AES-256 key from the passphrase and a random salt.
-    private func key(passphrase: String, salt: Data) -> SymmetricKey {
-        HKDF<SHA256>.deriveKey(
-            inputKeyMaterial: SymmetricKey(data: Data(passphrase.utf8)),
-            salt: salt,
-            info: Data("stupid-app.credentials.v1".utf8),
-            outputByteCount: 32
-        )
-    }
-
-    /// Encrypts and atomically writes a secret. A missing passphrase fails loudly.
+    /// Atomically writes a secret as a plaintext file with mode `0600`.
     public func writeSecret(_ name: String, data: Data) throws {
         try ensureDirectory()
-        guard let passphrase = passphrase() else {
-            throw Error.passphraseUnavailable("write '\(name)'")
-        }
-        let salt = try generateBytes(16)
-        let key = self.key(passphrase: passphrase, salt: salt)
-        let sealed = try AES.GCM.seal(data, using: key)
-        guard let combinedData = sealed.combined else {
-            throw Error.decryptionFailed(name)
-        }
-        var combined = salt
-        combined.append(combinedData)
-        try atomicWrite(combined, to: fileURL(forSecret: name), mode: 0o600)
+        let url = fileURL(forSecret: name)
+        let temporary = url.appendingPathExtension("tmp-\(UUID().uuidString)")
+        try data.write(to: temporary, options: .atomic)
+        try setPermissions(temporary, mode: 0o600)
+        _ = try? FileManager.default.removeItem(at: url)
+        try FileManager.default.moveItem(at: temporary, to: url)
     }
 
-    /// Reads and decrypts a secret. A missing passphrase fails loudly; a non-secret
-    /// (unencrypted) file is rejected rather than silently treated as plaintext.
+    /// Reads a secret file. A missing file fails loudly.
     public func readSecret(_ name: String) throws -> Data {
-        guard let passphrase = passphrase() else {
-            throw Error.passphraseUnavailable("read '\(name)'")
-        }
         let url = fileURL(forSecret: name)
-        guard let combined = try? Data(contentsOf: url), combined.count > 16 else {
-            throw Error.secretNotEncrypted(name)
+        guard let data = try? Data(contentsOf: url) else {
+            throw Error.unreadableSecret(name)
         }
-        let salt = combined.prefix(16)
-        let sealedData = combined.dropFirst(16)
-        let key = self.key(passphrase: passphrase, salt: Data(salt))
-        guard let sealed = try? AES.GCM.SealedBox(combined: sealedData),
-              let opened = try? AES.GCM.open(sealed, using: key) else {
-            throw Error.decryptionFailed(name)
-        }
-        return opened
+        return data
     }
 
     /// A stable file URL for a secret name. The name is validated to be a single
@@ -106,7 +70,7 @@ public struct CredentialStore {
         guard exists(Secret.ascKey.rawValue),
               exists(Secret.ascKeyID.rawValue),
               exists(Secret.ascIssuerID.rawValue) else {
-            throw Error.secretNotEncrypted("stored ASC key (run `stupid-app credentials add` first)")
+            throw Error.unreadableSecret("stored ASC key (run `stupid-app credentials add` first)")
         }
         let pem = String(decoding: try readSecret(Secret.ascKey.rawValue), as: UTF8.self)
         let keyID = String(decoding: try readSecret(Secret.ascKeyID.rawValue), as: UTF8.self)
@@ -124,24 +88,7 @@ public struct CredentialStore {
         FileManager.default.fileExists(atPath: fileURL(forSecret: name).path)
     }
 
-    private func atomicWrite(_ data: Data, to url: URL, mode: Int) throws {
-        let temporary = url.appendingPathExtension("tmp-\(UUID().uuidString)")
-        try data.write(to: temporary, options: .atomic)
-        try setPermissions(temporary, mode: mode)
-        _ = try? FileManager.default.removeItem(at: url)
-        try FileManager.default.moveItem(at: temporary, to: url)
-    }
-
     private func setPermissions(_ url: URL, mode: Int) throws {
         try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: url.path)
-    }
-
-    private func generateBytes(_ count: Int) throws -> Data {
-        var generator = SystemRandomNumberGenerator()
-        var bytes = [UInt8](repeating: 0, count: count)
-        for index in bytes.indices {
-            bytes[index] = UInt8.random(in: .min ... .max, using: &generator)
-        }
-        return Data(bytes)
     }
 }

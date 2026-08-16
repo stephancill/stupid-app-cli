@@ -93,4 +93,25 @@ public enum HostInfo {
         }
         return name
     }
+
+    /// Returns the full compiler version string (e.g. `Swift version 6.2.4 ...`) for
+    /// provenance reporting, or nil when the compiler is unavailable.
+    public static func compilerVersion(swiftPath: String = "swift") throws -> String? {
+        let executable = resolveExecutable(swiftPath)
+        guard FileManager.default.isExecutableFile(atPath: executable) else { return nil }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = ["--version"]
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+        let out = String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        let err = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        let combined = out.isEmpty ? err : out
+        return combined.split(separator: "\n").first.map(String.init)
+    }
 }

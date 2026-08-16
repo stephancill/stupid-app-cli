@@ -112,4 +112,14 @@ public struct RcodesignSigner {
         }
         return result.stdout
     }
+
+    /// Returns the first line of `rcodesign --version` for provenance reporting, or nil
+    /// when the binary is unavailable.
+    public static func version(rcodesignPath: String) throws -> String? {
+        let resolved = HostInfo.resolveExecutable(rcodesignPath)
+        guard FileManager.default.isExecutableFile(atPath: resolved) else { return nil }
+        let result = try ProcessRunner.run(executable: resolved, arguments: ["--version"])
+        guard result.succeeded else { return nil }
+        return result.stdout.split(separator: "\n").first.map(String.init)
+    }
 }

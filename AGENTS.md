@@ -69,7 +69,9 @@ Do not include timeline estimates in planning documents. Use ordered dependencie
 
 - Never commit `.env.local`, App Store Connect `.p8` keys, signing private keys, PKCS#12 files, provisioning profiles containing operational identifiers, pairing records, or release directories containing private material.
 - Use private directories with mode `0700` and secret files with mode `0600`.
-- Encrypt signing private keys at rest.
+- During technical validation, store credentials as owner-only plaintext files in a
+  mode `0700` directory with mode `0600` files. Do not add a credential passphrase or
+  legacy environment fallback without an explicit security-design change.
 - Use atomic writes for credentials and active SDK installations.
 - Redact secrets and personal identifiers from logs, errors, tests, snapshots, and implementation notes.
 - Do not print raw API authorization headers or JWTs.

@@ -16,14 +16,31 @@ Mach-O using the imported SDK.
 
 Gate 1 (distribution signing proof) is complete on the isolated WSL host. The CLI now
 scaffolds projects (`stupid-app new` + `stupid-app.yml`), plans and assembles an
-unsigned `.app` with the imported SDK (`stupid-app build`), manages encrypted App Store
-Connect credentials and a distribution identity (`stupid-app credentials add`,
+unsigned `.app` with the imported SDK (`stupid-app build`), manages permission-hardened
+App Store Connect credentials and a distribution identity (`stupid-app credentials add`,
 `stupid-app signing setup --kind distribution`), and produces a real Apple
 Distribution-signed IPA with `stupid-app release archive`. The pinned `rcodesign`
 0.29.0 signing kernel (prebuilt musl binaries, no Rust on target hosts) signs once with
 timestamps disabled; the output was independently verified with the project's own
 checks and with macOS `codesign --verify --strict`. See `docs/rcodesign-pin.md` for the
 signer pin and `docs/implementation-notes.md` for verification details.
+
+Gate 2 (Linux Build Upload proof) is complete on the isolated WSL host. The App Store
+Connect Build Upload client (`POST /v1/buildUploads`, `POST /v1/buildUploadFiles`,
+execution of returned `DeliveryFileUploadOperation`s, `PATCH` commit with source
+checksums), exact-build resolution by app + marketing version + build number, and
+processing/internal-beta polling live in `ASCKit`; `stupid-app release upload --wait`
+uploads a distribution IPA and writes the release manifest. The accepted Linux-built
+IPA uses the native `Assets.car` writer with pinned Apple LZFSE compression and nested
+`CFBundleIconName` metadata matching `actool`; App Store Connect reported the build
+`VALID` and `READY_FOR_BETA_TESTING`. The build installed through TestFlight and
+launched successfully. See "Live Gate 2 Upload Findings" below.
+
+Gate 3 (development signing proof) is partially implemented. Device registration,
+development certificate/profile creation, development entitlement reconciliation,
+USB pass-through, trust/pairing, build, signing, and IPA packaging were exercised on
+the WSL host. The first USB install stalled in `pymobiledevice3` after a usbmux
+connection error; installation and launch remain unproven.
 
 Product and executable naming is decided: the CLI and package are `stupid-app`, the
 project-level configuration file is `stupid-app.yml`, the SDK artifact ID is
@@ -177,10 +194,11 @@ stupid-app sdk import <archive>
 stupid-app new <name>
 stupid-app build [--configuration debug|release]
 stupid-app credentials add
-stupid-app signing setup --distribution
-stupid-app signing setup --development
+stupid-app signing setup --kind distribution
+stupid-app signing setup --kind development
 stupid-app devices
 stupid-app device pair --usb
+stupid-app run --usb [--udid <udid>]
 stupid-app run --network --udid <udid>
 stupid-app release archive
 stupid-app release upload [--wait]
@@ -188,8 +206,9 @@ stupid-app release status
 ```
 
 Implemented so far: `new`, `sdk export`, `sdk import`, `build`, `credentials add`,
-`signing setup --kind distribution`, and `release archive`. The `doctor`, `devices`,
-`device`, `release upload`, and `release status` commands are not yet implemented.
+`signing setup --kind distribution|development`, `devices`, `run --usb`,
+`release archive`, and `release upload --wait`. The `doctor`, `device pair`,
+`run --network`, and `release status` commands are not yet implemented.
 
 The command surface is provisional until the proof gates complete. Keep build, signing, install, launch, upload, and status as separable operations even if convenience commands compose them.
 
@@ -210,8 +229,8 @@ Do not copy xtool's large development command wholesale. Keep these concerns as 
 - Entitlement derivation and validation. (`SigningKit`)
 - Code-signing adapter. (`SigningKit`)
 - IPA packaging and verification. (`SigningKit`)
-- Device pairing, discovery, installation, and launch. (not yet implemented)
-- Build Upload and TestFlight processing. (not yet implemented)
+- Device listing and USB installation/launch adapter. (`DeviceKit`, partially proven)
+- Build Upload and TestFlight processing. (`ASCKit`, transport proven)
 
 ### SDK Export And Import
 
@@ -276,6 +295,12 @@ Correct known xtool weaknesses while extracting this design:
 - Resolve tools through injected configuration rather than hard-coded macOS paths.
 - Reject unsupported resources instead of copying them as if compiled.
 - Keep generated and persistent release files in separate directories.
+- Emit the App Store-required build-system Info.plist keys (`DTPlatformName`,
+  `DTPlatformVersion`, `DTSDKName`, `DTXcode`, `DTXcodeBuild`, `DTCompiler`) from the
+  SDK export manifest, and never emit `BuildMachineOSBuild` on Linux.
+- Generate the app icon set natively with `swift-png` (`IconGenerator`), and generate
+  a compiled `Assets.car` with the native writer (`AssetCatalogWriter`) so builds
+  always embed a real asset catalog.
 
 ### Authentication And Apple APIs
 
@@ -313,14 +338,17 @@ Generated identity flow:
 3. Request the appropriate certificate through App Store Connect.
 4. Download and verify the certificate.
 5. Verify that the certificate matches the private key.
-6. Store the identity using encrypted PKCS#8 or PKCS#12.
+6. Store the PEM identity in the permission-hardened credential directory.
 
 Storage requirements:
 
 - Credential directories use mode `0700`.
 - Secret files use mode `0600`.
 - Writes are atomic.
-- Private keys are encrypted at rest.
+- Secret files are plaintext and readable only by the owning account and root/sudo.
+- No credential passphrase or `STUPID_APP_CREDENTIAL_PASSWORD` is used.
+- Credential reads fail loudly; they do not fall back to legacy ASC environment
+  variables after a store error.
 - Secrets never appear in command output, logs, manifests, shell history, repository files, or crash reports.
 - The App Store Connect API key and Apple signing identities remain separate credentials.
 - Imported profiles and certificate metadata may be cached, but private key material must never be copied into release artifacts.
@@ -437,11 +465,16 @@ Initial direction:
 - Do not require LLDB attachment for a successful run.
 - Make the deployment transport replaceable so a future Raspberry Pi or LAN agent can receive a development-signed IPA from the WSL or another Linux build host.
 
-The current WSL host is on the same physical LAN as the iPhone and uses WSL mirrored networking, making it a better wireless test environment than a public VPS. Modern iPhone discovery and CoreDevice communication still depend on mDNS, pairing records, IPv6 behavior, USB bootstrap, and sometimes privileged TUN routing. USB trust and pairing cannot be tested until `usbipd-win` or an equivalent supported WSL USB pass-through path is installed and validated.
+The current WSL host is on the same physical LAN as the iPhone and uses WSL mirrored
+networking, making it a better wireless test environment than a public VPS.
+`usbipd-win` is installed and USB pass-through plus trust/pairing were validated.
+Modern network discovery, remote pairing, CoreDevice tunneling, installation, and
+launch still depend on mDNS, pairing records, IPv6 behavior, and sometimes privileged
+TUN routing and remain unverified.
 
 ### App Store Connect Upload
 
-Use the public Build Upload resources instead of `altool`:
+Use the public Build Upload resources instead of `altool` (implemented in `ASCKit`):
 
 1. Create a build upload for the app, platform, marketing version, and build number.
 2. Create the IPA build-upload file.
@@ -451,9 +484,19 @@ Use the public Build Upload resources instead of `altool`:
 6. Resolve the exact resulting build by app, marketing version, and build number.
 7. Poll build processing and beta details until the selected readiness state is reached.
 
+`BuildUploader` in `Sources/ASCKit/BuildUploader.swift` orchestrates the full flow:
+create Build Upload, reserve the file, execute `DeliveryFileUploadOperation`s, commit
+with source checksums, poll to a terminal upload state, resolve the exact build by
+app + marketing version + build number, and poll processing plus `buildBetaDetail` to
+internal TestFlight readiness. Checksum verification and beta-readiness state
+transitions are pure functions with unit tests. Delivery uploads run through
+`ASCClient.rawRequest` so presigned URLs that carry their capability are never logged.
+
 Do not identify builds using a generic "latest" query when an upload-specific identifier is available.
 
-The release manifest should be public-safe and contain:
+The release manifest (`Sources/ASCKit/ReleaseManifest.swift`) is public-safe and
+written by `stupid-app release upload` to `.release/release-manifest.json`. It
+contains:
 
 - Bundle ID.
 - Marketing version.
@@ -514,8 +557,12 @@ The image contains no project signing credentials or Apple SDK payload. Re-expor
 
 Current WSL limitations and follow-up:
 
-- `usbipd-win` is not installed, so USB iPhone trust and pairing have not been tested.
-- Mirrored networking is configured, but iPhone mDNS discovery, remote pairing, TUN setup, installation, and launch remain unverified.
+- `usbipd-win` is installed; a physical iPhone was passed through to WSL and its
+  existing pairing record validated successfully.
+- `usbmuxd` and `pymobiledevice3` can see the USB device. The first app installation
+  stalled after a usbmux connection error, so USB install and launch remain unproven.
+- Mirrored networking is configured, but iPhone mDNS discovery, remote pairing, TUN
+  setup, network installation, and launch remain unverified.
 - The iOS Swift SDK has been exported and imported; a minimal SwiftUI app builds and links for `arm64-apple-ios`.
 - The host Swift compiler is proven for both native Linux compilation and iOS cross-compilation.
 - WSL is x86_64, so the SDK bundle must include x86_64 Linux Darwin tools and declare only the actual host triple.
@@ -523,7 +570,8 @@ Current WSL limitations and follow-up:
 
 Operational controls:
 
-- Keep signing credentials encrypted and outside project directories.
+- Keep signing credentials in the `0700` credential directory as owner-only `0600`
+  files and outside project directories.
 - Treat WSL exports, virtual disks, Windows backups, and snapshots as secret-bearing once credentials are added.
 - Do not place Apple SDK exports in this repository or reusable public images.
 - Keep sufficient free space for multiple SDKs, Swift module caches, dependency checkouts, and release artifacts.
@@ -669,7 +717,7 @@ Primary public-auth source: `~/environments/external/xtool/Sources/XKit/Develope
 
 - `ASCKey`, lines 4-14, is the minimal key ID, issuer ID, and PEM model.
 - `ASCJWTGenerator`, lines 16-91, generates ES256 JWTs, uses a 15-minute TTL, renews with a two-minute tolerance, and emits the required raw P-256 signature representation.
-- `ASCJWTGenerator.generate()`, lines 69-90, is a strong direct adaptation candidate after moving PEM storage behind the encrypted credential store.
+- `ASCJWTGenerator.generate()`, lines 69-90, is a strong direct adaptation candidate after moving PEM storage behind the permission-hardened credential store.
 - `Data.base64URLEncodedString()`, lines 93-100, implements unpadded base64url.
 
 Cross-check against `~/.config/opencode/skills/appstore-release/scripts/release.sh:151-180`, whose `jwt()` helper independently demonstrates the required `aud=appstoreconnect-v1` payload and raw 64-byte `r || s` signature.
@@ -685,12 +733,12 @@ Use only the App Store Connect branch in `Sources/XKit/DeveloperServices/OpenAPI
 | `Sources/XKit/Model/Keypair.swift:31-61` | RSA-2048 generation and CSR construction using Swift Crypto and Swift Certificates | Replace hard-coded CSR subject values; verify whether the SHA-1 CSR signature at line 58 remains necessary or accepted before copying it |
 | `Sources/XKit/Model/Certificate.swift:14-78` | DER certificate parsing, common-name/team extraction, serial normalization, validity comparison, and DER serialization | Add key-match, extended-key-usage, issuer-chain, certificate-type, and current-validity checks |
 | `DeveloperServices/Certificates/DeveloperServicesFetchCertificateOperation.swift:60-82` | Generate key/CSR, create certificate through the public API, decode returned DER | It hard-codes `.development` at line 70; make certificate purpose explicit |
-| `DeveloperServicesFetchCertificateOperation.swift:109-185` | Shows PKCS#12 reuse and server certificate matching concepts | The entire load path is guarded by Security.framework and returns nil on Linux. Replace it with portable encrypted PKCS#8/PKCS#12 handling |
+| `DeveloperServicesFetchCertificateOperation.swift:109-185` | Shows PKCS#12 reuse and server certificate matching concepts | The entire load path is guarded by Security.framework and returns nil on Linux. Replace it with portable PEM handling in the permission-hardened store |
 | `DeveloperServicesFetchCertificateOperation.swift:230-264` | Detect missing or expired remote certificate state | Do not automatically revoke unrelated team certificates; select by stored certificate ID and fingerprint and require explicit destructive confirmation |
-| `appstore-release/scripts/release.sh:649-707` | Distribution RSA key/CSR, `DISTRIBUTION` certificate creation, API response checks, and reuse intent | Replace macOS Keychain operations with the Linux encrypted credential store |
+| `appstore-release/scripts/release.sh:649-707` | Distribution RSA key/CSR, `DISTRIBUTION` certificate creation, API response checks, and reuse intent | Replace macOS Keychain operations with the Linux permission-hardened credential store |
 | `release.sh:423-459` | Match local identity fingerprint to an active App Store Connect certificate and verify profile certificate membership | Replace `security` CMS decoding with the project's portable profile/CMS parser |
 
-`Sources/XKit/Utilities/KeyValueStorage.swift` provides a useful protocol boundary but not a secure Linux implementation. Its directory store does not enforce this project's mode, encryption, and atomic-write requirements; its Keychain store is macOS-only.
+`Sources/XKit/Utilities/KeyValueStorage.swift` provides a useful protocol boundary but not a secure Linux implementation. Its directory store does not enforce this project's mode and atomic-write requirements; its Keychain store is macOS-only.
 
 ### Bundle IDs, Capabilities, Profiles, And Entitlements
 
@@ -864,7 +912,9 @@ Key path and schema ranges:
 
 xtool's checked-in generated client is not sufficient for this phase. `~/environments/external/xtool/Sources/DeveloperAPI/openapi-generator-config.yaml:1-12` filters generation to provisioning-related tags and omits Build Upload operations. Generate a narrow project-owned client from the pinned full specification or implement these operations explicitly; do not assume the existing `DeveloperAPI` target exposes them. The current appstore-release API reference documents `altool`, so the pinned OpenAPI schema is authoritative for binary upload.
 
-Implementation sequence derived from those schemas:
+Gate 2 implemented this project-owned client in `ASCKit` (`Sources/ASCKit/BuildUpload.swift`,
+`Sources/ASCKit/BuildUploader.swift`). The implementation sequence derived from those
+schemas is now implemented as follows:
 
 1. `POST /v1/buildUploads` with app relationship, platform, `cfBundleShortVersionString`, and `cfBundleVersion`.
 2. `POST /v1/buildUploadFiles` with build-upload relationship, filename, file size, `assetType=ASSET`, and `uti=com.apple.ipa`.
@@ -996,12 +1046,116 @@ Exit condition: local checks pass and the exact signed artifact is ready for upl
 
 - Implement the minimal JWT and Build Upload API client.
 - Upload the distribution-signed proof IPA.
-- Persist raw, redacted request outcomes useful for diagnosis.
+- Persist the public-safe upload/build outcome in the release manifest.
 - Poll to a terminal Build Upload state.
 - Resolve and poll the resulting build.
 - Install the processed build through TestFlight.
 
-Exit condition: App Store Connect reports `VALID`, internal TestFlight becomes ready, and the app launches from TestFlight.
+Status: **complete** on the isolated WSL host. The Build Upload client and
+`BuildUploader` orchestration live in `ASCKit` (`Sources/ASCKit/BuildUpload.swift`,
+`Sources/ASCKit/BuildUploader.swift`, `Sources/ASCKit/ReleaseManifest.swift`), and
+`stupid-app release upload [--wait]` is wired into the CLI
+(`Sources/stupid-app/ReleaseUploadCommand.swift`). A live upload on the isolated WSL
+host proved creation, file reservation, delivery, checksum commit, terminal-state
+polling, exact-build resolution, and beta-state polling. The accepted build used a
+native catalog with compressed `bvx2` payloads and `actool`-matching nested icon-name
+metadata. App Store Connect reported `processing=VALID` and
+`internal=READY_FOR_BETA_TESTING`; the release manifest was written, and the same build
+installed and launched through TestFlight.
+
+Exit condition: App Store Connect reports `VALID`, internal TestFlight becomes ready,
+and the app launches from TestFlight.
+
+### Live Gate 2 Upload Findings
+
+A real distribution-signed IPA for a proof app was uploaded from the isolated WSL host
+with `stupid-app release upload --wait`. The upload transport worked end-to-end; App
+Store Connect's build-upload validation then rejected the app and emailed the
+diagnostics below. Treat these as authoritative packaging requirements for Gate 2 and
+Gate 5.
+
+#### 1. Build-system Info.plist keys (resolved)
+
+App Store validation requires the Xcode build-system keys that the Linux packer was not
+emitting. The merged `Info.plist` in the IPA must carry, at minimum:
+
+- `DTPlatformName` = `iphoneos`
+- `DTPlatformVersion` = the real iPhoneOS SDK version (e.g. `26.1`)
+- `DTSDKName` = `iphoneos26.1`
+- `DTXcode` = numeric Xcode version (e.g. `2611` for 26.1.1)
+- `DTXcodeBuild` = Xcode build (e.g. `17B100`)
+- `DTCompiler` = `com.apple.compilers.llvm.clang.1_0`
+- `BuildMachineOSBuild` must be absent (never invent a macOS build number on Linux)
+
+These are now injected by the packer from the SDK export manifest
+(`Packer.injectBuildSystemKeys`), and the `BuildMachineOSBuild` key is explicitly
+removed. Without `DTPlatformName` the app is rejected with `ITMS-90507`; the SDK/Xcode
+version rejection (`ITMS-90534`) followed from the missing platform identification.
+Orientation keys were also corrected to the iPad-required set
+(`UISupportedInterfaceOrientations~ipad`).
+
+#### 2. App icon asset catalog (resolved)
+
+The app icon was the remaining blocker. App Store validation for an iOS 11+ SDK build
+rejects the old icon approach with:
+
+- `ITMS-90022` / `ITMS-90023` — no 120x120 (iPhone) and 152x152 (iPad) app icon
+  resolvable in the bundle.
+- `ITMS-90713` — no `Assets.car` (compiled asset catalog); "apps built with iOS 11 or
+  later SDK must supply app icons in an asset catalog and must also provide a value for
+  this Info.plist key" (`CFBundleIconName`).
+
+Key findings:
+
+- **Concrete PNGs plus `CFBundleIconName`/`CFBundleIcons` are not enough.** The packer
+  generates the full `Icon-*.png` set natively (pure-Swift `swift-png`, no external
+  image tools) and sets `CFBundleIconName`, `CFBundleIcons`, and `CFBundleIcons~ipad`,
+  but App Store Connect still cannot resolve an app icon because the icons must live in
+  a compiled `Assets.car`.
+- **The compiled catalog is normally produced only by `actool`**, which runs only on
+  macOS (it depends on CoreUI). Xcode-produced IPAs embed `Assets.car` plus the loose
+  PNGs; that is why they pass. xtool's Linux-built `.app` bundles contain the loose
+  PNGs and an uncompiled `Assets.xcassets` but no `Assets.car`, and there is no
+  evidence the xtool Linux icon path was ever App Store-validated.
+- **The `.car` format is a `BOMStore` container** (NeXTSTEP bill-of-materials binary)
+  holding CoreUI blocks (`CARHEADER`, `EXTENDED_METADATA`, `KEYFORMAT`) and B-tree
+  databases (`FACETKEYS`, `RENDITIONS`, `APPEARANCEKEYS`, `BITMAPKEYS`), with
+  per-rendition `csiheader`/TLV/pixel-rendition payloads. The format is documented by
+  reverse-engineering work (dbg.re's `.car` deep dive, Timac's `.car` format
+  write-up, `bomutils`' `bom.h`). No maintained cross-platform `.car` *writer* was
+  found; readers exist.
+
+**Current implementation:** a native `Assets.car` writer for the app-icon subset is implemented in
+`Sources/BuildCore/AssetCatalogWriter.swift` (`AssetCatalogWriter`). It builds the
+full BOMStore container and CoreUI blocks/trees from the format documentation
+(clean-room, no GPL `darling` code), and the packer generates `Assets.car`
+automatically during `stupid-app build` / `stupid-app release archive`. Pixel payloads
+use Apple's BSD-3-Clause LZFSE reference implementation pinned at commit
+`e634ca58b4821d9f3d560cdc6df5dec02ffc93fd`; the vendored source and license notice are
+in `Sources/CLZFSE` and `THIRD_PARTY_NOTICES.md`.
+
+Two additional live uploads establish that local CoreUI acceptance is not sufficient:
+
+- An `MLEC` compression-type-0 catalog with raw ARGB pixels passed `assetutil --info`,
+  `--validate-file`, and thinning, but App Store validation returned the same three
+  icon errors.
+- A type-4 `MLEC` catalog with the exact four `KCBC` row chunks used by `actool` and
+  valid raw (`bvx-`) LZFSE streams reported `Compression: lzfse` in `assetutil` and
+  passed all local validation, but App Store validation again returned the same errors.
+- Differential inspection against the `actool` golden catalog shows matching named
+  blocks, trees, rendition keys, facet metadata, phone/iPad multisize records, and
+  `assetutil` output. The material payload difference is that `actool` emits genuinely
+  compressed LZFSE v2 (`bvx2`) streams.
+
+The accepted sequence established two additional requirements. Genuinely compressed
+`bvx2` payloads alone still failed when only the top-level `CFBundleIconName` was
+present. Matching `actool` by also writing `CFBundleIconName=AppIcon` inside both the
+phone and iPad `CFBundlePrimaryIcon` dictionaries cleared icon validation. The exact
+Linux-produced catalog passed macOS `assetutil --validate-file`, every generated KCBC
+chunk round-trips to its source ARGB rows in tests, and App Store Connect accepted the
+combined output. A proof build without `ITSAppUsesNonExemptEncryption` then reached
+`MISSING_EXPORT_COMPLIANCE`; declaring `false` for the encryption-free fixture allowed
+the next build to become internally TestFlight-ready.
 
 ### Gate 3: Development Signing Proof
 
@@ -1010,6 +1164,18 @@ Exit condition: App Store Connect reports `VALID`, internal TestFlight becomes r
 - Create a device development profile.
 - Reconcile development entitlements.
 - Sign once, package, and install over USB.
+
+Status: **partially implemented and provisioned**. `devices`,
+`signing setup --kind development`, `run --usb`, development identity/profile storage,
+the reusable `SigningPipeline`, and the `DeviceKit` `pymobiledevice3` adapter are in the
+working tree. A physical device was registered, a development identity/profile was
+created, USB pass-through and pairing were validated, and `run --usb` built, signed,
+and packaged the development IPA. The install then stalled after a usbmux connection
+error. No successful installation or launch has been claimed.
+
+See the "Gate 3 Detailed Takeover State" entry in `docs/implementation-notes.md` for the
+exact infrastructure state (usbipd pass-through, `usbmuxd`, `.wslconfig` keep-alive),
+repro commands, the open blocker, and the `DeviceKit` cleanup fixes still required.
 
 Exit condition: the app launches on the registered device with a valid development signature.
 
@@ -1068,7 +1234,7 @@ Required recurring integration coverage:
 2. A third-party signer may produce structurally plausible output that App Store Connect rejects.
 3. `rcodesign` does not provide an iOS provisioning or IPA workflow and its built-in verification is not Apple's full policy engine.
 4. Swift compiler and Xcode SDK interfaces must remain compatible as versions change.
-5. Linux lacks Apple's resource compilers, permanently limiting the supported project model unless replacements are built.
+5. Linux lacks Apple's resource compilers, limiting the supported project model unless replacements are built. The native app-icon `.car` subset is App Store-validated; other Apple resource compilers (e.g. `momc`) remain out of scope.
 6. Modern iPhone wireless protocols and Developer Disk Image behavior change across iOS versions.
 7. WSL USB pass-through, mirrored-network mDNS, IPv6, and privileged CoreDevice tunnel behavior may prevent direct wireless deployment even though the Windows host is on the iPhone's LAN.
 8. Apple Developer and App Store Connect API behavior, roles, certificate limits, and profile rules can change.
@@ -1080,7 +1246,8 @@ Required recurring integration coverage:
 - First officially supported Linux architecture and distribution (x86_64 Ubuntu 24.04 is the validated proof pair).
 - Exact first Swift/Xcode SDK compatibility pair (Xcode 26.1.1 / Swift 6.2.1 export, Swift 6.2.4 host is the validated proof pair).
 - Whether `rcodesign` remains a pinned subprocess or becomes a directly integrated Rust component later.
-- Credential encryption and non-interactive unlock UX.
+- Whether owner-only plaintext credential storage remains acceptable beyond technical
+  validation or is replaced by an OS keyring/HSM-backed design.
 - Release directory layout and retention policy.
 - Future local device gateway protocol and trust model.
 - Minimum entitlement and capability set included in version 1.
@@ -1089,24 +1256,8 @@ Required recurring integration coverage:
 
 ## Recommended Next Work
 
-Proceed to Gate 2 (Linux Build Upload proof) on the same WSL host. Gate 1 leaves a
-verified distribution-signed IPA ready for upload; Gate 2 turns it into a validated
-App Store Connect build. The concrete next steps are:
-
-1. Implement the Build Upload operations in `ASCKit` (`POST /v1/buildUploads`,
-   `POST /v1/buildUploadFiles`, executing returned `DeliveryFileUploadOperation`s with
-   exact URLs/methods/headers/ranges/checksums, then `PATCH` with
-   `uploaded=true`).
-2. Add `stupid-app release upload --wait` that uploads the Gate 1 IPA, polls Build
-   Upload to a terminal state, resolves the exact build by app + marketing version +
-   build number, and polls processing plus `buildBetaDetail` to internal TestFlight
-   readiness.
-3. Persist raw, redacted request outcomes for diagnosis and write the release
-   manifest (`docs/engineering-handover.md` Release Manifest section) recording
-   artifact SHA-256, bundle ID, versions, upload/build resource IDs, and processing
-   state.
-4. Install the processed build through TestFlight to complete the Gate 2 acceptance
-   proof.
-
-Remaining gates after Gate 2: Gate 3 (development signing + USB install), Gate 4
-(wireless transport), Gate 5 (productize the CLI).
+Proceed with Gate 3: reproduce the usbmux install failure with bounded logs,
+fix helper timeout/cleanup, then prove USB installation and launch. See the "Gate 3
+Detailed Takeover State" implementation-note entry for the current infrastructure,
+repro commands, and open items. Gate 4 remains wireless transport; Gate 5 remains CLI
+productization.

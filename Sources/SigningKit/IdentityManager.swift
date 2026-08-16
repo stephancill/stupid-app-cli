@@ -5,8 +5,8 @@ import X509
 import _CryptoExtras
 
 /// Generates and persists Apple signing identities (development/distribution private
-/// keys and certificates). Private keys are stored through the encrypted credential
-/// store; the certificate chain is stored as PEM.
+/// keys and certificates). Private keys are stored through the permission-hardened
+/// credential store; the certificate chain is stored as PEM.
 public struct IdentityManager {
     public var store: CredentialStore
 
@@ -17,13 +17,14 @@ public struct IdentityManager {
     public enum Secret: String {
         case developmentKey = "development.key.pem"
         case developmentCert = "development.cert.pem"
+        case developmentCertID = "development.cert.id"
         case distributionKey = "distribution.key.pem"
         case distributionCert = "distribution.cert.pem"
         case distributionCertID = "distribution.cert.id"
         case developerTeamID = "developer-team-id"
     }
 
-    public struct DistributionIdentity {
+    public struct SigningIdentity: Sendable {
         public var privateKeyPEM: String
         public var certificatePEM: String
         public var certificateID: String?
@@ -85,20 +86,50 @@ public struct IdentityManager {
         try store.writeSecret(Secret.developerTeamID.rawValue, data: Data(teamID.utf8))
     }
 
-    public func loadDistribution() throws -> DistributionIdentity {
-        guard store.exists(Secret.distributionKey.rawValue),
-              store.exists(Secret.distributionCert.rawValue) else {
-            throw Error.identityMissing("distribution")
+    public func loadDistribution() throws -> SigningIdentity {
+        try load(
+            keySecret: Secret.distributionKey.rawValue,
+            certSecret: Secret.distributionCert.rawValue,
+            certIDSecret: Secret.distributionCertID.rawValue,
+            kind: "distribution"
+        )
+    }
+
+    /// Stores a development identity (private key + certificate + certificate ID).
+    public func storeDevelopment(
+        privateKeyPEM: String,
+        certificatePEM: String,
+        certificateID: String,
+        teamID: String
+    ) throws {
+        try store.writeSecret(Secret.developmentKey.rawValue, data: Data(privateKeyPEM.utf8))
+        try store.writeSecret(Secret.developmentCert.rawValue, data: Data(certificatePEM.utf8))
+        try store.writeSecret(Secret.developmentCertID.rawValue, data: Data(certificateID.utf8))
+        try store.writeSecret(Secret.developerTeamID.rawValue, data: Data(teamID.utf8))
+    }
+
+    public func loadDevelopment() throws -> SigningIdentity {
+        try load(
+            keySecret: Secret.developmentKey.rawValue,
+            certSecret: Secret.developmentCert.rawValue,
+            certIDSecret: Secret.developmentCertID.rawValue,
+            kind: "development"
+        )
+    }
+
+    private func load(keySecret: String, certSecret: String, certIDSecret: String, kind: String) throws -> SigningIdentity {
+        guard store.exists(keySecret), store.exists(certSecret) else {
+            throw Error.identityMissing(kind)
         }
-        let privateKey = String(decoding: try store.readSecret(Secret.distributionKey.rawValue), as: UTF8.self)
-        let certificate = String(decoding: try store.readSecret(Secret.distributionCert.rawValue), as: UTF8.self)
-        let certificateID = store.exists(Secret.distributionCertID.rawValue)
-            ? String(decoding: try store.readSecret(Secret.distributionCertID.rawValue), as: UTF8.self)
+        let privateKey = String(decoding: try store.readSecret(keySecret), as: UTF8.self)
+        let certificate = String(decoding: try store.readSecret(certSecret), as: UTF8.self)
+        let certificateID = store.exists(certIDSecret)
+            ? String(decoding: try store.readSecret(certIDSecret), as: UTF8.self)
             : nil
         let teamID = store.exists(Secret.developerTeamID.rawValue)
             ? String(decoding: try store.readSecret(Secret.developerTeamID.rawValue), as: UTF8.self)
             : nil
-        return DistributionIdentity(
+        return SigningIdentity(
             privateKeyPEM: privateKey,
             certificatePEM: certificate,
             certificateID: certificateID,

@@ -397,3 +397,462 @@ swift build --swift-sdk ios-dev
 - Next gate: Gate 2 (Linux Build Upload proof) — implement the Build Upload API flow,
   upload the Gate 1 IPA, resolve the exact build, poll processing, and install through
   TestFlight.
+
+## 2026-08-16 - Gate 2: Build Upload Client And `release upload` Command
+
+### Summary
+
+- Implemented the App Store Connect Build Upload client in `ASCKit` directly from the
+  pinned OpenAPI schemas: Build Upload creation, Build Upload File reservation,
+  execution of every returned `DeliveryFileUploadOperation`, PATCH commit with source
+  checksums, Build Upload state polling, exact-build resolution by app + marketing
+  version + build number, and processing plus `buildBetaDetail` polling to internal
+  TestFlight readiness.
+- Added `stupid-app release upload [--wait]` which locates the distribution IPA, reads
+  the packaged marketing version and build number, resolves the app record by bundle
+  ID, rejects already-uploaded build numbers, uploads, and writes a public-safe release
+  manifest.
+- Added `Sources/ASCKit/ReleaseManifest.swift` and the manifest write in
+  `ReleaseUploadCommand.swift` recording bundle ID, versions, IPA path and SHA-256,
+  Build Upload ID, build ID, upload/processing/beta states, and toolchain provenance.
+- Added a new `ASCKitTests` target with decoding, exact-build matching, checksum,
+  beta-readiness state-transition, and manifest tests using only synthetic fixtures.
+
+### Decisions
+
+- **No third-party upload client:** the pinned OpenAPI schema is authoritative for
+  binary upload (`altool`/Transporter are prohibited). The client is hand-written to
+  keep HTTP status/error decoding explicit and credential-safe.
+- **Checksum verification is mandatory:** source checksums are computed (MD5 for
+  `composite`, MD5 or SHA-256 for `file` per the server-declared algorithm) and any
+  declared expected values must match before the file is committed. MD5 is used only
+  because App Store Connect mandates it for upload verification, not for security.
+- **Presigned URLs are never logged:** delivery operations run through
+  `ASCClient.rawRequest`, which adds no JWT and never prints the URL or headers
+  because presigned URLs carry their capability.
+- **Exact-build resolution matches the release script:** the build must match the
+  build number AND resolve its `preReleaseVersion` relationship to an included
+  marketing version equal to the packaged `CFBundleShortVersionString`. A generic
+  latest-build query is never used.
+- **Polling is separable and testable:** beta-readiness classification and checksum
+  verification are pure functions with unit tests; poll delays and clock are injectable
+  on `BuildUploader`.
+
+### Verification
+
+- `swift build` and `swift build -c release` succeed; all 35 unit tests pass across
+  SDKCore, ProjectCore, SigningKit, and the new ASCKit suite.
+- The command surface exposes `stupid-app release upload [--wait]` with `--ipa`,
+  `--app-bundle-id`, `--credential-password`, `--home`, `--output`,
+  `--poll-interval`, and provenance options.
+- Tests cover: Build Upload and Build Upload File decoding (including nested upload
+  state errors), exact-build matching with marketing-version reconciliation, MD5 and
+  SHA-256 checksum computation and mismatch rejection, internal beta readiness
+  transitions, and release-manifest round-tripping without secrets.
+
+### Limitations And Follow-Up
+
+- The live App Store Connect round-trip has not yet been executed on the isolated WSL
+  host. The distribution identity, profile, and credentials were cleaned up after the
+  Gate 1 proof and must be re-established or re-imported before uploading.
+- `release status` and the `doctor`, `devices`, and `device` commands remain
+  unimplemented.
+- The release manifest is written on every upload; a "resume / persist raw outcomes"
+  diagnostic companion file remains future work.
+
+## 2026-08-16 - Gate 2 Live Upload: Transport Proven, Packaging Gaps Found
+
+### Summary
+
+- Re-established the WSL credential store, distribution identity, and App Store profile
+  for a proof app (re-importing the existing Apple Distribution identity after Gate 1
+  cleanup), downloaded the pinned `rcodesign` 0.29.0 x86_64 musl binary, and executed a
+  real App Store Connect upload with `stupid-app release upload --wait`.
+- The upload transport worked end-to-end: Build Upload creation, Build Upload File
+  reservation, delivery-operation execution, commit with source checksums, and Build
+  Upload state polling all reached App Store Connect correctly.
+- App Store Connect's build-upload validation then rejected the packaged app and
+  emailed diagnostics. Two packaging gaps were identified and one was fixed.
+
+### Finding 1 (resolved): missing build-system Info.plist keys
+
+- `ITMS-90507` (missing `DTPlatformName`) and `ITMS-90534` (unsupported SDK/Xcode
+  version) were caused by the Linux packer not emitting the Xcode build-system keys.
+- Fixed `Packer.injectBuildSystemKeys`: the merged Info.plist now carries
+  `DTPlatformName=iphoneos`, `DTPlatformVersion` and `DTSDKName` from the SDK export
+  manifest, `DTXcode`/`DTXcodeBuild` from the manifest Xcode version/build, and
+  `DTCompiler`. `BuildMachineOSBuild` is explicitly removed (never invented on Linux).
+- Also fixed iPad orientation support (`UISupportedInterfaceOrientations~ipad` with
+  all four orientations) to satisfy `ITMS-90474`.
+- Verified against a known-good Xcode-produced Info.plist that the emitted keys match.
+
+### Finding 2 (open): app icon requires a compiled Assets.car
+
+- `ITMS-90022`/`ITMS-90023` (no 120x120/152x152 icon) and `ITMS-90713` (no
+  `CFBundleIconName` in an asset catalog) persist even after generating the full
+  `Icon-*.png` set and setting `CFBundleIconName`/`CFBundleIcons`.
+- Conclusion: for an iOS 11+ SDK build, App Store Connect requires a compiled
+  `Assets.car`. Loose PNGs plus `CFBundleIconName` are insufficient, and no maintained
+  cross-platform `.car` writer exists (readers do: Timac's format write-up, darling,
+  cartool, ThemeEngine).
+- The xtool Linux icon path was never App Store-validated; released xtool apps went
+  through Xcode export, which embeds `Assets.car`.
+- Implemented native icon generation with the pure-Swift `swift-png` dependency
+  (`IconGenerator`), eliminating any external image tool. Added an optional
+  `assetCatalogPath` config field so a precompiled `Assets.car` can be embedded for
+  validating the rest of the flow; this is a test hook, not the Linux-native solution.
+
+### Decisions
+
+- Keep the `swift-png` dependency (Apache-2.0) for native PNG decode/resize/encode.
+- Next phase must implement a native `Assets.car` writer for the app-icon subset and
+  wire it into the packer, replacing the `assetCatalogPath` hook.
+- Do not copy GPL `darling` CoreUI/BOM sources; use the public format documentation
+  for a clean-room writer and record any adapted third-party code and its license.
+
+### Verification
+
+- 40 unit tests pass across six suites (added IconGenerator and BuildSystemKey tests).
+- The live upload produced the App Store Connect rejection email above; both error
+  classes are now understood and one is fixed in this repository.
+- The exact `Assets.car` produced by macOS `actool` for the proof icon is available
+  locally for differential testing against a native writer.
+
+### Follow-Up
+
+- Implement the native `Assets.car` writer, re-run the live upload, and complete the
+  Gate 2 TestFlight installation proof.
+
+## 2026-08-16 - Native Assets.car Writer
+
+### Summary
+
+- Implemented a native, dependency-free `Assets.car` writer for the app-icon subset
+  (`Sources/BuildCore/AssetCatalogWriter.swift`) and wired it into the packer, so
+  `stupid-app build` and `stupid-app release archive` now embed a real compiled asset
+  catalog instead of requiring a precompiled `actool` output.
+- Replaced the `assetCatalogPath` test hook with automatic generation; the config
+  field, its validation, and its error case were removed (`AppConfig`).
+- Added a read-only `BOMStoreReader` (test support) and structural/differential
+  `AssetCatalogWriterTests`.
+
+### The `.car` format (reverse-engineered)
+
+- A `.car` is a NeXTSTEP `BOMStore` container (big-endian header/block table/free
+  list + a named-block variables table), holding CoreUI blocks and B+ trees.
+- Required blocks/trees for an AppIcon catalog: `CARHEADER` (436-byte `RATC`
+  header), `KEYFORMAT` (`tmfk`), `EXTENDED_METADATA` (`META`), and the
+  `RENDITIONS`, `FACETKEYS`, `APPEARANCEKEYS`, `BITMAPKEYS` trees. Each tree has a
+  header block plus a single leaf node whose entries map `(valueBlock, keyBlock)`
+  and which also carries inline key copies (the bytes CoreUI actually reads).
+- Each rendition value is a 184-byte `ISTC` CSI header plus TLV metadata and a
+  payload: the marketing icon is a `CUIThemePixelRendition` (`MLEC`/`CELM` wrapper)
+  and the size set is a MultiSized Image (`SISM`).
+- **Pixel data is stored uncompressed** (`MLEC`, compression type 0, raw ARGB).
+  This avoids LZFSE entirely and is accepted by Apple's own tooling.
+
+### Verification
+
+- The writer output is structurally byte-identical to the `actool`-produced
+  reference for every block except the CARHEADER timestamp and the intentionally
+  different pixel payload.
+- Apple's `assetutil --info`, `assetutil --validate-file` ("valid bitmapindex",
+  "valid keyformat", "all image blocks are valid", "all multisize image (icon) size
+  classes are valid"), and `assetutil` thinning all accept the generated car.
+- A `testGeneratedCarMatchesActoolReferenceStructure` test compares the generated
+  car against the reference `.car` when `ASSET_CATALOG_REFERENCE` is set (a local
+  path), and skips otherwise so CI/Linux runs stay hermetic.
+- 52 unit tests pass across nine suites.
+
+### Decisions
+
+- **Uncompressed pixels over LZFSE:** the format declares compression type 0 as
+  "uncompressed", and Apple's tools validate it; a from-scratch LZFSE encoder is
+  unnecessary and would be a large dependency.
+- **Clean-room implementation:** the writer was built from the public format
+  documentation (dbg.re, Timac's write-up, `bomutils` `bom.h`); no GPL `darling`
+  source was copied. The `carfile-go` library was used only as a read reference.
+- **Inline keys are emitted twice** (separate key blocks plus the inline copies in
+  the leaf) because CoreUI reads the inline copies while a Go reader reads the
+  blocks; replicating actool's exact layout keeps both working.
+
+### Follow-Up
+
+- Re-run the live Gate 2 upload on the isolated WSL host with the generated
+  `Assets.car` to confirm App Store validation passes, then complete the TestFlight
+  installation proof.
+
+## 2026-08-16 - Credential Store Simplification, Gate 3 Partial Proof, And Additional Gate 2 Rejections
+
+### Summary
+
+- Removed credential encryption and all passphrase handling. `CredentialStore` now
+  writes plaintext secret files atomically with mode `0600` inside a mode `0700`
+  directory; the owning account and root/sudo can read them.
+- Removed `--credential-password`, `STUPID_APP_CREDENTIAL_PASSWORD`, and the legacy
+  environment fallback after credential-store read failures.
+- Migrated the isolated WSL credential store in place to the new plaintext format and
+  verified owner/mode settings without printing secret values.
+- Implemented the Gate 3 development-signing and USB-run command paths, provisioned a
+  development identity/profile, and reached the USB installation phase on a physical
+  device. Installation stalled after a usbmux connection error, so Gate 3 remains open.
+- Executed two additional Gate 2 uploads with native `Assets.car` variants. Both
+  reached App Store validation and failed with `ITMS-90022`, `ITMS-90023`, and
+  `ITMS-90713`; no build reached processing or TestFlight.
+
+### Credential Incident And Decision
+
+- The encrypted store had become internally inconsistent: ASC/distribution secrets
+  used the original passphrase, while development identity files and the shared team-ID
+  file used a later Gate 3 passphrase.
+- Root cause: `ASCContext.resolve` used `try?` for credential reads. A decryption error
+  was silently discarded, legacy ASC environment variables allowed the operation to
+  continue, and the returned store still used the newly supplied passphrase.
+  Development setup then rewrote only development secrets and the shared team ID.
+- The immediate fix removes the passphrase and fallback paths entirely. Credential
+  read failures now fail loudly. This is a deliberate technical-validation tradeoff,
+  not a claim that plaintext files are appropriate for every production environment.
+- The WSL credential directory is `0700`; ASC keys and signing private keys are `0600`.
+  WSL virtual disks, exports, snapshots, backups, and the host account remain
+  secret-bearing.
+- Temporary diagnostic scripts containing the supplied passphrase and extracted IPA
+  contents were removed from the macOS, Windows, and WSL hosts after migration.
+
+### Gate 3 Work Completed
+
+- Added public ASC operations and models for device listing/registration, Apple
+  Development certificates, and `IOS_APP_DEVELOPMENT` profiles.
+- Added separate development/distribution identity storage, development entitlement
+  derivation, a shared `SigningPipeline`, `DeviceKit`, `devices`, and `run --usb`.
+- Installed and validated Windows-to-WSL USB pass-through, `usbmuxd`, pairing, and
+  `pymobiledevice3` device visibility. A development IPA built, signed once with a real
+  Apple Development identity, and packaged successfully.
+- The first install remained stuck for several minutes and the connection reported a
+  usbmux error. The process was terminated and no installation or launch success is
+  claimed. Follow-up needs bounded installer output, timeout/cancellation, and clean
+  usbmux lifecycle diagnostics.
+
+### Gate 2 Live Results
+
+- A fresh distribution archive contained the required build-system Info.plist keys,
+  `CFBundleIconName=AppIcon`, loose phone/iPad icon PNGs, a native `Assets.car`, a real
+  App Store profile, and a valid distribution signature.
+- First follow-up catalog: `MLEC` compression type 0 with raw ARGB. macOS `assetutil`
+  accepted `--info`, `--validate-file`, and thinning. App Store validation still
+  returned all three icon errors.
+- Differential inspection against the local `actool` golden catalog showed matching
+  BOMStore structure, named blocks, key format, rendition/facet keys, phone/iPad icon
+  records, and multisize records. The material difference was pixel compression.
+- Second follow-up catalog: type-4 `MLEC` with the same four `KCBC` row chunks as
+  `actool`, each containing a valid raw (`bvx-`) LZFSE stream. `assetutil --info`
+  reported `Compression: lzfse` for phone and iPad, and `--validate-file` reported valid
+  bitmap index, key format, image blocks, and multisize icon classes. App Store
+  validation still returned the same icon errors.
+- The `actool` golden catalog uses genuinely compressed LZFSE v2 (`bvx2`) streams.
+  The next controlled change is to integrate a pinned, auditable LZFSE encoder and emit
+  `bvx2` streams inside the existing KCBC wrapper. Local `assetutil` acceptance must no
+  longer be treated as sufficient proof.
+- The official Apple reference implementation is the BSD-3-Clause `lzfse/lzfse`
+  repository. The inspected upstream snapshot was commit
+  `e634ca58b4821d9f3d560cdc6df5dec02ffc93fd`; it has not been adopted or pinned by
+  this project yet.
+
+### Verification
+
+- `swift format` was run for modified Swift files.
+- `swift test` passes 52 tests across nine Swift Testing suites plus five
+  `AssetCatalogWriterTests` XCTest cases.
+- The optional `actool` structural golden comparison passed with
+  `ASSET_CATALOG_REFERENCE` set to the local reference catalog.
+- The CLI rebuilt on the isolated x86_64 Ubuntu WSL host and produced fresh
+  distribution-signed archives for both follow-up uploads.
+- Both live uploads completed Build Upload creation, file reservation, delivery,
+  checksum commit, and state polling before failing at App Store icon validation.
+- No release manifest was produced because no upload yielded a build resource.
+
+### Takeover State
+
+- Gate 2 is not complete. Proof build numbers 3, 4, and 5 were used by failed uploads;
+  use 6 or later next.
+- The current writer emits type-4 MLEC/KCBC payloads with raw LZFSE blocks. Replace only
+  the inner stream encoder first; preserve the already-matched container and metadata.
+- Prefer Apple's BSD-licensed reference LZFSE implementation at a pinned commit, or an
+  equivalently auditable compatible encoder. Record source provenance and license
+  obligations before committing copied or vendored code.
+- If genuinely compressed payloads still fail, make one diagnostic upload using the
+  exact local `actool` golden `Assets.car` to isolate whether the blocker is payload
+  encoding or another App Store packaging rule. Do not make that macOS artifact a
+  product dependency.
+- Resume Gate 3 only after Gate 2 unless priorities change. Gate 3's remaining proof is
+  a successful USB install and launch; network transport remains Gate 4.
+
+## 2026-08-16 - Gate 3 Detailed Takeover State
+
+This entry is a hand-off record so a different engineer can resume the Gate 3
+(development signing + USB install) proof from exactly where it stopped. It overlaps
+the earlier "Credential Store Simplification, Gate 3 Partial Proof" entry but records
+concrete state, repro commands, and the open blocker. Keep this entry current as Gate 3
+progresses; fold it into the handover's Gate 3 status when the exit condition is met.
+
+### Status
+
+- **Exit condition (not met):** the app launches on the registered physical device with
+  a valid Apple Development signature.
+- **Reached so far:** device registered; development certificate minted; device
+  development profile created; development IPA built, signed once with a real Apple
+  Development identity, and packaged; Windows-to-WSL USB pass-through, device pairing,
+  and `pymobiledevice3` device visibility all validated.
+- **Blocked at:** the `pymobiledevice3 apps install` step, which started and then stalled
+  after a usbmux connection error. The process was terminated after several minutes.
+  No install or launch success is claimed.
+
+### Implemented Code (working tree, builds + 52 tests pass)
+
+- `ASCKit/ASCOperations`: list/find/register devices; a generalized certificate create
+  with `DEVELOPMENT` type; a generalized profile create with `IOS_APP_DEVELOPMENT` and a
+  device relationship; profile lookup is now profile-type-parameterized; pure decode
+  helpers (`decodeDeviceList`, `decodeCreatedDevice`, `matchProfileID`,
+  `decodeCreatedResourceID`) for unit tests.
+- `SigningKit/IdentityManager`: separate development/distribution identities
+  (`development.key.pem`, `development.cert.pem`, `development.cert.id`,
+  `distribution.*`), stored via the plaintext `CredentialStore`.
+- `SigningKit/EntitlementDeriver`: development configuration forces
+  `get-task-allow=true`.
+- `SigningKit/SigningPipeline`: one shared derive-entitlements → embed-profile → sign →
+  package-IPA boundary used by both `release archive` and `run --usb`.
+- `DeviceKit` (new module): `DeviceInstaller` protocol +
+  `PyMobileDevice3Installer` (install, launch via `developer dvt launch`,
+  `usbDeviceUDIDs`, optional `--usbmux` address with automatic Linux unix-socket
+  detection at `/var/run/usbmuxd`).
+- CLI: `signing setup --kind development` (with `--udid`/`--device-name`),
+  `devices list|add`, `run --usb`.
+- `ASCContext` reads plaintext credentials and fails loudly on missing secrets; there is
+  no passphrase and no environment fallback.
+
+### Device / Host Infrastructure (validated)
+
+- Host: the existing Windows machine over SSH (administrator shell). WSL 2
+  distribution `iosdev-ubuntu`.
+- `usbipd-win` 5.3.0 installed via `winget`. A physical iPhone was passed through with
+  `usbipd bind --force --busid <busid>` then `usbipd attach --wsl iosdev-ubuntu
+  --busid <busid>`. The Apple USB driver must be released first: disable the `Apple
+  Mobile Device USB Device` PnP interface, which required a Windows reboot to complete
+  ("Device is pending system reboot to complete a previous operation"). After reboot the
+  interfaces show `Unknown` and the device attaches cleanly.
+- WSL: `usbutils` (`lsusb`), `usbmuxd` (runs as a systemd service, socket
+  `/var/run/usbmuxd`), `libimobiledevice-utils` (`idevice_id`, `ideviceinfo`,
+  `idevicepair`), `pymobiledevice3` in `~/.venvs/pmd3`, pinned `rcodesign` 0.29.0 at
+  `~/.local/bin/rcodesign`. Swift SDK is registered as `ios-dev`.
+- **`C:\Users\<user>\.wslconfig` now sets `networkingMode=mirrored` and
+  `vmIdleTimeout=-1`.** The WSL 2 VM was stopping between commands, which invalidated the
+  (non-persistent) usbipd attach and killed `usbmuxd`, producing the observed `Mux error
+  (-8)` / lockdownd failures. Keeping the VM alive is expected to fix most of the
+  instability seen this session.
+- Credentials live in the plaintext `~/.stupid-app/credentials` store (mode `0700` dir,
+  `0600` files): ASC key, issuer, team ID, distribution identity + App Store profile,
+  and now a development identity + development profile
+  (`profiles/<bundle-id> Development.mobileprovision`).
+
+### Resuming The Proof (WSL)
+
+1. Confirm the VM stayed up (`wsl.exe -d iosdev-ubuntu -u iosdev --exec bash -lc 'echo ok'`
+   and `wsl.exe --list --running`). If it stopped, start it and keep it alive.
+2. If the USB attach dropped, re-attach from the Windows admin shell (non-persistent).
+   Then in WSL as root confirm the device + pairing:
+   `lsusb | grep -i apple`, `idevicepair validate`, `idevice_id -l`, and journal
+   `usbmuxd.service`.
+3. Provisioning is already done, but the exact one-time command is:
+   `stupid-app signing setup --kind development --bundle-id <bundle-id> --udid <udid>
+   --device-name "<name>"` (register device, mint dev cert, create dev profile).
+4. Run the full flow from `~/AcceptanceApp`:
+   `stupid-app run --usb --udid <udid> --sdk-id ios-dev
+   --rcodesign ~/.local/bin/rcodesign
+   --pymobiledevice3 ~/.venvs/pmd3/bin/pymobiledevice3 --usbmux /var/run/usbmuxd`.
+   It rebuilds the debug app each invocation, signs once (development), packages the
+   IPA under `.build/arm64-apple-ios/debug/`, then installs and launches.
+
+### Open Blocker And Investigation Notes
+
+- The install step reached `pymobiledevice3 apps install` and hung; lockdownd then
+  reported `Mux error (-8)`. The most likely cause was the WSL VM/`usbmuxd` instability
+  described above rather than the signing output (the IPA itself validated with
+  `rcodesign print-signature-info` and packaged cleanly). Re-test now that the VM stays
+  up.
+- Launch uses `pymobiledevice3 developer dvt launch`, which requires Developer Mode
+  enabled on the device. Confirm/enable it on the iPhone before expecting launch
+  success; check with `pymobiledevice3 amfi` / `developer dvt` if needed.
+- The device must be unlocked (screen on) during install; a locked device can make the
+  install wait indefinitely.
+
+### Code Gaps To Fix Before Declaring Gate 3
+
+- `DeviceKit/ProcessRunner` only `terminate()`s a stuck child; per the handover it must
+  escalate interrupt → terminate → kill, own the process group, honor cancellation, and
+  bound captured output. Give `PyMobileDevice3Installer` an explicit timeout and a
+  public-safe way to surface bounded installer progress/stderr without leaking
+  device-specific detail.
+- Keep build, sign, install, launch separable instead of one `run` monolith, per the
+  handover; `run --usb` currently composes them.
+- Consider a helper that re-establishes the non-persistent usbipd attach so a re-run
+  does not silently hang on a missing device.
+- Developer Mode should be surfaced as an actionable error from the launch step rather
+  than a raw `pymobiledevice3` failure.
+
+### Gate Ordering
+
+The handover currently says complete Gate 2 (the App Store `Assets.car` LZFSE encoding
+blocker) before resuming Gate 3 transport. If instead Gate 3 is resumed first, start with
+the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
+
+## 2026-08-16 - Gate 2 Complete: Valid Linux Build And TestFlight Launch
+
+### Summary
+
+- Vendored Apple's BSD-3-Clause LZFSE reference implementation at commit
+  `e634ca58b4821d9f3d560cdc6df5dec02ffc93fd` as the `CLZFSE` target and recorded its
+  license in `THIRD_PARTY_NOTICES.md`.
+- Replaced raw `bvx-` icon streams with genuinely compressed `bvx2` streams while
+  preserving the already-matched BOM/CoreUI catalog structure.
+- Added `CFBundleIconName=AppIcon` inside both phone and iPad
+  `CFBundlePrimaryIcon` dictionaries, matching `actool`'s partial Info.plist output.
+- Completed the Linux archive, direct Build Upload, processing, internal TestFlight,
+  installation, and launch proof. Gate 2's exit condition is met.
+- Finalized the Gate 2 diagnostic artifact as the public-safe release manifest rather
+  than retaining raw API bodies. The manifest preserves artifact identity, upload/build
+  resource identity, and terminal states without increasing secret or personal-data
+  retention.
+
+### Live Findings
+
+- Build 6 used the native catalog with eight compressed `bvx2` chunks but retained only
+  the top-level icon-name key. App Store Connect returned the same icon validation
+  errors, proving compression alone was insufficient.
+- Comparing `actool` output exposed the missing nested icon-name values. Build 7 added
+  those values and processed as `VALID`; its beta state stopped only at
+  `MISSING_EXPORT_COMPLIANCE`.
+- The proof app uses no non-exempt encryption. Build 8 declared
+  `ITSAppUsesNonExemptEncryption=false`, processed as `VALID`, reached
+  `READY_FOR_BETA_TESTING`, wrote the release manifest, installed through TestFlight,
+  and launched successfully.
+- The accepted IPA SHA-256 is
+  `79ed5d700e466dd435e0b706f54aeb07ade2bd9f0dc3c4519c637b35ee38066c`.
+
+### Verification
+
+- `swift test` on macOS: 53 Swift Testing cases and six catalog XCTest cases passed;
+  the optional local `actool` structural golden test skipped when its path was unset.
+- The macOS-gated catalog test ran `xcrun assetutil --validate-file` successfully.
+- `swift test` on x86_64 Ubuntu WSL: 53 Swift Testing cases and five catalog XCTest
+  cases passed; the two macOS/local-reference checks skipped as designed.
+- `swift build -c release` succeeded on macOS and x86_64 Ubuntu WSL.
+- `stupid-app release archive --sdk-id ios-dev` produced a one-pass
+  distribution-signed IPA on Linux with timestamps disabled.
+- `stupid-app release upload --wait --sdk-id ios-dev` completed the Build Upload,
+  resolved the exact version/build, reported `processing=VALID` and
+  `internal=READY_FOR_BETA_TESTING`, and wrote `.release/release-manifest.json`.
+
+### Follow-Up
+
+- Gate 3 is now the next proof gate. Resume from the detailed takeover entry above,
+  add bounded installer diagnostics and process cleanup, then prove USB installation
+  and launch before Gate 4 wireless transport work.

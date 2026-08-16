@@ -65,6 +65,31 @@ public struct ASCClient: Sendable {
         return Response(statusCode: http.statusCode, data: data)
     }
 
+    /// Executes a raw request against an arbitrary URL (used for presigned delivery
+    /// uploads). No JWT is added and the URL is never logged because presigned URLs
+    /// carry their upload capability in the URL itself. The caller must redact any
+    /// secret-bearing response detail before surfacing it.
+    public func rawRequest(
+        method: String,
+        url: URL,
+        headers: [String: String],
+        body: Data,
+        timeout: TimeInterval = 300
+    ) throws -> Response {
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.timeoutInterval = timeout
+        for (name, value) in headers {
+            request.setValue(value, forHTTPHeaderField: name)
+        }
+        request.httpBody = body
+        let (data, response) = try perform(request)
+        guard let http = response as? HTTPURLResponse else {
+            throw ASCError.invalidResponse
+        }
+        return Response(statusCode: http.statusCode, data: data)
+    }
+
     /// Performs a request synchronously (Foundation URLSession is async-callback based
     /// on both Darwin and Linux FoundationNetworking).
     private func perform(_ request: URLRequest) throws -> (Data, URLResponse) {

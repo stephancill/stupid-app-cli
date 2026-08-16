@@ -156,6 +156,12 @@ public struct Planner: Sendable {
             "CFBundleSupportedPlatforms": ["iPhoneOS"],
             "UIDeviceFamily": [1, 2],
             "UISupportedInterfaceOrientations": ["UIInterfaceOrientationPortrait"],
+            "UISupportedInterfaceOrientations~ipad": [
+                "UIInterfaceOrientationPortrait",
+                "UIInterfaceOrientationPortraitUpsideDown",
+                "UIInterfaceOrientationLandscapeLeft",
+                "UIInterfaceOrientationLandscapeRight",
+            ],
             "UILaunchScreen": [:] as [String: Sendable],
         ]
 

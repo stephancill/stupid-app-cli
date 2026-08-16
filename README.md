@@ -3,11 +3,16 @@
 A CLI for creating, building, signing, wirelessly deploying, and releasing iOS
 applications without requiring Xcode or macOS at runtime.
 
-Current status: **Gates 0 and 1 complete**. The device-only Swift SDK pipeline is
-proven end-to-end on an isolated Ubuntu WSL host (export on macOS, validate and import
-on Linux, cross-compile to an ARM64 Mach-O), and a real Apple Distribution-signed IPA
-is produced on Linux with the pinned `rcodesign` signing kernel and verified
-independently.
+Current status: **Gates 0, 1, and 2 complete; Gate 3 development signing is partially
+proven**. The
+device-only Swift SDK pipeline is proven end-to-end on an isolated Ubuntu WSL host
+(export on macOS, validate and import on Linux, cross-compile to an ARM64 Mach-O), and
+a real Apple Distribution-signed IPA is produced on Linux with the pinned `rcodesign`
+signing kernel and verified independently. The App Store Connect Build Upload client
+(`stupid-app release upload --wait`) uploaded a Linux-built IPA that processed as
+`VALID`, became internally TestFlight-ready, installed through TestFlight, and launched.
+The accepted app icon uses the native `Assets.car` writer with Apple's pinned LZFSE
+reference encoder and `actool`-matching icon metadata.
 
 ## Package layout
 
@@ -16,9 +21,13 @@ independently.
   listing/validation.
 - `Sources/ProjectCore` — the typed `stupid-app.yml` schema and project generator.
 - `Sources/BuildCore` — SwiftPM planning, unsigned `.app` assembly, SDK-version
-  discovery, and Mach-O inspection.
+  discovery, native app-icon generation and `Assets.car` writing (`swift-png`), and
+  Mach-O inspection.
+- `Sources/CLZFSE` — Apple's pinned BSD-3-Clause LZFSE reference implementation used
+  for compressed native asset-catalog payloads.
 - `Sources/ASCKit` — App Store Connect ES256 JWT, HTTP client, and bundle-ID /
-  certificate / profile operations; encrypted credential storage.
+  certificate / profile / Build Upload operations; permission-hardened credential
+  storage; the release manifest.
 - `Sources/SigningKit` — provisioning-profile CMS parsing, entitlement derivation,
   the pinned `rcodesign` signing kernel adapter, and IPA packaging.
 - `Sources/stupid-app` — the cross-platform CLI.
@@ -34,9 +43,13 @@ stupid-app new <name>              Scaffold a SwiftPM/SwiftUI iOS project
 stupid-app sdk export ...          (macOS) export a device-only Swift SDK bundle
 stupid-app sdk import <archive>    (Linux) validate and install an SDK bundle
 stupid-app build                   Build an unsigned iOS .app with the imported SDK
-stupid-app credentials add         Store ASC API key + team ID (encrypted)
-stupid-app signing setup --distribution   Provision a distribution identity + profile
+stupid-app credentials add         Store ASC API key + team ID (0600 files)
+stupid-app signing setup --kind distribution   Provision a distribution identity + profile
+stupid-app signing setup --kind development    Provision a development identity + profile
+stupid-app devices                  List App Store Connect devices
+stupid-app run --usb                Build, sign, install, and launch over USB (partial proof)
 stupid-app release archive         Build, sign (once, no timestamps), package the IPA
+stupid-app release upload --wait   Upload the IPA and wait for internal TestFlight
 ```
 
 ## Export (macOS)
@@ -82,5 +95,6 @@ swift test
 ## License and provenance
 
 Adapts design concepts from xtool (MIT). The pinned `rcodesign` signing kernel is
-MPL-2.0 (see `docs/rcodesign-pin.md`). See `docs/implementation-notes.md` for
-provenance and the engineering handover for the current architecture and gates.
+MPL-2.0 (see `docs/rcodesign-pin.md`), and the vendored LZFSE encoder is BSD-3-Clause
+(see `THIRD_PARTY_NOTICES.md`). See `docs/implementation-notes.md` for provenance and
+the engineering handover for the current architecture and gates.
