@@ -856,3 +856,74 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
 - Gate 3 is now the next proof gate. Resume from the detailed takeover entry above,
   add bounded installer diagnostics and process cleanup, then prove USB installation
   and launch before Gate 4 wireless transport work.
+
+## 2026-08-16 - Gate 3 Complete: Development Install And CoreDevice Launch
+
+### Summary
+
+- Completed the Gate 3 physical-device proof on the isolated WSL host: build,
+  development entitlement reconciliation, one real Apple Development signing pass,
+  IPA packaging, USB installation, and launch all succeeded.
+- Hardened `ProcessRunner` to drain stdout/stderr continuously into bounded tail
+  buffers, honor timeout and task cancellation, and escalate interrupt, terminate,
+  and kill signals to the Linux process group.
+- Added bounded discovery/install/launch timeouts to `PyMobileDevice3Installer`, passed
+  the configured usbmux socket to discovery, parsed both JSON-array and legacy text
+  device lists, redacted the selected device identifier from diagnostics, and installed
+  the development IPA with `--developer`.
+- Added `--install-timeout` and `--launch-timeout` to `stupid-app run`.
+
+### USBIP Root Cause
+
+- The stock Ubuntu `usbmuxd` 1.1.1 uses a 49,152-byte USB transmit unit and relies on a
+  zero-length packet to preserve the transfer boundary. WSL USBIP loses that boundary,
+  coalescing transfers; the device reports that it received roughly 59 KB while it
+  expected one 49,152-byte frame, and AFC installation stalls.
+- This matches the still-open `usbipd-win` issue #959. Reducing the transmit unit to
+  16,384 bytes did not help because it still relies on a zero-length packet. A
+  diagnostic `usbmuxd` 1.1.1 build with `USB_MTU=16383` forced a physical short-packet
+  boundary and immediately completed the 58 KB IPA transfer at 90% and 100%.
+- The diagnostic daemon is GPL-3.0 and is not committed or adopted as a product
+  dependency. Gate 4 must decide how to provision, checksum, license, and lifecycle a
+  qualified transport rather than depending on a hand-built daemon.
+
+### Launch Proof
+
+- Developer Mode was enabled and a personalized Developer Disk Image was already
+  mounted. The legacy `developer dvt launch` lockdown path returned `InvalidService` on
+  iOS 26.6, so direct USB DVT is not a valid modern launch mechanism.
+- Pinned `pymobiledevice3` 8.2.1 successfully launched the installed app through the
+  modern path: usbmux lockdown, `CoreDeviceTunnelProxy`, TCP tunnel, Remote Service
+  Discovery, and `AppServiceService.launch_application`. The device returned a live
+  process token.
+- The tunnel requires access to `/dev/net/tun`; the same helper run as the unprivileged
+  build user failed with `Operation not permitted`. Gate 4 must make this privilege and
+  route lifecycle explicit. The CLI must not silently elevate privileges.
+- The WSL environment had accidentally installed `pymobiledevice3` 10.7.4 despite the
+  8.2.1 reference pin. The proof used a separate 8.2.1 environment; because its broad
+  dependency constraint currently resolves an incompatible `construct-typing` 0.8.1,
+  the proof environment pinned `construct-typing` 0.7.0. A complete lock/checksum set is
+  still required before product integration.
+
+### Verification
+
+- macOS: 59 Swift Testing cases and six catalog XCTest cases passed; the optional local
+  catalog reference check skipped, and the macOS `assetutil` qualification passed.
+  `swift build -c release` also succeeded.
+- x86_64 Ubuntu WSL: 60 Swift Testing cases and five catalog XCTest cases passed; the
+  two macOS/local-reference checks skipped as designed. This includes high-volume pipe,
+  timeout, device-adapter, and Linux process-group cleanup coverage with no surviving
+  helper.
+- The CLI rebuilt the debug app, derived development entitlements, signed exactly once,
+  and packaged the development IPA on WSL.
+- The USBIP-compatible daemon completed installation of that IPA on the registered,
+  paired physical device.
+- The USB-bootstrapped CoreDevice helper launched the exact installed bundle and
+  returned a process identifier. Gate 3's exit condition is met.
+
+### Follow-Up
+
+- Gate 4 must integrate bounded CoreDevice bootstrap, remote pairing, tunnel, route,
+  install, and launch lifecycle into `DeviceKit`; provision pinned and checksummed
+  Python and usbmux transport dependencies; and prove three consecutive unplugged runs
+  without stale helper cleanup.

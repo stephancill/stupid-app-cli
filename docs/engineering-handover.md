@@ -36,11 +36,14 @@ IPA uses the native `Assets.car` writer with pinned Apple LZFSE compression and 
 `VALID` and `READY_FOR_BETA_TESTING`. The build installed through TestFlight and
 launched successfully. See "Live Gate 2 Upload Findings" below.
 
-Gate 3 (development signing proof) is partially implemented. Device registration,
-development certificate/profile creation, development entitlement reconciliation,
-USB pass-through, trust/pairing, build, signing, and IPA packaging were exercised on
-the WSL host. The first USB install stalled in `pymobiledevice3` after a usbmux
-connection error; installation and launch remain unproven.
+Gate 3 (development signing proof) is complete on the isolated WSL host. Device
+registration, development certificate/profile creation, entitlement reconciliation,
+one-pass signing, IPA packaging, USB installation, and launch were exercised on a
+physical iPhone. WSL USBIP required a qualified `usbmuxd` 1.1.1 build using 16,383-byte
+short-packet transfers; the stock 49,152-byte transfer size is corrupted by USBIP.
+Launch on iOS 26.6 required a privileged USB-bootstrapped CoreDevice tunnel because
+the legacy DVT lockdown service returns `InvalidService`. The proof is complete, but
+integrating that privileged tunnel lifecycle into `run --usb` remains Gate 4 work.
 
 Product and executable naming is decided: the CLI and package are `stupid-app`, the
 project-level configuration file is `stupid-app.yml`, the SDK artifact ID is
@@ -229,7 +232,8 @@ Do not copy xtool's large development command wholesale. Keep these concerns as 
 - Entitlement derivation and validation. (`SigningKit`)
 - Code-signing adapter. (`SigningKit`)
 - IPA packaging and verification. (`SigningKit`)
-- Device listing and USB installation/launch adapter. (`DeviceKit`, partially proven)
+- Device listing and USB installation adapter. (`DeviceKit`, USB install proven;
+  CoreDevice launch integration remains)
 - Build Upload and TestFlight processing. (`ASCKit`, transport proven)
 
 ### SDK Export And Import
@@ -467,10 +471,11 @@ Initial direction:
 
 The current WSL host is on the same physical LAN as the iPhone and uses WSL mirrored
 networking, making it a better wireless test environment than a public VPS.
-`usbipd-win` is installed and USB pass-through plus trust/pairing were validated.
-Modern network discovery, remote pairing, CoreDevice tunneling, installation, and
-launch still depend on mDNS, pairing records, IPv6 behavior, and sometimes privileged
-TUN routing and remain unverified.
+`usbipd-win` is installed and USB pass-through, trust/pairing, development installation,
+and USB-bootstrapped CoreDevice launch were validated. CoreDevice launch requires
+privileged TUN creation. Modern network discovery, remote pairing, unplugged tunneling,
+and repeatability still depend on mDNS, pairing records, IPv6 behavior, and privileged
+route cleanup and remain unverified.
 
 ### App Store Connect Upload
 
@@ -559,8 +564,11 @@ Current WSL limitations and follow-up:
 
 - `usbipd-win` is installed; a physical iPhone was passed through to WSL and its
   existing pairing record validated successfully.
-- `usbmuxd` and `pymobiledevice3` can see the USB device. The first app installation
-  stalled after a usbmux connection error, so USB install and launch remain unproven.
+- USB installation and launch are proven. Stock `usbmuxd` 1.1.1 uses a 49,152-byte
+  transfer unit whose ZLP boundaries are lost through WSL USBIP, causing the device to
+  reject coalesced frames. A qualified 1.1.1 build with `USB_MTU=16383` forces a short
+  packet boundary and completed installation. This patch is not yet provisioned by the
+  CLI and its GPL-3.0 distribution implications must be handled explicitly.
 - Mirrored networking is configured, but iPhone mDNS discovery, remote pairing, TUN
   setup, network installation, and launch remain unverified.
 - The iOS Swift SDK has been exported and imported; a minimal SwiftUI app builds and links for `arm64-apple-ios`.
@@ -1165,17 +1173,23 @@ the next build to become internally TestFlight-ready.
 - Reconcile development entitlements.
 - Sign once, package, and install over USB.
 
-Status: **partially implemented and provisioned**. `devices`,
+Status: **complete** on the isolated WSL host. `devices`,
 `signing setup --kind development`, `run --usb`, development identity/profile storage,
-the reusable `SigningPipeline`, and the `DeviceKit` `pymobiledevice3` adapter are in the
-working tree. A physical device was registered, a development identity/profile was
-created, USB pass-through and pairing were validated, and `run --usb` built, signed,
-and packaged the development IPA. The install then stalled after a usbmux connection
-error. No successful installation or launch has been claimed.
+the reusable `SigningPipeline`, and the `DeviceKit` `pymobiledevice3` adapter are
+implemented. A physical device was registered; a development identity/profile was
+created; USB pass-through and pairing were validated; and the app was built, signed
+once, packaged, installed, and launched. Installation required a qualified
+`usbmuxd` 1.1.1 build with `USB_MTU=16383` to preserve frame boundaries through WSL
+USBIP. iOS 26.6 launch used pinned `pymobiledevice3` 8.2.1 to create a privileged
+USB CoreDevice tunnel and returned a live process token.
 
-See the "Gate 3 Detailed Takeover State" entry in `docs/implementation-notes.md` for the
-exact infrastructure state (usbipd pass-through, `usbmuxd`, `.wslconfig` keep-alive),
-repro commands, the open blocker, and the `DeviceKit` cleanup fixes still required.
+`run --usb` now has bounded output, timeout/cancellation checks, Linux process-group
+cleanup, explicit install/launch timeouts, JSON device-list parsing, explicit usbmux
+socket propagation, and developer-package installation. Its current direct DVT launch
+subcommand is not valid on iOS 26.6; integrating the proven CoreDevice launch helper,
+privilege boundary, pinned Python environment, patched-usbmuxd provisioning, and helper
+lifecycle belongs to Gate 4 rather than being hidden behind implicit privilege
+escalation.
 
 Exit condition: the app launches on the registered device with a valid development signature.
 
@@ -1256,8 +1270,7 @@ Required recurring integration coverage:
 
 ## Recommended Next Work
 
-Proceed with Gate 3: reproduce the usbmux install failure with bounded logs,
-fix helper timeout/cleanup, then prove USB installation and launch. See the "Gate 3
-Detailed Takeover State" implementation-note entry for the current infrastructure,
-repro commands, and open items. Gate 4 remains wireless transport; Gate 5 remains CLI
-productization.
+Proceed with Gate 4: integrate the proven USB CoreDevice bootstrap/launch path behind a
+bounded helper lifecycle, provision and checksum the pinned `pymobiledevice3` environment
+and USBIP-compatible usbmux transport, then prove three consecutive unplugged network
+install-and-launch runs without manual cleanup. Gate 5 remains CLI productization.
