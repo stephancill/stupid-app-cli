@@ -43,7 +43,16 @@ physical iPhone. WSL USBIP required a qualified `usbmuxd` 1.1.1 build using 16,3
 short-packet transfers; the stock 49,152-byte transfer size is corrupted by USBIP.
 Launch on iOS 26.6 required a privileged USB-bootstrapped CoreDevice tunnel because
 the legacy DVT lockdown service returns `InvalidService`. The proof is complete, but
-integrating that privileged tunnel lifecycle into `run --usb` remains Gate 4 work.
+integrating that privileged tunnel lifecycle into `run --usb` remained Gate 4 work.
+
+Gate 4 (wireless transport proof) is complete on the isolated WSL host. The CLI now
+bootstraps CoreDevice remote pairing through `stupid-app device pair --usb`, stores the
+record under the permission-hardened credential directory, and performs discovery,
+one-shot TCP tunneling, development installation verification, and launch through
+`stupid-app run --network --udid <udid>`. Three consecutive physically unplugged runs
+completed with no surviving helper process or tunnel interface. The frozen helper uses
+Python 3.13, pymobiledevice3 8.2.1, and construct-typing 0.7.0; Python 3.12's compatibility
+TLS-PSK path failed against the remote TCP listener with `NO_CIPHERS_AVAILABLE`.
 
 Product and executable naming is decided: the CLI and package are `stupid-app`, the
 project-level configuration file is `stupid-app.yml`, the SDK artifact ID is
@@ -210,8 +219,8 @@ stupid-app release status
 
 Implemented so far: `new`, `sdk export`, `sdk import`, `build`, `credentials add`,
 `signing setup --kind distribution|development`, `devices`, `run --usb`,
-`release archive`, and `release upload --wait`. The `doctor`, `device pair`,
-`run --network`, and `release status` commands are not yet implemented.
+`device pair --usb`, `run --network`, `release archive`, and `release upload --wait`.
+The `doctor` and `release status` commands are not yet implemented.
 
 The command surface is provisional until the proof gates complete. Keep build, signing, install, launch, upload, and status as separable operations even if convenience commands compose them.
 
@@ -476,9 +485,10 @@ The current WSL host is on the same physical LAN as the iPhone and uses WSL mirr
 networking, making it a better wireless test environment than a public VPS.
 `usbipd-win` is installed and USB pass-through, trust/pairing, development installation,
 and USB-bootstrapped CoreDevice launch were validated. CoreDevice launch requires
-privileged TUN creation. Modern network discovery, remote pairing, unplugged tunneling,
-and repeatability still depend on mDNS, pairing records, IPv6 behavior, and privileged
-route cleanup and remain unverified.
+privileged TUN creation. Modern network discovery, remote pairing, unplugged TCP
+tunneling, installation, launch, and cleanup are now proven. The helper requires an
+explicit privilege boundary for TUN creation and route ownership; the CLI does not
+invoke sudo unless the operator passes `--sudo`.
 
 ### App Store Connect Upload
 
@@ -572,8 +582,8 @@ Current WSL limitations and follow-up:
   reject coalesced frames. A qualified 1.1.1 build with `USB_MTU=16383` forces a short
   packet boundary and completed installation. This patch is not yet provisioned by the
   CLI and its GPL-3.0 distribution implications must be handled explicitly.
-- Mirrored networking is configured, but iPhone mDNS discovery, remote pairing, TUN
-  setup, network installation, and launch remain unverified.
+- Mirrored networking is configured; iPhone mDNS discovery, remote pairing, TUN setup,
+  network installation, launch, and three-run cleanup are verified.
 - The iOS Swift SDK has been exported and imported; a minimal SwiftUI app builds and links for `arm64-apple-ios`.
 - The host Swift compiler is proven for both native Linux compilation and iOS cross-compilation.
 - WSL is x86_64, so the SDK bundle must include x86_64 Linux Darwin tools and declare only the actual host triple.
@@ -1188,11 +1198,10 @@ USB CoreDevice tunnel and returned a live process token.
 
 `run --usb` now has bounded output, timeout/cancellation checks, Linux process-group
 cleanup, explicit install/launch timeouts, JSON device-list parsing, explicit usbmux
-socket propagation, and developer-package installation. Its current direct DVT launch
-subcommand is not valid on iOS 26.6; integrating the proven CoreDevice launch helper,
-privilege boundary, pinned Python environment, patched-usbmuxd provisioning, and helper
-lifecycle belongs to Gate 4 rather than being hidden behind implicit privilege
-escalation.
+socket propagation, and developer-package installation. Gate 4 replaced the invalid
+direct DVT launch with the proven CoreDevice helper and integrated its privilege,
+pinned-environment, and lifecycle boundaries. Patched-usbmuxd provisioning remains
+productization work for the USB install path.
 
 Exit condition: the app launches on the registered device with a valid development signature.
 
@@ -1203,6 +1212,30 @@ Exit condition: the app launches on the registered device with a valid developme
 - Establish the required CoreDevice connection or tunnel.
 - Install and launch the development-signed IPA.
 - Repeat without stale helper cleanup.
+
+Status: **complete** on the isolated WSL host. `CoreDeviceRunner` owns a bundled Python
+helper through the bounded `ProcessRunner`; `device pair --usb` establishes lockdown
+trust, enables wireless connections, creates a USB CoreDevice tunnel, and persists the
+remote pairing record with mode `0600` under a mode `0700` credential directory.
+`run --network --udid <udid>` discovers and deduplicates remote-pairing candidates,
+forces a TCP tunnel, validates the selected device through RSD, installs and verifies
+the exact bundle through InstallationProxy, launches through AppService, and tears the
+stack down in one process lifetime.
+
+The helper runtime is frozen by `Tools/pymobiledevice3/uv.lock`: Python 3.13,
+pymobiledevice3 8.2.1, and construct-typing 0.7.0. Python 3.13 is required because its
+native TLS-PSK callback is the working remote TCP transport; the Python 3.12 sslpsk
+compatibility path reached the device but failed TLS negotiation. Privilege is explicit:
+the operator must run with the required capability or pass `--sudo`, optionally with a
+root-owned installed helper selected by `--coredevice-helper`; the CLI never silently
+elevates.
+
+Three consecutive runs were performed after physical USB disconnection. Each rebuilt,
+development-signed once, installed, verified, and launched the app. After each observed
+run, USB device count, helper-process count, and residual pymobiledevice3 TUN-interface
+count were zero. The third launch was confirmed on-device after the controlling SSH
+stream was interrupted; an immediate independent cleanup check found no surviving CLI,
+helper, USB device, or tunnel interface.
 
 Exit condition: three consecutive unplugged install-and-launch runs pass.
 
@@ -1259,9 +1292,7 @@ Required recurring integration coverage:
 
 ## Open Decisions
 
-- Final product, package, and executable name.
 - First officially supported Linux architecture and distribution (x86_64 Ubuntu 24.04 is the validated proof pair).
-- Exact first Swift/Xcode SDK compatibility pair (Xcode 26.1.1 / Swift 6.2.1 export, Swift 6.2.4 host is the validated proof pair).
 - Whether `rcodesign` remains a pinned subprocess or becomes a directly integrated Rust component later.
 - Whether owner-only plaintext credential storage remains acceptable beyond technical
   validation or is replaced by an OS keyring/HSM-backed design.
@@ -1298,7 +1329,8 @@ Scope and acceptance criteria when this task is eventually promoted:
 
 ## Recommended Next Work
 
-Proceed with Gate 4: integrate the proven USB CoreDevice bootstrap/launch path behind a
-bounded helper lifecycle, provision and checksum the pinned `pymobiledevice3` environment
-and USBIP-compatible usbmux transport, then prove three consecutive unplugged network
-install-and-launch runs without manual cleanup. Gate 5 remains CLI productization.
+Proceed with Gate 5 productization: add `doctor`, automate installation of the frozen
+Python environment and root-owned helper/least-privilege sudo policy, provision the
+qualified USBIP-compatible usbmux transport with explicit GPL compliance, add clean-host
+setup and recovery documentation, and run the complete acceptance flow through stable
+commands.

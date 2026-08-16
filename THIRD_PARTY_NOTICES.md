@@ -32,3 +32,13 @@ LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
 ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+## pymobiledevice3
+
+The optional physical-device transport is provisioned from the frozen environment in
+`Tools/pymobiledevice3` and requires `pymobiledevice3` 8.2.1. The dependency is not
+vendored in this repository. pymobiledevice3 is distributed under GPL-3.0-or-later;
+installations and redistributions must comply with its license and the licenses of its
+transitive dependencies.
+
+Source: <https://github.com/doronz88/pymobiledevice3>

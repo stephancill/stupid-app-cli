@@ -1,5 +1,8 @@
 .build/
 .swiftpm/
+.venv/
+__pycache__/
+*.pyc
 .DS_Store
 *.xcodeproj
 third-party/

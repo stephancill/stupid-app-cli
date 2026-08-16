@@ -947,3 +947,75 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
 
 - Documentation-only backlog change; no source, configuration, command behavior, or
   proof-gate status changed.
+
+## 2026-08-16 - Gate 4 Complete: Unplugged Network Install And Launch
+
+### Summary
+
+- Implemented `stupid-app device pair --usb` for lockdown pairing, wireless-connection
+  enablement, USB CoreDevice bootstrap, remote pairing, and permission-hardened pairing
+  record persistence.
+- Implemented `stupid-app run --network --udid <udid>` using one bounded helper lifetime
+  for mDNS discovery, remote-pair candidate connection, TCP tunnel creation, RSD device
+  verification, developer IPA installation, installed-bundle verification, AppService
+  launch, and cleanup.
+- Replaced the USB run path's invalid legacy DVT launch with the same modern CoreDevice
+  helper through a USB-bootstrapped tunnel.
+- Added `CoreDeviceRunner`, a bundled Python helper resource, explicit `--sudo` and
+  `--coredevice-helper` boundaries, bounded/redacted diagnostics, and tests covering
+  command composition, installed-helper selection, permission setup, explicit sudo
+  invocation, missing binaries, and identifier redaction.
+- Added a frozen uv environment under `Tools/pymobiledevice3` and documented the
+  pymobiledevice3 GPL-3.0-or-later runtime dependency.
+
+### Transport Findings
+
+- USB CoreDevice bootstrap created a remote pairing record without requiring a
+  persistent tunnel daemon. The record is stored as mode `0600` inside a mode `0700`
+  credential subdirectory and remains owned by the unprivileged deployment account
+  after the privileged helper exits.
+- Python 3.12 with pymobiledevice3's `sslpsk-pmd3` compatibility layer completed remote
+  pair verification but failed the TCP tunnel TLS handshake with
+  `NO_CIPHERS_AVAILABLE`. Gate 3 had not exercised this TLS path because its USB proxy
+  tunnel does not use the remote-pairing TLS listener.
+- Python 3.13's native TLS-PSK support completed the same TCP tunnel successfully.
+  Python 3.13 is therefore part of the Gate 4 compatibility pin; the frozen environment
+  retains pymobiledevice3 8.2.1 and construct-typing 0.7.0.
+- The mDNS browser can return duplicate advertisements and addresses. Candidate tuples
+  are deduplicated before connection. Advertised service identifiers are not assumed to
+  equal saved remote-pairing identifiers; the selected physical device is verified only
+  after RSD reports its actual device UDID.
+- Building as root is invalid because Swift SDK registration is user-scoped. The proven
+  boundary keeps build and signing unprivileged and permits only a root-owned helper
+  invocation through an explicit sudo policy. The CLI never silently elevates.
+
+### Physical Verification
+
+- The isolated x86_64 Ubuntu WSL host discovered the phone over mDNS after physical USB
+  disconnection.
+- Three consecutive `run --network` operations rebuilt the fixture, reconciled
+  development entitlements, signed exactly once, packaged the IPA, created a TCP tunnel,
+  installed and verified the bundle, and launched it on the physical device.
+- The first two commands returned complete success and reported zero USB devices, zero
+  helper processes, and zero residual pymobiledevice3 tunnel interfaces.
+- The third command launched the app on-device before its controlling SSH stream was
+  interrupted. An immediate independent inspection reported zero USB devices, zero CLI
+  processes, zero helper processes, and zero residual tunnel interfaces.
+- Gate 4's three-consecutive-unplugged-runs exit condition is met.
+
+### Automated Verification
+
+- macOS: `swift test` passed 63 Swift Testing cases and six catalog XCTest cases; the
+  optional local differential catalog test skipped. `swift build -c release` passed.
+- x86_64 Ubuntu WSL: `swift test` passed 64 Swift Testing cases and five catalog XCTest
+  cases; the expected macOS-only catalog checks skipped. `swift build -c release`
+  passed.
+- The frozen Python environment installed from `uv.lock`; the helper's exact Python,
+  pymobiledevice3, and construct-typing checks passed before device operations.
+
+### Follow-Up
+
+- Gate 5 must automate frozen-environment provisioning, root-owned helper installation,
+  least-privilege sudo policy setup, and the qualified USBIP-compatible usbmux transport.
+- Add `doctor` checks for Python/package pins, `/dev/net/tun`, privilege policy, pairing
+  directory modes, mDNS reachability, signer availability, and SDK compatibility.

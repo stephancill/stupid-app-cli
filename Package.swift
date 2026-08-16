@@ -73,7 +73,8 @@ let package = Package(
             dependencies: [
                 "BuildCore",
                 "SDKCore",
-            ]
+            ],
+            resources: [.copy("Resources")]
         ),
         .executableTarget(
             name: "stupid-app",

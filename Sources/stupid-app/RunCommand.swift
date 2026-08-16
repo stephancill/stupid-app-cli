@@ -8,18 +8,18 @@ import SDKCore
 import SigningKit
 
 /// `stupid-app run`: build, sign, install, and launch the app on a physical device.
-/// Gate 3 implements USB install; the wireless (`--network`) path is Gate 4.
+/// USB and wireless deployment share the same one-pass development signing pipeline.
 struct RunCommand: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "run",
     abstract: "Build, sign, install, and launch the app on a device."
   )
 
-  @Flag(name: .customLong("usb"), help: "Install over USB (Gate 3).")
+  @Flag(name: .customLong("usb"), help: "Install and launch over USB.")
   var usb = false
 
   @Flag(
-    name: .customLong("network"), help: "Install over the network (Gate 4, not yet implemented).")
+    name: .customLong("network"), help: "Install and launch through a CoreDevice network tunnel.")
   var network = false
 
   @Option(
@@ -39,8 +39,23 @@ struct RunCommand: AsyncParsableCommand {
 
   @Option(
     name: .customLong("pymobiledevice3"),
-    help: "Path to the pymobiledevice3 CLI used for USB install/launch.")
+    help: "Path to the pymobiledevice3 CLI used for USB installation.")
   var pymobilePath: String = "pymobiledevice3"
+
+  @Option(
+    name: .customLong("python"),
+    help: "Python 3.13 executable from the frozen pymobiledevice3 environment.")
+  var pythonPath: String = "python3"
+
+  @Option(
+    name: .customLong("sudo"),
+    help: "Explicit path to sudo for the privileged CoreDevice helper.")
+  var sudoPath: String?
+
+  @Option(
+    name: .customLong("coredevice-helper"),
+    help: "Root-owned installed CoreDevice helper path; defaults to the bundled helper.")
+  var coreDeviceHelperPath: String?
 
   @Option(
     name: .customLong("usbmux"),
@@ -48,7 +63,7 @@ struct RunCommand: AsyncParsableCommand {
   var usbmuxAddress: String?
 
   @Option(
-    name: .customLong("install-timeout"), help: "Maximum seconds allowed for USB installation.")
+    name: .customLong("install-timeout"), help: "Maximum seconds allowed for installation.")
   var installTimeout: Double = 300
 
   @Option(name: .customLong("launch-timeout"), help: "Maximum seconds allowed for app launch.")
@@ -58,9 +73,24 @@ struct RunCommand: AsyncParsableCommand {
   var home: String?
 
   mutating func run() async throws {
-    guard usb, !network else {
+    guard usb != network else {
       throw RunError.unsupportedTransport
     }
+    if network, udid == nil {
+      throw RunError.networkDeviceRequired
+    }
+
+    let credentialHome = credentialHomeURL()
+    let coreDevice = CoreDeviceRunner(
+      pythonPath: pythonPath,
+      sudoPath: sudoPath,
+      helperPath: coreDeviceHelperPath,
+      pairingDirectory: credentialHome.appendingPathComponent("pairing", isDirectory: true),
+      usbmuxAddress: usbmuxAddress,
+      installTimeoutSeconds: installTimeout,
+      launchTimeoutSeconds: launchTimeout
+    )
+    try coreDevice.validateEnvironment(requirePrivileges: true)
 
     let context = try ASCContext.resolve(home: home, purpose: "run")
 
@@ -118,20 +148,30 @@ struct RunCommand: AsyncParsableCommand {
     print("IPA SHA-256: \(try SHA256.file(at: output.ipaURL))")
 
     // 4. Determine the target device.
-    let installer = PyMobileDevice3Installer(
-      executablePath: pymobilePath,
-      usbmuxAddress: usbmuxAddress,
-      installTimeoutSeconds: installTimeout,
-      launchTimeoutSeconds: launchTimeout
-    )
-    let targetUDID = try resolveTargetUDID(installer: installer)
-
-    // 5. Install and launch over USB.
-    print("Installing on \(targetUDID ?? "<auto>") over USB...")
-    try installer.install(ipa: output.ipaURL, udid: targetUDID)
-    print("Installed.")
-    try installer.launch(bundleID: config.bundleID, udid: targetUDID)
-    print("Launched \(config.bundleID).")
+    if usb {
+      let installer = PyMobileDevice3Installer(
+        executablePath: pymobilePath,
+        usbmuxAddress: usbmuxAddress,
+        installTimeoutSeconds: installTimeout,
+        launchTimeoutSeconds: launchTimeout
+      )
+      guard let targetUDID = try resolveTargetUDID(installer: installer) else {
+        throw RunError.deviceSelection(0)
+      }
+      print("Installing on the selected device over USB...")
+      try installer.install(ipa: output.ipaURL, udid: targetUDID)
+      print("Installed.")
+      try coreDevice.launchUSB(bundleID: config.bundleID, udid: targetUDID)
+      print("Launched \(config.bundleID).")
+    } else if let udid {
+      print("Installing and launching on the selected device over the network...")
+      try coreDevice.installAndLaunchNetwork(
+        ipa: output.ipaURL,
+        bundleID: config.bundleID,
+        udid: udid
+      )
+      print("Installed and launched \(config.bundleID).")
+    }
   }
 
   private func resolveTargetUDID(installer: PyMobileDevice3Installer) throws -> String? {
@@ -142,8 +182,16 @@ struct RunCommand: AsyncParsableCommand {
     guard devices.count == 1 else {
       throw RunError.deviceSelection(devices.count)
     }
-    print("Using USB device \(devices[0])")
+    print("Using the sole USB-connected device.")
     return devices[0]
+  }
+
+  private func credentialHomeURL() -> URL {
+    if let home {
+      return URL(fileURLWithPath: home)
+    }
+    return FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent(".stupid-app/credentials", isDirectory: true)
   }
 
   private func locateProfile(home: URL, bundleID: String) throws -> URL {
@@ -163,11 +211,12 @@ enum RunError: Error, CustomStringConvertible {
   case identityMissingTeam
   case profileMissing(String)
   case deviceSelection(Int)
+  case networkDeviceRequired
 
   var description: String {
     switch self {
     case .unsupportedTransport:
-      return "`run` supports only --usb in Gate 3. The --network path lands in Gate 4."
+      return "Select exactly one deployment transport: --usb or --network."
     case .identityMissingTeam:
       return
         "The stored development identity has no team ID. Re-run `stupid-app signing setup --kind development`."
@@ -177,6 +226,9 @@ enum RunError: Error, CustomStringConvertible {
     case .deviceSelection(let count):
       return
         "Expected exactly one USB-connected device, found \(count). Pass --udid to select a device."
+    case .networkDeviceRequired:
+      return
+        "Network deployment requires --udid because remote pairing identifiers are not device UDIDs."
     }
   }
 }

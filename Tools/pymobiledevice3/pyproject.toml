@@ -1,0 +1,11 @@
+[project]
+name = "stupid-app-pymobiledevice3"
+version = "0.1.0"
+requires-python = "==3.13.*"
+dependencies = [
+  "construct-typing==0.7.0",
+  "pymobiledevice3==8.2.1",
+]
+
+[tool.uv]
+package = false

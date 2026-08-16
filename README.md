@@ -3,8 +3,7 @@
 A CLI for creating, building, signing, wirelessly deploying, and releasing iOS
 applications without requiring Xcode or macOS at runtime.
 
-Current status: **Gates 0, 1, and 2 complete; Gate 3 development signing is partially
-proven**. The
+Current status: **Gates 0 through 4 complete; Gate 5 productization remains**. The
 device-only Swift SDK pipeline is proven end-to-end on an isolated Ubuntu WSL host
 (export on macOS, validate and import on Linux, cross-compile to an ARM64 Mach-O), and
 a real Apple Distribution-signed IPA is produced on Linux with the pinned `rcodesign`
@@ -13,6 +12,8 @@ signing kernel and verified independently. The App Store Connect Build Upload cl
 `VALID`, became internally TestFlight-ready, installed through TestFlight, and launched.
 The accepted app icon uses the native `Assets.car` writer with Apple's pinned LZFSE
 reference encoder and `actool`-matching icon metadata.
+Development signing, USB installation, CoreDevice pairing, and three consecutive
+unplugged network install-and-launch runs are also proven on a physical iPhone.
 
 ## Package layout
 
@@ -30,6 +31,9 @@ reference encoder and `actool`-matching icon metadata.
   storage; the release manifest.
 - `Sources/SigningKit` — provisioning-profile CMS parsing, entitlement derivation,
   the pinned `rcodesign` signing kernel adapter, and IPA packaging.
+- `Sources/DeviceKit` — bounded USB installation plus CoreDevice pairing, tunnel,
+  network installation, and launch integration.
+- `Tools/pymobiledevice3` — the frozen Python 3.13 / pymobiledevice3 8.2.1 environment.
 - `Sources/stupid-app` — the cross-platform CLI.
 - `docs/rcodesign-pin.md` — the pinned signing kernel and its checksums.
 - `docs/sdk-export-format.md` — the SDK bundle archive and manifest specification.
@@ -47,10 +51,18 @@ stupid-app credentials add         Store ASC API key + team ID (0600 files)
 stupid-app signing setup --kind distribution   Provision a distribution identity + profile
 stupid-app signing setup --kind development    Provision a development identity + profile
 stupid-app devices                  List App Store Connect devices
-stupid-app run --usb                Build, sign, install, and launch over USB (partial proof)
+stupid-app device pair --usb        Bootstrap CoreDevice remote pairing over USB
+stupid-app run --usb                Build, sign, install, and launch over USB
+stupid-app run --network --udid ... Build, sign, install, and launch over the network
 stupid-app release archive         Build, sign (once, no timestamps), package the IPA
 stupid-app release upload --wait   Upload the IPA and wait for internal TestFlight
 ```
+
+CoreDevice tunneling requires `/dev/net/tun` and `CAP_NET_ADMIN`. The CLI never
+elevates implicitly: run an already-privileged helper or pass an explicit `--sudo`
+path. Production setup should install the helper root-owned and grant only that exact
+Python/helper command in sudoers. Pairing records are stored under the permission-
+hardened credential directory.
 
 ## Export (macOS)
 
