@@ -283,7 +283,7 @@ enum XPCCodec {
   struct Wrapper: Equatable {
     var messageID: UInt64
     var flags: UInt32
-    var value: XPCValue
+    var value: XPCValue?
   }
 
   /// Encodes a request wrapper. The payload is the XpcPayload envelope
@@ -314,8 +314,8 @@ enum XPCCodec {
     let messageID = try reader.readUInt64()
     let end = reader.offset + payloadLength
     guard end <= data.count else { throw Error.truncated }
-    guard payloadLength >= 8 else {
-      throw Error.malformed("wrapper payload is missing its envelope")
+    guard payloadLength > 0 else {
+      return Wrapper(messageID: messageID, flags: flags, value: nil)
     }
     let payloadMagic = try reader.readUInt32()
     guard payloadMagic == Self.payloadMagic else {
@@ -328,9 +328,6 @@ enum XPCCodec {
     let value = try decodeObject(reader: reader)
     guard reader.offset == end else {
       throw Error.malformed("wrapper payload length does not match its object")
-    }
-    guard reader.offset == data.count else {
-      throw Error.malformed("trailing bytes after the XPC wrapper")
     }
     return Wrapper(messageID: messageID, flags: flags, value: value)
   }

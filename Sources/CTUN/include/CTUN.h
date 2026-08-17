@@ -54,6 +54,13 @@ int stupid_app_tun_write(
   size_t length
 );
 
+/// Returns the device's file descriptor so a single-threaded tunnel relay can
+/// poll it alongside the TLS socket.
+int stupid_app_tun_fd(
+  const stupid_app_tun_device *device,
+  int *descriptor
+);
+
 void stupid_app_tun_destroy(stupid_app_tun_device *device);
 
 #endif

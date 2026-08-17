@@ -1387,13 +1387,15 @@ pairing, lockdown framing, client-certificate session TLS, wireless enablement, 
 startup, optional service TLS, AFC staging, installation proxy, exact bundle verification,
 cleanup, and session shutdown. On the isolated WSL host it installed and verified the
 development IPA in under one second without Python; fresh pairing and a subsequent cached
-connection also passed using the qualified USBIP-compatible usbmuxd transport. A native
-RemoteXPC/RSD slice now provides the XPC binary codec, the RemoteXPC HTTP/2 connection,
-an RSD client, and AppService launch plumbing (hermetic only; not yet device-qualified).
-Native
+connection also passed using the qualified USBIP-compatible usbmuxd transport. The native
+RemoteXPC/RSD slice now provides the XPC binary codec, the RemoteXPC HTTP/2 connection, an
+RSD client, and a fully device-qualified CoreDevice AppService USB launch path: the native
+USB `launch-usb` helper resolves the RSD peer, connects the appservice, invokes the launch
+feature, and reports the returned process identifier. It opens the app on the physical
+device and prints a clean JSON status across repeated runs. Native
 signing is mandatory and uses the bundled qualified public certificate chain; the Python
-device stack remains mandatory until CoreDevice launch/network protocols are implemented
-and qualified.
+device stack remains mandatory only for CoreDevice remote pairing and the network run
+path, which are not yet replaced.
 
 ### Native Signature Parser And Verifier
 
@@ -1527,8 +1529,8 @@ Scope and acceptance criteria when this task is eventually promoted:
 
 Execute the remaining work in this order:
 
-1. Implement the CoreDevice tunnel creation over lockdown, then the privileged TUN
-   packet-pump lifecycle around the qualified native connection.
-2. Wire the native RemoteXPC/RSD/AppService slice into the USB launch path, then
-   implement remote-pairing and network installation over the native service stack.
+1. Make the MTU-patched usbmuxd reproducible on the current libplist, then re-run the
+   full `run --usb` (native install + native launch) against a real development IPA.
+2. Implement native CoreDevice remote pairing and the network run path over the native
+   service stack to retire the pinned Python helper.
 3. Resume remaining Gate 5 productization work and clean-host acceptance in parallel.

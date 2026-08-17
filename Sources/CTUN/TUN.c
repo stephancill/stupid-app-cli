@@ -523,6 +523,23 @@ int stupid_app_tun_read(
 #endif
 }
 
+int stupid_app_tun_fd(
+  const stupid_app_tun_device *device,
+  int *descriptor
+) {
+#if defined(__linux__)
+  if (device == NULL || descriptor == NULL) {
+    return STUPID_APP_TUN_INVALID_INPUT;
+  }
+  *descriptor = device->descriptor;
+  return STUPID_APP_TUN_OK;
+#else
+  (void)device;
+  (void)descriptor;
+  return STUPID_APP_TUN_UNSUPPORTED;
+#endif
+}
+
 int stupid_app_tun_write(
   stupid_app_tun_device *device,
   const uint8_t *bytes,

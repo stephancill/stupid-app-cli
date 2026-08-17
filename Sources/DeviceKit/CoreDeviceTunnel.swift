@@ -99,14 +99,15 @@ public struct CoreDeviceUSBLauncher: Sendable {
     try tun.addRoute(to: handshake.serverAddress)
     progress?("Configured the native tunnel interface.")
 
-    let pump = PacketPump(
-      tunnel: tunnelConnection,
-      tun: tun,
-      progress: progress
-    )
-    pump.start()
-    defer { pump.stop() }
-    progress?("Native tunnel packet pump started.")
+    let tunDescriptor = try tun.descriptor()
+    let relay = TunnelRelay(tunnel: tunnelConnection, tunDescriptor: tunDescriptor)
+    relay.start()
+    defer {
+      relay.stop()
+      tunnelConnection.cancel()
+      tunnelConnection.close()
+    }
+    progress?("Native tunnel relay started.")
 
     let rsd = RSDClient(
       host: handshake.serverAddress,
@@ -114,20 +115,20 @@ public struct CoreDeviceUSBLauncher: Sendable {
       timeoutSeconds: timeoutSeconds
     )
     progress?("Connecting RSD to \(handshake.serverAddress):\(handshake.serverRSDPort)...")
-    let peerInfo: RSDClient.PeerInfo
+    let session: RSDSession
     do {
-      peerInfo = try rsd.connect()
+      session = try rsd.open()
     } catch {
       throw Error.launch("RSD connect failed: \(error)")
     }
-    guard peerInfo.udid == udid else {
+    guard session.peerInfo.udid == udid else {
       throw Error.launch("the tunnel resolved a different device")
     }
     progress?("Resolved the remote service discovery peer.")
 
     let serviceConnection: RemoteXPCService
     do {
-      serviceConnection = try rsd.connect(service: AppServiceClient.serviceName, peerInfo: peerInfo)
+      serviceConnection = try session.connect(service: AppServiceClient.serviceName)
     } catch {
       throw Error.launch("the appservice endpoint was unavailable: \(error)")
     }
@@ -274,6 +275,18 @@ public final class TUNDevice: @unchecked Sendable {
     }
   }
 
+  func descriptor() throws -> Int32 {
+    guard let current = handleOrNil else {
+      throw CoreDeviceUSBLauncher.Error.tunnelClosed
+    }
+    var descriptor: Int32 = -1
+    let result = stupid_app_tun_fd(current, &descriptor)
+    guard result == STUPID_APP_TUN_OK.rawValue, descriptor >= 0 else {
+      throw CoreDeviceUSBLauncher.Error.tunnelSetup("TUN descriptor could not be read")
+    }
+    return descriptor
+  }
+
   func close() {
     destroy()
   }
@@ -295,102 +308,52 @@ public final class TUNDevice: @unchecked Sendable {
   }
 }
 
-/// Forwards IPv6 packets between the CoreDevice tunnel socket and the TUN
-/// device in both directions until stopped.
-private final class PacketPump: @unchecked Sendable {
+/// Runs the single-threaded non-blocking relay between the TLS CoreDevice
+/// tunnel connection and the TUN device. OpenSSL forbids concurrent
+/// SSL_read/SSL_write on one connection, so the relay services both directions
+/// from a single thread by polling the descriptors.
+private final class TunnelRelay: @unchecked Sendable {
   private let tunnel: LockdownServiceConnection
-  private let tun: TUNDevice
-  private let progress: (@Sendable (String) -> Void)?
+  private let tunDescriptor: Int32
   private let lock = NSLock()
   private let group = DispatchGroup()
-  private let queue = DispatchQueue(
-    label: "stupid-app.coredevice-pump",
-    attributes: .concurrent
-  )
+  private let queue = DispatchQueue(label: "stupid-app.coredevice-relay")
+  private let stopFlag = UnsafeMutablePointer<Int32>.allocate(capacity: 1)
   private var started = false
   private var stopped = false
 
-  init(tunnel: LockdownServiceConnection, tun: TUNDevice, progress: (@Sendable (String) -> Void)?) {
+  init(tunnel: LockdownServiceConnection, tunDescriptor: Int32) {
     self.tunnel = tunnel
-    self.tun = tun
-    self.progress = progress
+    self.tunDescriptor = tunDescriptor
+    stopFlag.pointee = 0
+  }
+
+  deinit {
+    stopFlag.deallocate()
   }
 
   func start() {
     lock.lock()
-    guard !started else {
-      lock.unlock()
-      return
-    }
+    defer { lock.unlock() }
+    guard !started else { return }
     started = true
-    lock.unlock()
     group.enter()
-    queue.async {
-      self.pumpTUNToTunnel()
-      self.group.leave()
-    }
-    group.enter()
-    queue.async {
-      self.pumpTunnelToTUN()
-      self.group.leave()
+    queue.async { [self] in
+      _ = tunnel.relay(to: tunDescriptor, stop: stopFlag)
+      group.leave()
     }
   }
 
   func stop() {
     lock.lock()
+    guard !stopped else {
+      lock.unlock()
+      return
+    }
     stopped = true
     lock.unlock()
-    tun.close()
+    stopFlag.pointee = 1
     tunnel.cancel()
     group.wait()
-    tunnel.close()
-  }
-
-  private func isStopped() -> Bool {
-    lock.lock()
-    defer { lock.unlock() }
-    return stopped
-  }
-
-  private func pumpTUNToTunnel() {
-    var count = 0
-    while !isStopped() {
-      do {
-        let packet = try tun.read()
-        try tunnel.write(packet)
-        count += 1
-        if debugEnabled(), count % 5 == 0 {
-          progress?("pump tun->tunnel: \(count) packets, \(packet.count)B")
-        }
-      } catch {
-        return
-      }
-    }
-  }
-
-  private func pumpTunnelToTUN() {
-    var count = 0
-    while !isStopped() {
-      do {
-        let header = try tunnel.read(count: 40)
-        guard header.count == 40 else { return }
-        let payloadLength = (Int(header[4]) << 8) | Int(header[5])
-        guard payloadLength >= 0, payloadLength <= 65_536 - 40 else { return }
-        let payload = try tunnel.read(count: payloadLength)
-        var packet = header
-        packet.append(payload)
-        try tun.write(packet)
-        count += 1
-        if debugEnabled(), count % 5 == 0 {
-          progress?("pump tunnel->tun: \(count) packets, \(packet.count)B")
-        }
-      } catch {
-        return
-      }
-    }
-  }
-
-  private func debugEnabled() -> Bool {
-    ProcessInfo.processInfo.environment["STUPID_APP_TUN_DEBUG"] != nil
   }
 }

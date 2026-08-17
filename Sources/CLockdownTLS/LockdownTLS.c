@@ -469,6 +469,143 @@ int stupid_app_lockdown_tls_write(
   return result;
 }
 
+// A single-threaded non-blocking relay between the TLS tunnel connection and a
+// TUN device. OpenSSL forbids concurrent SSL_read/SSL_write on the same SSL
+// object, so a relay must never touch the connection from more than one thread;
+// this loop services both directions by polling each descriptor for readiness.
+int stupid_app_lockdown_tls_relay_tun(
+  stupid_app_lockdown_tls_connection *connection,
+  int tun_fd,
+  volatile int *stop
+) {
+  if (connection == NULL || connection->ssl == NULL || connection->socket_fd < 0 ||
+      tun_fd < 0 || stop == NULL) {
+    return STUPID_APP_LOCKDOWN_TLS_INVALID_INPUT;
+  }
+  // The relay writes into the TUN during teardown while the transport closes;
+  // a broken pipe must not terminate the short-lived privileged helper before it
+  // can report its result. Ignore SIGPIPE for the process and return EPIPE.
+  signal(SIGPIPE, SIG_IGN);
+  int64_t relay_deadline;
+  if (deadline(connection, &relay_deadline) != STUPID_APP_LOCKDOWN_TLS_OK) {
+    return STUPID_APP_LOCKDOWN_TLS_CONFIGURATION_FAILED;
+  }
+  // inbound accumulates decrypted tunnel bytes until whole IPv6 packets are
+  // available; the TUN requires exactly one packet per write.
+  uint8_t *inbound = malloc(131072);
+  size_t inbound_length = 0;
+  uint8_t *outbound = malloc(65536);
+  if (inbound == NULL || outbound == NULL) {
+    free(inbound);
+    free(outbound);
+    return STUPID_APP_LOCKDOWN_TLS_CONFIGURATION_FAILED;
+  }
+  int result = STUPID_APP_LOCKDOWN_TLS_OK;
+  while (!*stop) {
+    int64_t now = monotonic_milliseconds();
+    if (now < 0 || now >= relay_deadline) {
+      result = STUPID_APP_LOCKDOWN_TLS_TIMED_OUT;
+      break;
+    }
+    int remaining = (int)(relay_deadline - now);
+
+    struct pollfd descriptors[2] = {
+      {.fd = connection->socket_fd, .events = POLLIN},
+      {.fd = tun_fd, .events = POLLIN},
+    };
+    int waited = poll(descriptors, 2, remaining < 50 ? remaining : 50);
+    if (waited < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      result = STUPID_APP_LOCKDOWN_TLS_CONFIGURATION_FAILED;
+      break;
+    }
+
+    // Device -> host: read tunnel bytes, then deliver every complete IPv6
+    // packet to the TUN, keeping any partial packet buffered for the next round.
+    if (descriptors[0].revents & (POLLIN | POLLHUP | POLLERR)) {
+      size_t received = 0;
+      int read_result = SSL_read_ex(connection->ssl, inbound + inbound_length, 131072 - inbound_length, &received);
+      if (read_result == 1 && received > 0) {
+        inbound_length += received;
+        size_t offset = 0;
+        while (offset + 40 <= inbound_length) {
+          size_t payload = ((size_t)inbound[offset + 4] << 8) | inbound[offset + 5];
+          size_t packet_length = 40 + payload;
+          if (packet_length > inbound_length - offset) {
+            break;
+          }
+          ssize_t written = write(tun_fd, inbound + offset, packet_length);
+          if (written != (ssize_t)packet_length) {
+            result = STUPID_APP_LOCKDOWN_TLS_WRITE_FAILED;
+            offset = inbound_length;
+            break;
+          }
+          offset += packet_length;
+        }
+        if (offset < inbound_length) {
+          memmove(inbound, inbound + offset, inbound_length - offset);
+          inbound_length -= offset;
+        } else {
+          inbound_length = 0;
+        }
+      } else if (read_result == 0) {
+        // Clean TLS close_notify from the peer; the tunnel is finished.
+        break;
+      } else {
+        int error = SSL_get_error(connection->ssl, read_result);
+        if (error != SSL_ERROR_WANT_READ && error != SSL_ERROR_WANT_WRITE) {
+          result = STUPID_APP_LOCKDOWN_TLS_READ_FAILED;
+          break;
+        }
+      }
+    }
+
+    // Host -> device: read a packet from the TUN and write it into the tunnel.
+    if (descriptors[1].revents & (POLLIN | POLLHUP | POLLERR)) {
+      ssize_t packet_length = read(tun_fd, outbound, 65536);
+      if (packet_length > 0) {
+        size_t offset = 0;
+        while (offset < (size_t)packet_length) {
+          size_t written = 0;
+          int write_result =
+            SSL_write_ex(connection->ssl, outbound + offset, (size_t)packet_length - offset, &written);
+          if (write_result == 1 && written > 0) {
+            offset += written;
+            continue;
+          }
+          int error = SSL_get_error(connection->ssl, write_result);
+          if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE) {
+            short events = error == SSL_ERROR_WANT_READ ? POLLIN : POLLOUT;
+            int64_t write_deadline;
+            if (deadline(connection, &write_deadline) != STUPID_APP_LOCKDOWN_TLS_OK) {
+              result = STUPID_APP_LOCKDOWN_TLS_CONFIGURATION_FAILED;
+              offset = (size_t)packet_length;
+              break;
+            }
+            if (wait_for_socket(connection->socket_fd, events, write_deadline) != STUPID_APP_LOCKDOWN_TLS_OK) {
+              result = STUPID_APP_LOCKDOWN_TLS_TIMED_OUT;
+              offset = (size_t)packet_length;
+              break;
+            }
+            continue;
+          }
+          result = STUPID_APP_LOCKDOWN_TLS_WRITE_FAILED;
+          offset = (size_t)packet_length;
+          break;
+        }
+      } else if (packet_length < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+        result = STUPID_APP_LOCKDOWN_TLS_READ_FAILED;
+        break;
+      }
+    }
+  }
+  free(inbound);
+  free(outbound);
+  return result;
+}
+
 void stupid_app_lockdown_tls_cancel(stupid_app_lockdown_tls_connection *connection) {
   if (connection == NULL) {
     return;

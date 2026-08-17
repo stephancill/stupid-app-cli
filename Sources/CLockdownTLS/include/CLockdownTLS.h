@@ -69,6 +69,16 @@ int stupid_app_lockdown_tls_write(
   size_t length
 );
 
+/// Relays IPv6 packets between the TLS tunnel connection and a TUN device using
+/// a single thread. OpenSSL forbids concurrent SSL_read and SSL_write, so both
+/// directions are serviced by polling the descriptors in one loop. Runs until
+/// `*stop` becomes nonzero, the peer closes, or the connection deadline passes.
+int stupid_app_lockdown_tls_relay_tun(
+  stupid_app_lockdown_tls_connection *connection,
+  int tun_fd,
+  volatile int *stop
+);
+
 void stupid_app_lockdown_tls_cancel(stupid_app_lockdown_tls_connection *connection);
 
 void stupid_app_lockdown_tls_destroy(stupid_app_lockdown_tls_connection *connection);

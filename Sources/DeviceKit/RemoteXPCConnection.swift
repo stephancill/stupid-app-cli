@@ -66,7 +66,9 @@ final class RemoteXPCConnection: @unchecked Sendable {
     out.append(HTTP2Frame.headersFrame(streamID: Stream.reply.rawValue))
     out.append(
       HTTP2Frame.dataFrame(
-        streamID: Stream.reply.rawValue, payload: xpcEmptyWrapper(flags: 0x0000_4001)))
+        streamID: Stream.reply.rawValue,
+        payload: xpcEmptyWrapper(
+          flags: XPCCodec.Flags.initHandshake.rawValue | XPCCodec.Flags.alwaysSet.rawValue)))
     nextMessageID[Stream.reply.rawValue]! += 1
     try connection.write(out)
 
@@ -74,7 +76,9 @@ final class RemoteXPCConnection: @unchecked Sendable {
     guard settings.kind == .settings else {
       throw Error.protocolViolation("expected a SETTINGS frame after the handshake")
     }
-    try connection.write(HTTP2Frame.settingsAck())
+    if settings.flags & HTTP2Frame.Flags.ack.rawValue == 0 {
+      try connection.write(HTTP2Frame.settingsAck())
+    }
   }
 
   /// Sends one request carrying an XPC dictionary.
@@ -104,11 +108,14 @@ final class RemoteXPCConnection: @unchecked Sendable {
       do {
         let wrapper = try XPCCodec.decodeWrapper(buffer)
         previousFrameData = Data()
+        if wrapper.value == nil {
+          continue
+        }
         if case .dictionary(let value) = wrapper.value, value.isEmpty {
           continue
         }
         nextMessageID[frame.streamID] = wrapper.messageID + 1
-        return wrapper.value
+        return wrapper.value!
       } catch XPCCodec.Error.truncated {
         previousFrameData = buffer
       }
@@ -176,7 +183,7 @@ final class RemoteXPCConnection: @unchecked Sendable {
       case .data:
         return (frame.streamID, frame.payload)
       default:
-        if frame.kind == .settings {
+        if frame.kind == .settings, frame.flags & HTTP2Frame.Flags.ack.rawValue == 0 {
           try connection.write(HTTP2Frame.settingsAck())
         }
         continue

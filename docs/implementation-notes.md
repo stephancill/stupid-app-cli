@@ -1930,3 +1930,96 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
   stalls, so the tunnel and pump are qualified but the RSD/RemoteXPC AppService launch
   needs further on-device debugging. Network operation and CoreDevice remote pairing
   still use the Python helper.
+
+## 2026-08-17 - Native CoreDevice USB Launch Qualified
+
+### Summary
+
+- Completed the native CoreDevice USB launch path. The privileged helper now
+  resolves the RSD peer, connects the CoreDevice appservice, invokes the launch
+  feature, and reports the returned process identifier. The app reliably opens on
+  the registered physical device and the helper prints a clean JSON status on
+  every repeated run.
+- Closed the last greenfield gap from the prior entry (RSD/AppService launch
+  stalling on-device). Network operation and CoreDevice remote pairing still use
+  the pinned Python helper.
+
+### On-Device Environment Setup
+
+- The WSL test host had auto-shut down, leaving a stale non-persistent usbipd
+  attach. Restored `vmIdleTimeout=-1` in `.wslconfig` (it had been dropped) and
+  held an open WSL session so the VM stayed alive across commands; then re-attached
+  the passed-through iPhone and restarted the stock `usbmuxd` 1.1.1 manually (the
+  systemd unit targets a newer usbmuxd the installed binary does not support).
+- The qualified MTU-patched usbmuxd did not rebuild on this host because the newer
+  system libplist now declares `PLIST_FORMAT_XML`/`PLIST_FORMAT_BINARY`, which
+  collide with usbmuxd 1.1.1's own enum. The default daemon suffices for the
+  small-message lockdown/tunnel path exercised here.
+
+### Root Causes Found And Fixed
+
+1. **Unsafe two-thread TLS relay.** `CoreDeviceProxy` enables service TLS, and the
+   old `PacketPump` ran `SSL_read` and `SSL_write` concurrently on one OpenSSL
+   connection from two dispatch threads, which is not thread-safe and corrupted the
+   stream (manifested as truncated peer info and intermittent transport errors).
+   Replaced it with a single-threaded non-blocking relay
+   (`stupid_app_lockdown_tls_relay_tun`) that polls both the TLS socket and the TUN
+   descriptor, buffers partial inbound packets, and writes complete IPv6 packets to
+   the TUN one at a time.
+2. **Wrong RemoteXPC reply-channel handshake flag.** The handshake sent
+   `0x0000_4001` for the reply channel instead of
+   `INIT_HANDSHAKE(0x0040_0000)|ALWAYS_SET(0x1) = 0x0040_0001`. The device rejected
+   the connection. The flag is now derived from the `XPCCodec.Flags` constants.
+3. **Empty keep-alive XPC wrappers.** The device emits wrappers with an empty
+   payload envelope (`payloadLength == 0`) as keep-alives; the decoder treated these
+   as malformed. `decodeWrapper` now returns a nil-value wrapper and
+   `receiveResponse` skips it, matching pymobiledevice3's `payload is None` skip.
+4. **Trailing bytes after a wrapper.** A large peer-info message spanning multiple
+   DATA frames leaves trailing bytes after the first wrapper; `decodeWrapper`
+   rejected them. It now decodes one wrapper from the front of the stream, matching
+   pymobiledevice3's `XpcWrapper.parse`.
+5. **RSD ports are encoded as strings.** The peer-info service table serializes
+   `Port` as a string; the parser only accepted integers and skipped every service
+   (`services == 0`). It now parses string, uint64, and int64 ports and skips
+   port-less services instead of failing the whole peer.
+6. **RST/close after peer info.** The device closed the RSD connection because the
+   client ACKed a SETTINGS-ACK frame; HTTP/2 forbids ACKing an ACK. `receiveFrame`
+   and `receiveResponse` now ACK only SETTINGS frames without the ACK flag. The
+   device GOAWAY text was literally "SETTINGS: unexpected ACK".
+7. **RSD control connection lifetime.** pymobiledevice3 keeps the RSD control
+   connection open while a nested service runs. When the native client closed it
+   before the appservice launch finished, the device tore the tunnel down and the
+   launch response never arrived (the app would still open). Introduced
+   `RSDSession`, which owns the RSD socket for the duration of nested service calls.
+8. **Invalid `platformSpecificOptions`.** The reference sends
+   `plistlib.dumps({})`, an empty XML plist; the client sent the 8-byte
+   `"bplist00"` magic which is not a valid serialized plist. Now a full empty XML
+   plist is embedded.
+9. **SIGPIPE during teardown.** The relay could die with SIGPIPE while the
+   transport closed, before the helper printed its status JSON. SIGPIPE is now
+   ignored for the short-lived privileged helper so it reliably reports the result
+   and exits zero.
+
+### Verification
+
+- macOS: `swift test` passes 118 Swift Testing cases across 21 suites; the optional
+  local `actool` differential catalog test skips as designed. `swift build` and
+  `swift format lint --strict` pass.
+- Added hermetic regression tests: empty keep-alive wrapper decode
+  (`XPCCodecTests`), and RSD peer-info string-port parsing plus port-less-service
+  skipping (`RemoteXPCConnectionTests`).
+- The isolated x86_64 Ubuntu WSL host built the cutover source and, with the device
+  attached and unlocked, the native helper established the lockdown session,
+  CoreDeviceProxy tunnel, TUN, RSD peer, and appservice launch on repeated runs.
+  Each run reported `{"status":"ok","operation":"launch-usb","pid":N}` and exited
+  zero, and the app launched on the physical iPhone.
+- USB installation was already native; the launch is now native too. Network
+  operation and CoreDevice remote pairing remain on the pinned Python helper.
+
+### Follow-Up
+
+- Make the MTU-patched usbmuxd reproducible on the current libplist, and re-run the
+  end-to-end `run --usb` (install + launch) to confirm a real development IPA
+  installs and launches through the fully native USB path.
+- Implement native CoreDevice remote pairing and the network run path to retire the
+  remaining Python helper.

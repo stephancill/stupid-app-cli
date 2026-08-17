@@ -71,6 +71,27 @@ public struct RSDClient: Sendable {
     }
   }
 
+  /// Opens a RSD session that owns the control connection. Keeping it open for
+  /// the duration of nested service calls is required: the device tears the
+  /// tunnel down if the RSD control connection closes, so the launch response
+  /// would never be delivered.
+  public func open() throws -> RSDSession {
+    let socket = try SocketConnection(
+      address: "\(host):\(port)",
+      timeoutSeconds: timeoutSeconds
+    )
+    let remote = RemoteXPCConnection(connection: socket)
+    do {
+      try remote.start()
+      let peerInfo = try Self.peerInfo(from: try remote.receiveResponse())
+      return RSDSession(
+        socket: socket, host: host, timeoutSeconds: timeoutSeconds, peerInfo: peerInfo)
+    } catch {
+      socket.closeImmediately()
+      throw error
+    }
+  }
+
   /// Opens a RemoteXPC connection to the advertised service port.
   public func connect(service name: String, peerInfo: PeerInfo) throws -> RemoteXPCService {
     guard let service = peerInfo.services[name] else {
@@ -150,11 +171,13 @@ public struct RSDClient: Sendable {
           rawPort = port
         } else if let port = metadata["Port"]?.int64Value, port > 0 {
           rawPort = UInt64(port)
+        } else if let port = metadata["Port"]?.stringValue, let parsed = UInt64(port) {
+          rawPort = parsed
         } else {
-          throw Error.invalidService("\(name) has no valid Port")
+          continue
         }
         guard (1...65_535).contains(rawPort) else {
-          throw Error.invalidService("\(name) has no valid Port")
+          continue
         }
         let usesRemoteXPC =
           metadata["Properties"]?.dictionaryValue?["UsesRemoteXPC"]?.boolValue
@@ -163,6 +186,52 @@ public struct RSDClient: Sendable {
       }
     }
     return PeerInfo(udid: udid, productType: productType, services: services)
+  }
+}
+
+/// An active RSD session that keeps the control connection open for the
+/// lifetime of nested service calls. Closing it releases the control socket.
+public final class RSDSession: @unchecked Sendable {
+  private let socket: SocketConnection
+  private let host: String
+  private let timeoutSeconds: Double
+
+  public let peerInfo: RSDClient.PeerInfo
+
+  init(
+    socket: SocketConnection,
+    host: String,
+    timeoutSeconds: Double,
+    peerInfo: RSDClient.PeerInfo
+  ) {
+    self.socket = socket
+    self.host = host
+    self.timeoutSeconds = timeoutSeconds
+    self.peerInfo = peerInfo
+  }
+
+  deinit {
+    socket.closeImmediately()
+  }
+
+  /// Opens a RemoteXPC connection to an advertised service while this session
+  /// (and therefore the tunnel control connection) stays open.
+  public func connect(service name: String) throws -> RemoteXPCService {
+    guard let service = peerInfo.services[name] else {
+      throw RSDClient.Error.serviceNotFound(name)
+    }
+    let socket = try SocketConnection(
+      address: "\(host):\(service.port)",
+      timeoutSeconds: timeoutSeconds
+    )
+    let remote = RemoteXPCConnection(connection: socket)
+    do {
+      try remote.start()
+      return RemoteXPCService(remote: remote, socket: socket)
+    } catch {
+      socket.closeImmediately()
+      throw error
+    }
   }
 }
 

@@ -36,6 +36,39 @@ struct RemoteXPCConnectionTests {
     try await waitForHandshake(server)
   }
 
+  @Test("RSD peer info accepts service ports encoded as strings and skips invalids")
+  func peerInfoStringPorts() async throws {
+    let server = try FakeRemoteXPCServer(
+      peerInfo: .dictionary([
+        "Properties": .dictionary([
+          "UniqueDeviceID": .string("udid-0002"),
+          "ProductType": .string("iPhone16,1"),
+        ]),
+        "Services": .dictionary([
+          // The device serializes RSD service ports as strings.
+          "com.apple.coredevice.appservice": .dictionary([
+            "Port": .string("58198")
+          ]),
+          // A service without a usable port is skipped, not a hard failure.
+          "com.apple.internal.dt.remote.debugproxy": .dictionary([
+            "Port": .string("0")
+          ]),
+          "com.apple.mobile.installation_proxy": .dictionary([
+            "Port": .uint64(6001)
+          ]),
+        ]),
+      ])
+    )
+    defer { server.stop() }
+
+    let client = RSDClient(host: "127.0.0.1", port: server.port, timeoutSeconds: 5)
+    let peerInfo = try client.connect()
+    #expect(peerInfo.udid == "udid-0002")
+    #expect(peerInfo.services["com.apple.coredevice.appservice"]?.port == 58198)
+    #expect(peerInfo.services["com.apple.mobile.installation_proxy"]?.port == 6001)
+    #expect(peerInfo.services["com.apple.internal.dt.remote.debugproxy"] == nil)
+  }
+
   @Test("AppService client launches an application over RemoteXPC")
   func appServiceLaunch() async throws {
     let launchResponseHex =

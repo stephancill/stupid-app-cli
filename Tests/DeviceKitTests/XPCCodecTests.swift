@@ -100,7 +100,7 @@ struct XPCCodecTests {
     }
     let wrapper = try XPCCodec.decodeWrapper(data)
     #expect(wrapper.messageID == 7)
-    let dict = try #require(wrapper.value.dictionaryValue)
+    let dict = try #require(wrapper.value?.dictionaryValue)
     #expect(dict["a"] == .string("hello"))
     #expect(dict["b"] == .int64(-42))
     #expect(dict["c"] == .bool(true))
@@ -166,13 +166,32 @@ struct XPCCodecTests {
     }
     let wrapper = try XPCCodec.decodeWrapper(data)
     #expect(wrapper.messageID == 2)
-    let peerInfo = try #require(wrapper.value.dictionaryValue)
+    let peerInfo = try #require(wrapper.value?.dictionaryValue)
     let properties = try #require(peerInfo["Properties"]?.dictionaryValue)
     #expect(properties["UniqueDeviceID"] == .string("udid-0001"))
     #expect(properties["ProductType"] == .string("iPhone15,2"))
     let services = try #require(peerInfo["Services"]?.dictionaryValue)
     let appservice = try #require(services["com.apple.coredevice.appservice"]?.dictionaryValue)
     #expect(appservice["Port"] == .uint64(6000))
+  }
+
+  @Test("decodes an empty keep-alive wrapper as no payload")
+  func decodesEmptyWrapper() throws {
+    // A wrapper with an empty payload envelope (stored length 0) is the device
+    // keep-alive message that pymobiledevice3 skips (payload is None).
+    var data = Data()
+    var magic = XPCCodec.wrapperMagic.littleEndian
+    withUnsafeBytes(of: &magic) { data.append(contentsOf: $0) }
+    var flags = UInt32(0x201).littleEndian
+    withUnsafeBytes(of: &flags) { data.append(contentsOf: $0) }
+    var length = UInt64(0).littleEndian
+    withUnsafeBytes(of: &length) { data.append(contentsOf: $0) }
+    var messageID = UInt64(4).littleEndian
+    withUnsafeBytes(of: &messageID) { data.append(contentsOf: $0) }
+
+    let wrapper = try XPCCodec.decodeWrapper(data)
+    #expect(wrapper.value == nil)
+    #expect(wrapper.messageID == 4)
   }
 }
 

@@ -572,6 +572,13 @@ public final class LockdownServiceConnection: @unchecked Sendable {
   public func cancel() {
     connection.cancel()
   }
+
+  /// Runs the single-threaded non-blocking tunnel relay from this TLS service
+  /// connection into the provided TUN descriptor, blocking until `*stop` becomes
+  /// nonzero or the peer closes.
+  public func relay(to tunDescriptor: Int32, stop: UnsafeMutablePointer<Int32>) -> Int32 {
+    connection.relayTunnel(to: tunDescriptor, stop: stop)
+  }
 }
 
 final class SocketConnection: @unchecked Sendable {
@@ -649,6 +656,16 @@ final class SocketConnection: @unchecked Sendable {
       throw Self.tlsError(result)
     }
     tls = output
+  }
+
+  /// Runs the single-threaded non-blocking tunnel relay from this TLS connection
+  /// into the provided TUN descriptor, blocking until `*stop` becomes nonzero or
+  /// the peer closes. Returns the raw lockdowntls result code.
+  func relayTunnel(to tunDescriptor: Int32, stop: UnsafeMutablePointer<Int32>) -> Int32 {
+    guard let activeTLS = tls else {
+      return Int32(STUPID_APP_LOCKDOWN_TLS_INVALID_INPUT.rawValue)
+    }
+    return stupid_app_lockdown_tls_relay_tun(activeTLS, tunDescriptor, stop)
   }
 
   func read(count: Int) throws -> Data {

@@ -60,13 +60,24 @@ public struct AppServiceClient: Sendable {
           "startStopped": .bool(false),
           "terminateExisting": .bool(true),
           "user": .dictionary(["shortName": .string("mobile")]),
-          "platformSpecificOptions": .data(Data([0x62, 0x70, 0x6c, 0x69, 0x73, 0x74, 0x30, 0x30])),
+          "platformSpecificOptions": .data(Self.emptyPlatformOptions),
         ]),
         "standardIOIdentifiers": .dictionary([:]),
       ]),
       "CoreDevice.invocationIdentifier": .string(UUID().uuidString.lowercased()),
     ]
   }
+
+  /// The empty XPC-plist payload for `platformSpecificOptions`, matching
+  /// pymobiledevice3's `plistlib.dumps({})` XML representation.
+  static let emptyPlatformOptions: Data = Data(
+    """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict/>
+    </plist>
+    """.utf8)
 
   static func processIdentifier(from response: XPCValue) throws -> Int64 {
     guard let root = response.dictionaryValue, let output = root["CoreDevice.output"] else {
