@@ -35,11 +35,6 @@ struct RunCommand: AsyncParsableCommand {
   var swiftPath: String = "swift"
 
   @Option(
-    name: .customLong("pymobiledevice3"),
-    help: "Path to the pymobiledevice3 CLI used for USB installation.")
-  var pymobilePath: String = "pymobiledevice3"
-
-  @Option(
     name: .customLong("python"),
     help: "Python 3.13 executable from the frozen pymobiledevice3 environment.")
   var pythonPath: String = "python3"
@@ -56,7 +51,7 @@ struct RunCommand: AsyncParsableCommand {
 
   @Option(
     name: .customLong("usbmux"),
-    help: "usbmuxd address (unix socket or HOST:PORT) passed to pymobiledevice3.")
+    help: "usbmuxd address (Unix socket or numeric HOST:PORT) used for USB operations.")
   var usbmuxAddress: String?
 
   @Option(
@@ -78,16 +73,27 @@ struct RunCommand: AsyncParsableCommand {
     }
 
     let credentialHome = credentialHomeURL()
+    let pairingDirectory = credentialHome.appendingPathComponent("pairing", isDirectory: true)
     let coreDevice = CoreDeviceRunner(
       pythonPath: pythonPath,
       sudoPath: sudoPath,
       helperPath: coreDeviceHelperPath,
-      pairingDirectory: credentialHome.appendingPathComponent("pairing", isDirectory: true),
+      pairingDirectory: pairingDirectory,
       usbmuxAddress: usbmuxAddress,
       installTimeoutSeconds: installTimeout,
       launchTimeoutSeconds: launchTimeout
     )
-    try coreDevice.validateEnvironment(requirePrivileges: true)
+    if usb {
+      let nativeRunner = NativeCoreDeviceRunner(
+        sudoPath: sudoPath,
+        pairingDirectory: pairingDirectory,
+        usbmuxAddress: usbmuxAddress,
+        launchTimeoutSeconds: launchTimeout
+      )
+      try nativeRunner.validateEnvironment(requirePrivileges: true)
+    } else {
+      try coreDevice.validateEnvironment(requirePrivileges: true)
+    }
 
     let context = try ASCContext.resolve(home: home, purpose: "run")
 
@@ -145,20 +151,27 @@ struct RunCommand: AsyncParsableCommand {
 
     // 4. Determine the target device.
     if usb {
-      let installer = PyMobileDevice3Installer(
-        executablePath: pymobilePath,
+      let discovery = USBMuxClient(address: usbmuxAddress)
+      let installer = NativeUSBInstaller(
         usbmuxAddress: usbmuxAddress,
-        installTimeoutSeconds: installTimeout,
-        launchTimeoutSeconds: launchTimeout
+        pairingDirectory: credentialHome.appendingPathComponent("pairing", isDirectory: true),
+        timeoutSeconds: installTimeout,
+        progress: { print($0) }
       )
-      guard let targetUDID = try resolveTargetUDID(installer: installer) else {
+      guard let targetUDID = try resolveTargetUDID(discovery: discovery) else {
         throw RunError.deviceSelection(0)
       }
       print("Installing on the selected device over USB...")
-      try installer.install(ipa: output.ipaURL, udid: targetUDID)
+      try installer.install(ipa: output.ipaURL, bundleID: config.bundleID, udid: targetUDID)
       print("Installed.")
-      try coreDevice.launchUSB(bundleID: config.bundleID, udid: targetUDID)
-      print("Launched \(config.bundleID).")
+      let nativeRunner = NativeCoreDeviceRunner(
+        sudoPath: sudoPath,
+        pairingDirectory: credentialHome.appendingPathComponent("pairing", isDirectory: true),
+        usbmuxAddress: usbmuxAddress,
+        launchTimeoutSeconds: launchTimeout
+      )
+      let pid = try nativeRunner.launchUSB(bundleID: config.bundleID, udid: targetUDID)
+      print("Launched \(config.bundleID) (pid \(pid)).")
     } else if let udid {
       print("Installing and launching on the selected device over the network...")
       try coreDevice.installAndLaunchNetwork(
@@ -170,11 +183,11 @@ struct RunCommand: AsyncParsableCommand {
     }
   }
 
-  private func resolveTargetUDID(installer: PyMobileDevice3Installer) throws -> String? {
+  private func resolveTargetUDID(discovery: any USBDeviceDiscovering) throws -> String? {
     if let udid {
       return udid
     }
-    let devices = try installer.usbDeviceUDIDs()
+    let devices = try discovery.usbDeviceUDIDs()
     guard devices.count == 1 else {
       throw RunError.deviceSelection(devices.count)
     }

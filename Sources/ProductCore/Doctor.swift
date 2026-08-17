@@ -31,7 +31,6 @@ public enum Doctor {
     public var sdkID: String
     public var swiftPath: String
     public var pythonPath: String
-    public var pymobiledevice3Path: String
     public var sudoPath: String?
     public var coreDeviceHelperPath: String?
 
@@ -41,7 +40,6 @@ public enum Doctor {
       sdkID: String = "stupid-app-ios",
       swiftPath: String = "swift",
       pythonPath: String = "python3",
-      pymobiledevice3Path: String = "pymobiledevice3",
       sudoPath: String? = nil,
       coreDeviceHelperPath: String? = nil
     ) {
@@ -50,7 +48,6 @@ public enum Doctor {
       self.sdkID = sdkID
       self.swiftPath = swiftPath
       self.pythonPath = pythonPath
-      self.pymobiledevice3Path = pymobiledevice3Path
       self.sudoPath = sudoPath
       self.coreDeviceHelperPath = coreDeviceHelperPath
     }
@@ -95,6 +92,12 @@ public enum Doctor {
         return "Pinned Apple WWDR G3 and Apple Inc. root certificates are valid."
       })
 
+    results.append(
+      check(name: "Native CoreDevice TLS") {
+        try CoreDeviceTLSConnection.validateOpenSSL()
+        return "OpenSSL 3.x provides TLS 1.2 and the required CoreDevice PSK cipher."
+      })
+
     let pairingDirectory = input.credentialHome.appendingPathComponent("pairing", isDirectory: true)
     let validationDirectory = FileManager.default.temporaryDirectory
       .appendingPathComponent("stupid-app-doctor-\(UUID().uuidString)", isDirectory: true)
@@ -109,15 +112,6 @@ public enum Doctor {
         )
         try runner.validateEnvironment(requirePrivileges: false)
         return "Python 3.13, pymobiledevice3 8.2.1, and construct-typing 0.7.0 are available."
-      })
-
-    results.append(
-      check(name: "USB installer") {
-        let path = HostInfo.resolveExecutable(input.pymobiledevice3Path)
-        guard FileManager.default.isExecutableFile(atPath: path) else {
-          throw PyMobileDevice3Installer.Error.binaryMissing(path)
-        }
-        return "pymobiledevice3 is executable at \(path)."
       })
 
     results.append(credentialResult(home: input.credentialHome))

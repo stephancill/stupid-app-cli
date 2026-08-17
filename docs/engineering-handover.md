@@ -75,6 +75,35 @@ unsuccessfully for required-environment failures without reading or printing sec
 contents. Frozen-environment installation, privileged-helper/sudo-policy setup,
 qualified USB transport provisioning, and clean-host acceptance remain open.
 
+The promoted SwiftNIO SSL CoreDevice connection spike produced a **no-go** result. A live
+Python 3.13 control proved that the iPhone listener requires TLS 1.2
+`PSK-AES128-GCM-SHA256` with an empty identity and completed the bounded `CDTunnel`
+exchange. NIOSSL's vendored BoringSSL does not implement that cipher, and NIOSSL rejects
+an empty PSK identity before BoringSSL. The phone also rejected the CBC-PSK suite that
+NIOSSL does support. The experimental NIOSSL client and dependencies were removed.
+A revised system-OpenSSL 3 implementation now lives in `DeviceKit` and has completed the
+exact physical TLS and `CDTunnel` exchange from Swift-owned orchestration after promotion.
+It owns copied PSK material and the socket through a cancellable handle, uses one total
+deadline and nonblocking OpenSSL I/O, and passed hermetic timeout/cancellation cleanup on
+macOS and Linux plus a repeated physical exchange on the isolated WSL host. OpenSSL 3.x
+is now a product build/runtime dependency and is checked by `doctor`. `DeviceKit` also
+contains a native plist-protocol usbmux client for `ReadBUID`, `ListDevices`, pair-record
+read/write, `Connect`, and lockdown `QueryType`/`GetValue`/`SetValue` framing. It now also
+decodes existing pair records, performs in-place client-certificate lockdown session TLS,
+starts services, opens their usbmux ports with optional service TLS, and stops sessions.
+The native AFC and installation-proxy clients stream a development IPA to a unique
+`/PublicStaging` path, install it as a developer package, verify the exact bundle ID, and
+remove the staged file on success or failure. `run --usb` now uses the native stack for
+discovery and installation. Native lockdown pairing now generates the exact OpenSSL 3
+root/host/device RSA certificate chain, handles the Trust response, stores the record in
+the owner-only CoreDevice pairing cache, establishes session TLS, and enables and verifies
+wireless lockdown. A native RemoteXPC/RSD slice now implements the XPC binary dictionary
+codec (verified byte-for-byte against the pinned pymobiledevice3 reference), the
+RemoteXPC HTTP/2-derived framing and handshake, an RSD client that resolves device UDID
+and advertised services, and a CoreDevice AppService launch client. The pinned Python
+stack remains mandatory because it still owns CoreDevice listener creation, remote
+pairing, TUN forwarding, RSD launch orchestration, and the network run path.
+
 Product and executable naming is decided: the CLI and package are `stupid-app`, the
 project-level configuration file is `stupid-app.yml`, the SDK artifact ID is
 `stupid-app-ios`, and the SDK exporter is the `sdk export` subcommand of the same tool
@@ -262,7 +291,7 @@ Do not copy xtool's large development command wholesale. Keep these concerns as 
 - Entitlement derivation and validation. (`SigningKit`)
 - Native code signer and independent verifier. (`SigningKit`)
 - IPA packaging and verification. (`SigningKit`)
-- Device listing and USB installation adapter. (`DeviceKit`, USB install proven;
+- Device listing and native USB installation. (`DeviceKit`, native USB install proven;
   CoreDevice launch integration remains)
 - Build Upload and TestFlight processing. (`ASCKit`, transport proven)
 
@@ -496,7 +525,14 @@ Initial direction:
 
 - Use `usbmuxd` and libimobiledevice-compatible tooling for initial USB trust and pairing.
 - Store pairing records as credentials.
-- Use a pinned `pymobiledevice3` integration for modern CoreDevice remote pairing, tunnel, installation, and launch until a reliable native implementation exists.
+- Use a pinned `pymobiledevice3` integration for modern CoreDevice remote pairing,
+  network installation, and launch until the remaining native protocol stack is qualified. The
+  native usbmux plist client now owns USB auto-discovery and exposes pair-record access,
+  `Connect`, fresh lockdown pairing, lockdown session TLS, wireless enablement, service
+  startup, AFC staging, installation proxy, and exact installed-bundle verification. The
+  native OpenSSL 3 TLS-PSK/`CDTunnel`
+  connection is also implemented independently in `DeviceKit`; launch and network
+  orchestration still use the helper.
 - Include timeout, cancellation, and process cleanup inside the CLI rather than requiring operator scripts.
 - Do not require LLDB attachment for a successful run.
 - Make the deployment transport replaceable so a future Raspberry Pi or LAN agent can receive a development-signed IPA from the WSL or another Linux build host.
@@ -1211,20 +1247,20 @@ the next build to become internally TestFlight-ready.
 
 Status: **complete** on the isolated WSL host. `devices`,
 `signing setup --kind development`, `run --usb`, development identity/profile storage,
-the reusable `SigningPipeline`, and the `DeviceKit` `pymobiledevice3` adapter are
-implemented. A physical device was registered; a development identity/profile was
+the reusable `SigningPipeline`, and the native `DeviceKit` USB installer are implemented.
+A physical device was registered; a development identity/profile was
 created; USB pass-through and pairing were validated; and the app was built, signed
 once, packaged, installed, and launched. Installation required a qualified
 `usbmuxd` 1.1.1 build with `USB_MTU=16383` to preserve frame boundaries through WSL
 USBIP. iOS 26.6 launch used pinned `pymobiledevice3` 8.2.1 to create a privileged
 USB CoreDevice tunnel and returned a live process token.
 
-`run --usb` now has bounded output, timeout/cancellation checks, Linux process-group
-cleanup, explicit install/launch timeouts, JSON device-list parsing, explicit usbmux
-socket propagation, and developer-package installation. Gate 4 replaced the invalid
-direct DVT launch with the proven CoreDevice helper and integrated its privilege,
-pinned-environment, and lifecycle boundaries. Patched-usbmuxd provisioning remains
-productization work for the USB install path.
+`run --usb` now uses native usbmux discovery, lockdown session TLS, AFC streaming,
+installation proxy, exact bundle lookup, staged-file cleanup, and explicit install
+timeouts. Gate 4 replaced the invalid direct DVT launch with the proven CoreDevice helper
+and integrated its privilege, pinned-environment, and lifecycle boundaries. Launch still
+uses that Python helper. Patched-usbmuxd provisioning remains productization work for the
+USB install path.
 
 Exit condition: the app launches on the registered device with a valid development signature.
 
@@ -1237,9 +1273,10 @@ Exit condition: the app launches on the registered device with a valid developme
 - Repeat without stale helper cleanup.
 
 Status: **complete** on the isolated WSL host. `CoreDeviceRunner` owns a bundled Python
-helper through the bounded `ProcessRunner`; `device pair --usb` establishes lockdown
-trust, enables wireless connections, creates a USB CoreDevice tunnel, and persists the
-remote pairing record with mode `0600` under a mode `0700` credential directory.
+helper through the bounded `ProcessRunner`; `device pair --usb` now establishes lockdown
+trust and enables wireless connections natively before the helper creates a USB CoreDevice
+tunnel and persists the remote pairing record with mode `0600` under a mode `0700`
+credential directory.
 `run --network --udid <udid>` discovers and deduplicates remote-pairing candidates,
 forces a TCP tunnel, validates the selected device through RSD, installs and verifies
 the exact bundle through InstallationProxy, launches through AppService, and tears the
@@ -1274,9 +1311,9 @@ Exit condition: three consecutive unplugged install-and-launch runs pass.
 Status: **in progress**. `stupid-app doctor` is implemented through the testable
 `ProductCore` module. Required checks fail the command; incomplete workflow state is a
 warning. Checks cover host Swift and imported SDK host/Swift compatibility, bundled
-native-signing trust, exact Python 3.13/pymobiledevice3 8.2.1/construct-typing 0.7.0 pins, the
-USB installer executable, owner-only credential/identity/pairing permissions, Linux
-TUN/usbmux prerequisites, and project configuration plus referenced files. Diagnostics
+native-signing trust, exact Python 3.13/pymobiledevice3 8.2.1/construct-typing 0.7.0 pins,
+owner-only credential/identity/pairing permissions, Linux TUN/usbmux prerequisites, and
+project configuration plus referenced files. Diagnostics
 do not load or print secret values, and CoreDevice environment validation uses a
 temporary pairing directory rather than mutating credential state.
 
@@ -1343,9 +1380,20 @@ Required recurring integration coverage:
 ## Active Technical Spikes
 
 The native signing spike and product cutover are complete for the supported shallow-app
-shape. The still-unstarted TLS-PSK spike takes priority over the remaining Gate 5
-productization tasks. Native signing is mandatory and uses the bundled qualified public
-certificate chain.
+shape. The SwiftNIO SSL TLS-PSK spike is complete with a no-go result, and the revised
+system-OpenSSL connection is promoted into `DeviceKit` and physically qualified. A native
+usbmux plist client now handles USB discovery, pair-record credentials, fresh lockdown
+pairing, lockdown framing, client-certificate session TLS, wireless enablement, service
+startup, optional service TLS, AFC staging, installation proxy, exact bundle verification,
+cleanup, and session shutdown. On the isolated WSL host it installed and verified the
+development IPA in under one second without Python; fresh pairing and a subsequent cached
+connection also passed using the qualified USBIP-compatible usbmuxd transport. A native
+RemoteXPC/RSD slice now provides the XPC binary codec, the RemoteXPC HTTP/2 connection,
+an RSD client, and AppService launch plumbing (hermetic only; not yet device-qualified).
+Native
+signing is mandatory and uses the bundled qualified public certificate chain; the Python
+device stack remains mandatory until CoreDevice launch/network protocols are implemented
+and qualified.
 
 ### Native Signature Parser And Verifier
 
@@ -1393,7 +1441,8 @@ No-go criteria:
 
 ### Swift TLS-PSK CoreDevice Interoperability
 
-Status: **promoted; not started**.
+Status: **SwiftNIO SSL no-go; system-OpenSSL replacement promoted and physically
+qualified for the bounded connection**.
 
 Implement the smallest SwiftNIO SSL client that connects to a CoreDevice TCP listener
 created by the proven pinned `pymobiledevice3` control path. This spike is only for the
@@ -1417,8 +1466,25 @@ No-go criteria:
 - Interoperability requires an unsafe global TLS hook, secret-bearing diagnostics, or an
   additional opaque runtime that does not materially improve on the current dependency.
 
-The spike may use the existing pinned Python stack only to create and control the device
-listener. Its final TLS connection and `CDTunnel` exchange must be implemented in Swift.
+The spike used the existing pinned Python stack only to create and control the device
+listener. A Python 3.13 control connected with an empty identity, negotiated TLS 1.2
+`PSK-AES128-GCM-SHA256`, sent the bounded `CDTunnel` request, and validated the expected
+response. The Swift client could not reproduce that exchange: NIOSSL rejects an empty
+identity in `clientPSKCallback`, its BoringSSL build rejects the required GCM-PSK cipher
+list, and the device rejects the supported `PSK-AES128-CBC-SHA` alternative. This meets
+the explicit no-go criterion above. The experimental source and SwiftNIO/NIOSSL
+dependencies were removed rather than retaining a crashable unsupported path.
+
+The selected replacement uses the host's OpenSSL 3.x through a narrow `CCoreDeviceTLS`
+C shim and `DeviceKit.CoreDeviceTLSConnection`. It permits only TLS 1.2, an empty PSK
+identity, `PSK-AES128-GCM-SHA256`, one bounded request, and one bounded response. The C
+handle copies PSK material, owns the active descriptor, drives nonblocking OpenSSL through
+`poll` under one monotonic deadline, and supports cross-thread cancellation through an
+atomic flag plus socket shutdown. Hermetic loopback tests prove prompt cancellation and
+total timeout cleanup on macOS and Linux. The rewritten component repeated the physical
+exchange successfully on the isolated WSL host. Compile-time and runtime policy accepts
+OpenSSL major version 3 only, and `doctor` reports policy failure. This qualifies the
+connection component, not listener creation or the complete native network stack.
 
 ## Deferred Non-Blocking Tasks
 
@@ -1461,6 +1527,8 @@ Scope and acceptance criteria when this task is eventually promoted:
 
 Execute the remaining work in this order:
 
-1. Prove SwiftNIO SSL TLS-PSK interoperability and one bounded `CDTunnel` handshake
-   against a physical device listener created by the proven stack.
-2. Resume remaining Gate 5 productization work and clean-host acceptance.
+1. Implement the CoreDevice tunnel creation over lockdown, then the privileged TUN
+   packet-pump lifecycle around the qualified native connection.
+2. Wire the native RemoteXPC/RSD/AppService slice into the USB launch path, then
+   implement remote-pairing and network installation over the native service stack.
+3. Resume remaining Gate 5 productization work and clean-host acceptance in parallel.

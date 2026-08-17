@@ -42,6 +42,28 @@ let package = Package(
       name: "CLZFSE",
       publicHeadersPath: "include"
     ),
+    .systemLibrary(
+      name: "COpenSSL",
+      pkgConfig: "openssl",
+      providers: [
+        .apt(["libssl-dev"]),
+        .brew(["openssl@3"]),
+      ]
+    ),
+    .target(
+      name: "CCoreDeviceTLS",
+      dependencies: ["COpenSSL"],
+      publicHeadersPath: "include"
+    ),
+    .target(
+      name: "CLockdownTLS",
+      dependencies: ["COpenSSL"],
+      publicHeadersPath: "include"
+    ),
+    .target(
+      name: "CTUN",
+      publicHeadersPath: "include"
+    ),
     .target(
       name: "BuildCore",
       dependencies: [
@@ -81,6 +103,9 @@ let package = Package(
       name: "DeviceKit",
       dependencies: [
         "BuildCore",
+        "CCoreDeviceTLS",
+        "CLockdownTLS",
+        "CTUN",
         "SDKCore",
       ],
       resources: [.copy("Resources")]
@@ -136,7 +161,10 @@ let package = Package(
     ),
     .testTarget(
       name: "DeviceKitTests",
-      dependencies: ["DeviceKit"]
+      dependencies: [
+        "DeviceKit",
+        .product(name: "_CryptoExtras", package: "swift-crypto"),
+      ]
     ),
     .testTarget(
       name: "ProductCoreTests",

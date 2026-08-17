@@ -42,3 +42,21 @@ installations and redistributions must comply with its license and the licenses 
 transitive dependencies.
 
 Source: <https://github.com/doronz88/pymobiledevice3>
+
+## OpenSSL
+
+`DeviceKit` dynamically links a host-provided OpenSSL 3.x installation through
+`COpenSSL` for the qualified CoreDevice TLS 1.2 PSK connection and lockdown
+client-certificate session/service TLS. OpenSSL source is not vendored. OpenSSL is
+distributed under the Apache License 2.0.
+
+Source: <https://github.com/openssl/openssl>
+
+## libimobiledevice
+
+The native lockdown pairing certificate shape and request sequence were checked against
+`libimobiledevice` as an interoperability reference. libimobiledevice source is not
+vendored or linked by this package. libimobiledevice is distributed under
+LGPL-2.1-or-later.
+
+Source: <https://github.com/libimobiledevice/libimobiledevice>

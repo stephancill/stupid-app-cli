@@ -20,7 +20,23 @@ verifier described below are implemented and qualified. Native output passed mac
 The product bundles checksum-pinned public Apple WWDR G3 and Apple Inc. root
 certificates, selects them only for a matching signing leaf, and fails loudly for an
 unsupported issuer or chain rotation. The `rcodesign` runtime path and engine-selection
-flags have been removed. The native device stack is not implemented.
+flags have been removed. The native device stack is not complete. Its first
+SwiftNIO/NIOSSL connection spike reached a physical-device no-go: the listener requires a
+GCM-PSK cipher and empty identity absent from the NIOSSL/BoringSSL path. The experimental
+client was removed. The system-OpenSSL 3 replacement subsequently completed the physical
+TLS and `CDTunnel` exchange, was hardened with cancellable handle-owned socket/PSK state
+and a total deadline, and was promoted into `DeviceKit`. It passed macOS/Linux hermetic
+timeout and cancellation tests and repeated the physical exchange on the isolated WSL
+host. A native usbmux plist client now implements bounded `ReadBUID`, `ListDevices`,
+pair-record read/write, `Connect`, and lockdown request framing over the retained daemon
+socket. It parses existing pair-record credentials, upgrades the connected socket to
+OpenSSL client-certificate TLS in place, generates fresh lockdown pairing certificates,
+handles Trust, enables wireless lockdown, starts services, opens optional service-TLS
+connections, and stops sessions. USB auto-discovery uses that client. Hermetic
+macOS/Linux fixtures pass, and physical Linux/WSL probes completed fresh pairing, cached
+session reuse, AFC startup, and native installation without Python. The Python device
+stack remains authoritative for CoreDevice remote pairing, tunnel, RSD, network
+installation, and launch.
 
 ## Summary
 
@@ -39,9 +55,10 @@ Both replacements are feasible, but neither is a small adapter rewrite:
 - Replacing `usbmuxd` itself is a separate raw-USB project and remains the deferred task
   described in `docs/engineering-handover.md`.
 
-The first decisive experiments should be a native signature parser/verifier and a
-SwiftNIO SSL TLS-PSK handshake against an iPhone listener created by the proven stack.
-These reduce the two largest architectural uncertainties before broad implementation.
+The first decisive experiments were a native signature parser/verifier and a TLS-PSK
+handshake against an iPhone listener created by the proven stack. Native signing is now
+qualified; SwiftNIO SSL failed its physical gate, and the isolated system-OpenSSL
+replacement is now a qualified `DeviceKit` connection component.
 
 ### Relative Size
 
@@ -79,12 +96,23 @@ manifests identify `native-shallow-v1` as the signer.
 
 ### Device Operations
 
-The Python dependency currently has two adapters:
+The remaining Python dependency has one adapter. `CoreDeviceRunner` owns the bundled
+Python helper for CoreDevice remote-pair bootstrap, network discovery, CoreDevice tunnel
+creation, installed-app verification, and launch.
 
-- `PyMobileDevice3Installer` performs USB discovery and installation through an external
-  `usbmuxd` socket.
-- `CoreDeviceRunner` owns the bundled Python helper for USB remote-pair bootstrap,
-  network discovery, CoreDevice tunnel creation, installed-app verification, and launch.
+`USBMuxClient` now owns USB target auto-discovery and exposes pair-record access,
+connection to lockdown port 62078, `QueryType`/`GetValue`/`SetValue`, fresh native
+pairing, session TLS, wireless enablement, service startup and connection, and session
+shutdown. `NativeUSBInstaller`
+streams the IPA through AFC, invokes installation proxy as a developer package, verifies
+the exact bundle ID, and removes its staged file. Lockdown pair records are stored in the
+same owner-only cache used by the remaining helper because the stock Ubuntu usbmuxd plist
+writer returned `EOPNOTSUPP`; native operations prefer that cache and retain daemon reads
+for existing records. A native RemoteXPC/RSD slice provides the XPC binary dictionary
+codec, the RemoteXPC HTTP/2 connection and handshake, an RSD client resolving the device
+UDID and advertised service ports, and a CoreDevice AppService launch client; these are
+hermetic-tested but not yet device-qualified. Every launch path and CoreDevice remote
+pairing still use the Python helper; the standalone Python CLI adapter has been removed.
 
 The native replacement should preserve the one-shot lifecycle and explicit privileged
 helper boundary. Build and signing remain unprivileged. A root-owned Swift helper should
@@ -302,7 +330,8 @@ A practical implementation would use:
 
 - Swift concurrency and actors for lexical lifecycle ownership.
 - SwiftNIO for Unix/TCP sockets and event-loop integration.
-- SwiftNIO SSL/BoringSSL for portable TLS 1.2 PSK.
+- A revised TLS 1.2 PSK implementation; SwiftNIO SSL/BoringSSL is disqualified by the
+  completed physical-device spike.
 - Existing `swift-crypto` for X25519, Ed25519, HKDF, ChaChaPoly, and hashes.
 - Existing RSA/X.509 support for lockdown pairing certificates.
 - A pinned BigInt implementation plus a narrow, vector-tested SRP implementation.
@@ -316,17 +345,35 @@ license is an objective. Use protocol captures, independently written fixtures, 
 references, and clean-room implementation practices. Record provenance for every
 adapted algorithm and format.
 
+Completed connection result: the physical listener negotiated TLS 1.2
+`PSK-AES128-GCM-SHA256` only when the control supplied an empty identity. NIOSSL 2.37.2
+rejects an empty client identity, its vendored BoringSSL does not recognize the required
+GCM-PSK cipher, and the listener rejected `PSK-AES128-CBC-SHA`. SwiftNIO SSL is therefore
+not a viable TLS kernel for this device path. That result required an explicit choice
+between a narrow system OpenSSL adapter and a project-owned implementation of exactly the
+observed suite. The selected system-OpenSSL implementation now lives in
+`CCoreDeviceTLS`/`DeviceKit`, accepts only OpenSSL 3.x, and has passed cancellation,
+single-deadline timeout, Linux release-build, and repeated physical qualification. It is
+not yet a complete transport because the surrounding listener, remote pairing, TUN, RSD,
+network installation, and launch layers remain external.
+
 ### Device Work Sequence
 
 1. Capture sanitized, bounded protocol fixtures from the proven pinned environment.
-2. Prove SwiftNIO SSL can complete the device's TLS-PSK handshake and record the
-   negotiated cipher and accepted PSK identity behavior.
-3. Implement native usbmux, lockdown, USB discovery, pairing validation, AFC, and
-   installation proxy while retaining external `usbmuxd`.
-4. Implement binary XPC, RemoteXPC, and RSD read-only service discovery.
+2. Use the qualified `DeviceKit` system-OpenSSL TLS-PSK connection as the tunnel data-plane
+   boundary; keep listener creation external until native remote pairing exists.
+3. Add AFC and installation proxy while retaining external `usbmuxd`. **Complete and
+   physically qualified** for development IPA staging, installation, exact bundle lookup,
+   and cleanup. Fresh lockdown pairing and wireless enablement are also complete and
+   physically qualified.
+4. Implement binary XPC, RemoteXPC, and RSD read-only service discovery. **Complete as a
+   hermetic slice:** the XPC codec is verified byte-for-byte against the pinned
+   reference, the RemoteXPC connection and handshake are implemented, an RSD client
+   resolves device UDID and advertised services, and an AppService launch client exists.
+   Physical qualification still requires the tunnel and TUN layers.
 5. Implement the privileged TUN helper and deterministic packet-pump cleanup.
 6. Connect through an existing remote pairing record and create a native network tunnel.
-7. Implement fresh SRP remote-pair setup and USB bootstrap record creation.
+7. Implement fresh SRP remote-pair setup and USB bootstrap CoreDevice record creation.
 8. Implement native installation verification and AppService launch.
 9. Cut CLI options and doctor checks over to an explicit native backend.
 10. Remove Python tooling only after clean-host and physical-device qualification.
@@ -353,8 +400,9 @@ or revise the architecture cheaply.
 
 ### Device Risks
 
-- SwiftNIO SSL exposes PSK APIs, but compatibility with the iPhone listener's cipher and
-  empty-identity behavior is not yet proven.
+- The selected system-OpenSSL path adds a host ABI and security-update dependency. The
+  bounded connection is qualified for OpenSSL 3.x, cancellation, and cleanup; complete
+  native transport qualification remains outstanding.
 - SRP and remote-pair state mistakes can create subtle security or interoperability
   defects; do not implement unaudited arbitrary-precision crypto from scratch.
 - CoreDevice service names, wire version 19, AppService version fields, request keys,
@@ -370,11 +418,13 @@ Treat these as two independent initiatives rather than one cutover.
 
 1. **Native signing verifier spike**
    - Parse and validate existing Xcode and `rcodesign` output before writing signatures.
-2. **Native TLS-PSK spike**
-   - Connect SwiftNIO SSL to a listener created by the proven device stack.
+2. **Native TLS-PSK connection**
+   - Qualified and promoted into `DeviceKit`; use it as the connection boundary for the
+     remaining native transport work.
 3. **Native USB operations**
-   - Remove Python from USB discovery and install while retaining `usbmuxd` and the
-     proven CoreDevice helper for launch.
+   - **Complete:** USB discovery, fresh lockdown pairing, wireless enablement, and
+     installation are native; `usbmuxd` and the proven Python CoreDevice helper remain for
+     raw USB transport and CoreDevice launch.
 4. **Native shallow-app signing**
    - Add an explicitly selected native engine and complete development/App Store proof.
 5. **Native CoreDevice network stack**

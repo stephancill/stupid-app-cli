@@ -1450,3 +1450,483 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
 - The bundled signing trust intentionally supports only the externally qualified WWDR
   G3 chain. Add and independently requalify a new pinned intermediate/root pair before
   WWDR G3 expires or before accepting identities issued from another Apple chain.
+
+## 2026-08-17 - Native CoreDevice SwiftNIO TLS-PSK No-Go
+
+### Summary
+
+- Implemented a temporary bounded SwiftNIO 2.101.3/NIOSSL 2.37.2 client and `CDTunnel`
+  codec to test the promoted native connection boundary.
+- Completed the physical control and Swift comparison. The result is no-go for the
+  proposed SwiftNIO SSL/BoringSSL architecture.
+- Removed the temporary client, tests, and package dependencies after the no-go result.
+  No product command or qualified runtime path changed.
+
+### TLS Decisions And Findings
+
+- A Python 3.13 control supplied an empty identity, negotiated TLS 1.2
+  `PSK-AES128-GCM-SHA256`, sent the 16,000-MTU `CDTunnel` request, and validated the
+  expected response shape.
+- The iPhone rejected a forced `PSK-AES128-CBC-SHA` control handshake. This rules out the
+  CBC-PSK family exposed by the tested NIOSSL/BoringSSL build.
+- NIOSSL's client callback explicitly rejects an empty identity. Its vendored BoringSSL
+  also does not recognize `PSK-AES128-GCM-SHA256`: configuring the string reaches an
+  NIOSSL cipher-list precondition, while resolving raw code point `0x00A8` encounters a
+  missing BoringSSL cipher.
+- The first Swift physical attempt offered CBC-PSK with a nonempty identity and closed
+  during TLS, before any `CDTunnel` bytes. The independent controls isolate both required
+  properties as unsupported by this TLS kernel.
+
+### Verification
+
+- Hermetic macOS and x86_64 WSL tests proved the temporary frame codec, cleanup, and the
+  NIOSSL-supported CBC-PSK path before physical testing.
+- Physical tests proved the working Python GCM-PSK/empty-identity exchange, Swift TLS
+  failure, and independent CBC rejection described above. No TUN interface or route was
+  created for these connection-only tests.
+- Temporary listener control files used mode `0700`/`0600` and were removed. No PSK,
+  pairing record, device identifier, or private host detail was retained in the repository
+  or this log.
+
+### Follow-Up
+
+- Do not resume the NIOSSL implementation unchanged. Decide between a narrow system
+  OpenSSL adapter and a project-owned exact-suite TLS implementation, then run that new
+  architecture through the same physical `CDTunnel` proof before broader device work.
+
+## 2026-08-17 - System OpenSSL CoreDevice Connection Proof
+
+### Summary
+
+- Selected the narrow system-OpenSSL alternative after the SwiftNIO SSL no-go.
+- Added `COpenSSL`, `CCoreDeviceTLS`, and `NativeDeviceSpike` as isolated non-product
+  targets. `DeviceKit` and `stupid-app` do not depend on them, so the shipping CLI has no
+  new OpenSSL runtime dependency at this stage.
+- Implemented one blocking, timeout-bounded operation that resolves and connects the
+  listener, requires TLS 1.2, supplies an empty PSK identity, offers only
+  `PSK-AES128-GCM-SHA256`, verifies the negotiated protocol, writes one bounded
+  `CDTunnel` request, reads one bounded response, and closes all OpenSSL/socket state.
+- Added Swift framing and typed response validation plus hermetic malformed/round-trip
+  tests. Public errors expose only phase codes and never OpenSSL state or PSK bytes.
+
+### Physical Verification
+
+- The isolated x86_64 Ubuntu WSL target compiled against its installed OpenSSL 3.0.13
+  development package.
+- The pinned Python environment created only the paired-device listener and stored the
+  ephemeral PSK in a mode-`0600` control file. Swift owned the OpenSSL connection and
+  `CDTunnel` exchange.
+- The physical test completed successfully with the exact required TLS version, cipher,
+  empty identity behavior, and expected response shape. No TUN interface or route was
+  created. The listener helper and owner-only control files were cleaned up afterward.
+- An independent post-run check found no listener process and no remaining PSK control
+  file.
+- Repeated the physical exchange after hardening the C shim with thread-scoped `SIGPIPE`
+  blocking/draining, close-on-exec descriptors, fail-closed socket timeout setup, and an
+  OpenSSL 3 compile guard. The hardened exchange passed again.
+
+### Automated Verification
+
+- `swift format lint --strict` passed for the changed package and Swift files, and
+  `git diff --check` passed.
+- `swift test` passed 90 Swift Testing cases plus seven asset-catalog XCTest cases with
+  one expected optional skip.
+- `swift build -c release` passed. `otool -L` confirmed that the product
+  `stupid-app` executable does not link `libssl` or `libcrypto`; only the isolated spike
+  test path links the local OpenSSL installation.
+
+### Limitations And Follow-Up
+
+- This is one successful physical exchange, not a device-stack cutover. The Python stack
+  remains the qualified runtime.
+- The current C operation is synchronously timeout-bounded but Swift task cancellation
+  cannot yet close its in-flight socket. Add explicit cancellable socket ownership and
+  failure-phase cleanup tests before promotion.
+- Define and validate an OpenSSL 3 ABI/version policy for supported Linux hosts. macOS
+  test builds currently use the locally installed OpenSSL 3 package and are not evidence
+  of a production macOS runtime requirement.
+- The current Homebrew OpenSSL library emits a linker warning because its deployment
+  version is newer than the package's macOS 14 declaration. This does not affect the
+  Linux physical proof or product executable, but the isolated spike is not qualified for
+  macOS 14.
+
+## 2026-08-17 - Native CoreDevice Connection Promoted Into DeviceKit
+
+### Summary
+
+- Replaced the synchronous isolated OpenSSL spike with
+  `DeviceKit.CoreDeviceTLSConnection`, a production connection component backed by a
+  cancellable `CCoreDeviceTLS` handle.
+- Made `CCoreDeviceTLS` an explicit `DeviceKit` dependency and removed the isolated
+  `NativeDeviceSpike` target. `stupid-app` now links the host-provided OpenSSL 3.x
+  libraries, and `doctor` validates the supported major version.
+- Kept the complete Python CoreDevice helper authoritative. The native component owns the
+  established TCP listener connection only; Python still owns listener creation, remote
+  pairing, TUN forwarding, RSD, installation, and launch.
+
+### Lifecycle And Security
+
+- The C handle copies the host and PSK into owned storage, zeroes PSK storage on destroy,
+  owns the active close-on-exec socket, and exposes idempotent cancellation without
+  exposing OpenSSL diagnostics or key material.
+- Connect, TLS handshake, request write, and response read use a nonblocking `poll` loop
+  under one monotonic deadline rather than receiving a fresh timeout per phase.
+- Listener hosts must be numeric IPv4 or IPv6 addresses. This matches CoreDevice
+  discovery output and prevents blocking DNS from escaping task cancellation and the
+  total deadline.
+- Swift runs the blocking C state machine off the cooperative executor and maps task
+  cancellation to an atomic cancellation flag plus socket shutdown. The worker unwinds
+  before its handle is destroyed, avoiding concurrent OpenSSL free/use races.
+- Socket shutdown and close are serialized so cancellation cannot act on a descriptor
+  number after close/reuse, and PSK erasure uses `OPENSSL_cleanse` rather than an
+  optimizable plain `memset`.
+- TLS remains fixed to version 1.2, an empty PSK identity, and
+  `PSK-AES128-GCM-SHA256`. Request and response `CDTunnel` framing is bounded and checked
+  before JSON decoding.
+- Compile-time and runtime policy accepts OpenSSL major version 3 only. Ubuntu's
+  `libssl-dev` is the qualified runtime source; Homebrew `openssl@3` remains suitable for
+  tests but currently advertises a newer macOS deployment target than the package.
+
+### Verification
+
+- `swift format lint --strict` passed for the changed Swift/package files, and
+  `git diff --check` passed.
+- Focused macOS tests passed seven `CoreDeviceTLSConnectionTests`: framing, malformed
+  input, OpenSSL/cipher policy, numeric-host enforcement, total timeout, prompt task
+  cancellation, and the optional physical-test gate. The timeout completed in roughly a
+  quarter second and cancellation in roughly a tenth of a second against local stalled
+  TCP peers.
+- The complete macOS suite passed 94 Swift Testing cases plus seven asset-catalog XCTest
+  cases with one expected optional skip, and `swift build -c release` passed.
+- `otool -L` confirms the promoted product links `libssl.3` and `libcrypto.3` from the
+  configured OpenSSL provider. The existing Homebrew deployment-target warning remains.
+- The isolated x86_64 Ubuntu WSL host passed the same six tests against OpenSSL 3.0.13 and
+  completed `swift build -c release`.
+- A fresh Python control created only the paired-device listener and owner-only PSK file.
+  The promoted Swift/DeviceKit implementation owned the physical TLS and `CDTunnel`
+  exchange and completed successfully. The listener process, PSK/control files, temporary
+  source tree, and transfer files were removed afterward.
+
+### Follow-Up
+
+- The connection promotion does not retire Python or establish a native `run --network`
+  backend. Implement usbmux/lockdown, remote pairing/listener creation, TUN forwarding,
+  RemoteXPC/RSD, installation, and AppService launch before any CLI cutover.
+- Add a hermetic OpenSSL PSK success server if future connection changes need successful
+  TLS coverage without a physical control listener; current hermetic tests cover timeout
+  and cancellation while the repeated physical gate covers successful negotiation.
+
+## 2026-08-17 - Native usbmux And Initial Lockdown Client
+
+### Summary
+
+- Added `DeviceKit.USBMuxClient`, a project-owned plist-protocol client for an existing
+  usbmuxd Unix or numeric TCP socket.
+- Implemented bounded little-endian usbmux framing and `ReadBUID`, `ListDevices`,
+  `ReadPairRecord`, `SavePairRecord`, and `Connect` operations with request-tag checks,
+  partial-read handling, packet-size limits, socket timeouts, and public-safe errors.
+- Added `LockdownClient` for big-endian length-prefixed `QueryType`, `GetValue`, and
+  `SetValue` requests after connecting to lockdown port 62078.
+- Split USB discovery into the `USBDeviceDiscovering` protocol. `run --usb` now selects
+  its target through the native usbmux client; Python remains responsible for IPA
+  installation and modern CoreDevice launch.
+
+### Scope And Provenance
+
+- The implementation is intentionally above the retained external usbmuxd socket. It
+  does not own raw USB, usbmuxd lifecycle, WSL USBIP packet boundaries, lockdown pairing
+  certificates, session TLS, service startup, AFC, installation proxy, or CoreDevice
+  launch.
+- Wire behavior was implemented from independently corroborated protocol facts and
+  sanitized fixtures. The GPL pymobiledevice3/usbmuxd sources were used as readable
+  interoperability references only; no source was mechanically translated.
+- Pair records remain opaque `Data` at this boundary so tests and diagnostics do not
+  decode or print credential content.
+
+### Verification
+
+- `swift format lint --strict` passed for all Swift files changed in this slice.
+- The focused macOS suite passed seven usbmux tests. Hermetic coverage includes inclusive
+  little-endian usbmux lengths, client metadata, malformed lengths and result codes,
+  one-byte fragmented responses, USB/network filtering, opaque pair-record read/write,
+  network-byte-order service ports, and big-endian lockdown framing.
+- The complete macOS suite passed 101 Swift Testing cases plus seven asset-catalog XCTest
+  cases with one expected optional skip. `swift build -c release` and
+  `git diff --check` passed; the existing Homebrew OpenSSL deployment-target warnings and
+  unhandled icon-fixture warning remain.
+- On the isolated x86_64 Ubuntu WSL host, the focused usbmux tests passed and a release
+  build succeeded. After explicitly starting the inactive usbmuxd service, an optional
+  live probe completed `ReadBUID` and `ListDevices` against its real Unix socket.
+- With the physical iPhone attached through USBIP and the WSL distribution held running,
+  the same native probe discovered the sole USB device, read its existing pair record as
+  opaque data, connected through usbmux to lockdown port 62078, completed `QueryType`,
+  and read a device value. No Python process participated in this exchange.
+
+### Limitations And Follow-Up
+
+- The current socket timeout bounds individual reads and writes; broader asynchronous
+  cancellation and a single operation deadline should be added before long-running
+  native service operations reuse this transport.
+- Pair-record creation, lockdown pairing/session TLS, and service startup remain
+  unimplemented. Complete those before replacing Python-backed AFC installation.
+
+## 2026-08-17 - Native Lockdown Session TLS And Service Startup
+
+### Summary
+
+- Added typed decoding for existing usbmux pair records and native lockdown
+  `StartSession`, `StartService`, and `StopSession` operations.
+- Added the narrow `CLockdownTLS` OpenSSL 3 shim. It upgrades the already-connected
+  lockdown socket in place using the pair record's host certificate and private key,
+  accepts TLS 1.2 through 1.3, performs bounded nonblocking I/O, suppresses thread-local
+  `SIGPIPE`, and owns the socket after upgrade.
+- Added reusable service metadata and service connections, including the independent
+  `EnableServiceSSL` upgrade required by services that request it.
+- Kept the scope deliberately on existing trusted records. Fresh certificate generation,
+  pairing, AFC framing, installation proxy, and CoreDevice launch remain outside this
+  slice, so Python is not retired yet.
+
+### Physical Verification
+
+- On the isolated x86_64 Ubuntu WSL host, the iPhone was attached through USBIP and the
+  native live test used the retained external usbmuxd socket.
+- Swift discovered the sole USB device, read its existing pair record, connected to
+  lockdown, completed client-certificate session TLS, started `com.apple.afc`, opened the
+  returned service port, and stopped the lockdown session.
+- The focused physical test passed in approximately 0.04 seconds. No Python process was
+  used for discovery, pair-record access, session establishment, or service startup.
+
+### Automated Verification
+
+- Added hermetic coverage for required pair-record fields and the complete non-TLS
+  session/service request sequence, including escrow-bag handling and session shutdown.
+- `swift format lint --strict` passed for the changed Swift/package files and
+  `git diff --check` passed.
+- The complete macOS suite passed 103 Swift Testing cases plus seven asset-catalog XCTest
+  cases with one expected optional skip. `swift build -c release` passed.
+- The focused Linux physical test compiled and passed against OpenSSL 3.0.13.
+
+### Follow-Up
+
+- Implement AFC packet framing and file transfer, then installation proxy, over the now
+  qualified native service connection so USB installation no longer requires Python.
+- Implement fresh lockdown pairing separately before replacing the Python USB bootstrap
+  pairing command.
+
+## 2026-08-17 - Native AFC And USB Installation Qualified
+
+### Summary
+
+- Added `NativeUSBInstaller`, a project-owned USB installation path over the retained
+  external usbmuxd socket and the qualified native lockdown session.
+- Implemented bounded AFC packet framing, directory creation, file open, chunked writes,
+  close, and removal. IPA contents stream from disk in 1 MiB chunks rather than being
+  retained as one in-memory value.
+- Implemented installation-proxy plist framing, developer-package installation progress,
+  terminal completion/error handling, and exact bundle-ID verification through `Lookup`.
+- Staged files use unique names under `/PublicStaging/stupid-app` and are removed on both
+  success and failure paths.
+- Cut `run --usb` over to native installation. Removed `PyMobileDevice3Installer`, its
+  tests, the obsolete `DeviceInstaller` composition protocol, standalone
+  `--pymobiledevice3` CLI options, and the doctor's standalone executable check. Python
+  and the pinned package remain required only for CoreDevice pairing, network operations,
+  and launch.
+
+### Physical Verification
+
+- The first live attempt used the stock Ubuntu usbmuxd and timed out during the first AFC
+  operation. No installation success is claimed for that attempt; its test process was
+  terminated before retry.
+- Restarted the already-qualified usbmuxd 1.1.1 build with the 16,383-byte USB transfer
+  size required by WSL USBIP. The unchanged native installer then established lockdown,
+  connected to AFC, staged the development IPA, completed installation proxy, verified
+  the exact bundle ID, removed the staged IPA, and stopped the session.
+- The complete native install operation passed in approximately 0.92 seconds. No Python
+  process participated in USB discovery, pair-record loading, lockdown TLS, AFC transfer,
+  installation, verification, or cleanup.
+
+### Automated Verification
+
+- Added hermetic AFC tests for header lengths, packet numbers, split write metadata,
+  malformed magic, invalid lengths, and oversized packets.
+- `swift format lint --strict` passed for all changed Swift files.
+- The complete macOS suite passed 100 Swift Testing cases plus seven asset-catalog XCTest
+  cases with one expected optional skip. `swift build -c release` passed.
+- Existing warnings remain for the unhandled icon fixture and the Homebrew OpenSSL macOS
+  deployment target.
+
+### Follow-Up
+
+- Implement fresh native lockdown pairing and wireless enablement.
+- Implement RemoteXPC/RSD and AppService launch so the remaining Python helper can be
+  removed after the required repeated physical acceptance runs.
+
+## 2026-08-17 - Native Lockdown Pairing And Wireless Enablement Qualified
+
+### Summary
+
+- Added `LockdownPairer`, which performs fresh lockdown pairing over the native usbmux
+  client, waits for the device Trust response, establishes client-certificate session TLS,
+  writes `WirelessBuddyID`, enables `EnableWifiConnections`, and verifies the resulting
+  value.
+- Added exact OpenSSL 3 generation of the required RSA root, host, and device certificate
+  material to the existing narrow `CLockdownTLS` shim. Private-key buffers are owned by the
+  pairing-material handle and cleansed before release.
+- Checked the certificate shape and pairing request sequence against libimobiledevice's
+  LGPL-2.1-or-later implementation as an interoperability reference; the dependency is not
+  vendored or linked, and its provenance is recorded in `THIRD_PARTY_NOTICES.md`.
+- Integrated native pairing into `stupid-app device pair --usb` before the remaining
+  CoreDevice helper, and added `--replace-lockdown-record` for an explicit new host trust
+  identity.
+- Updated native USB installation to prefer the owner-only pairing cache, with existing
+  usbmux daemon records retained as a read fallback.
+
+### Physical Findings
+
+- Replacing a host record must use a new `SystemBUID`; modern iOS rejects a new `HostID`
+  under an already-associated BUID during subsequent session TLS.
+- A Swift-X509 chain with equivalent visible fields was accepted by the `Pair` request but
+  rejected during client-certificate TLS. Generating the bounded chain with the same
+  OpenSSL 3 structures used by the native TLS layer completed session TLS.
+- The stock Ubuntu usbmuxd and the previously qualified daemon binary both returned
+  `EOPNOTSUPP` while their linked plist writer attempted `SavePairRecord`, despite the
+  target directory being writable. The CLI now stores the record directly in its existing
+  mode-`0700` pairing cache as a mode-`0600` file. This is also the cache consumed by the
+  remaining CoreDevice helper.
+- Fresh native pairing completed on the attached unlocked iPhone, stored the owner-only
+  record, and enabled and verified wireless lockdown. A second native operation reused the
+  cached record and completed in approximately 0.04 seconds without another Trust flow.
+
+### Verification
+
+- `swift format lint --strict` passed for the modified Swift and package files, and
+  `git diff --check` passed.
+- macOS `swift test` passed 101 Swift Testing cases plus seven asset-catalog XCTest cases,
+  with one expected optional differential skip. `swift build -c release` passed; the
+  existing Homebrew OpenSSL deployment-target warnings remain.
+- x86_64 Ubuntu WSL `swift test` passed 102 Swift Testing cases plus seven asset-catalog
+  XCTest cases, with the two expected macOS-only skips. `swift build -c release` passed
+  against OpenSSL 3.0.13.
+- The fresh and cached physical pairing checks used no Python process. Python remains
+  required for CoreDevice remote pairing, listener/tunnel lifecycle, RSD, and launch.
+
+### Follow-Up
+
+- Implement read-only RemoteXPC/RSD service discovery and the privileged TUN packet pump.
+- Implement native AppService launch and CoreDevice remote pairing before removing Python,
+  `uv`, the frozen environment, and helper resources.
+
+## 2026-08-17 - Native RemoteXPC, RSD, And AppService Launch
+
+### Summary
+
+- Implemented the native RemoteXPC/RSD protocol stack in `DeviceKit` as the next slice of
+  the Python device-stack replacement: the XPC binary dictionary codec, the RemoteXPC
+  HTTP/2-derived framing and connection, an RSD client, and a CoreDevice AppService launch
+  client.
+- The codec and framing were verified byte-for-byte against the pinned pymobiledevice3
+  8.2.1 reference before any connection code was accepted.
+
+### XPC Codec
+
+- Added `XPCCodec` (`Sources/DeviceKit/XPCCodec.swift`) with a `XPCValue` model covering
+  null, bool, int64, uint64, double, data, string, uuid, array, and dictionary.
+- The object encoder mirrors the reference `construct` layout exactly: little-endian
+  message-type tags, length-prefixed strings/data padded to 4-byte boundaries, big-endian
+  IEEE-754 doubles (construct's `Float64b`), and length-prefixed array/dictionary bodies.
+- The wrapper encoder writes the RemoteXPC `XpcWrapper` envelope (magic `0x29B00B92`,
+  flags, stored payload length, message ID) followed by the `XpcPayload` envelope (magic
+  `0x42133742`, protocol version 5) and the object.
+- Unsupported message types fail loudly instead of being coerced; decoding is bounded by
+  length checks and rejects trailing bytes, truncated payloads, and invalid magic.
+
+### HTTP/2 Framing And RemoteXPC Connection
+
+- Added `HTTP2Frame` (`Sources/DeviceKit/HTTP2Frame.swift`) for the minimal HTTP/2 client
+  subset RemoteXPC uses: SETTINGS, WINDOW_UPDATE, HEADERS, DATA, GOAWAY, and RST_STREAM.
+- Added `RemoteXPCConnection` (`Sources/DeviceKit/RemoteXPCConnection.swift`) that performs
+  the exact RemoteXPC handshake (preface, SETTINGS with the reference window values,
+  WINDOW_UPDATE increment, root-channel HEADERS, empty request, keep-alive wrapper, reply
+  channel open, SETTINGS ACK), then `sendRequest`/`receiveResponse` over the root channel
+  with message-ID tracking and even-stream WINDOW_UPDATE feedback.
+- Transport failures map to public-safe `RemoteXPCConnection.Error` cases.
+
+### RSD And AppService Launch
+
+- Added `RSDClient` (`Sources/DeviceKit/RSDClient.swift`) that connects to an RSD
+  endpoint, completes the RemoteXPC handshake, receives and decodes peer info, resolves the
+  device UDID and product type, and exposes the advertised service table.
+- Added `RemoteXPCService`, which owns a connected RemoteXPC socket for one advertised
+  service and closes it on deallocation.
+- Added `AppServiceClient` (`Sources/DeviceKit/AppServiceClient.swift`) implementing
+  `com.apple.coredevice.appservice` launch through the `CoreDevice.CoreDevice*` invoke
+  envelope and extracting the reported process identifier.
+
+### Verification
+
+- `swift format lint --strict` passed for all new and modified Swift files.
+- `swift test` passed 110 Swift Testing cases across 19 suites plus seven asset-catalog
+  XCTest cases with one expected optional skip. `swift build -c release` passed.
+- New hermetic coverage: byte-exact XPC wrapper encoding against captured reference
+  fixtures for every supported scalar, arrays, empty and nested dictionaries; full nested
+  fixture decode; peer-info shape decode; malformed/truncated rejection; round-trips for
+  every value type; a fake RemoteXPC HTTP/2 server exercising the full handshake and
+  peer-info exchange; an AppService launch against the fake server returning a process
+  identifier; and peer-close and missing-process-identifier failure paths.
+
+### Limitations And Follow-Up
+
+- This slice is protocol plumbing only; it does not yet retire Python. The remaining
+  native work is the CoreDevice tunnel creation over lockdown, the privileged TUN packet
+  pump, remote pairing, network installation, and CLI wiring.
+- No physical-device verification was performed for this slice; the fake server is
+  hermetic and the real device exchange still requires the native tunnel and TUN layers.
+
+## 2026-08-17 - Native CoreDevice Tunnel, TUN, And USB Launch Path
+
+### Summary
+
+- Implemented the native CoreDevice tunnel creation over lockdown for the USB launch
+  path, replacing the remaining Python-owned `launch-usb` helper operation.
+- Added `CTUN`, a Linux TUN shim that opens `/dev/net/tun`, configures the interface
+  (IPv6 address, MTU, link-up) with in-process netlink, adds the server host route, and
+  forwards bounded packets.
+- Added `CoreDeviceUSBLauncher` in `DeviceKit`: native lockdown session, CoreDeviceProxy
+  service start over lockdown, CDTunnel handshake over the service connection, TUN
+  creation, a bidirectional IPv6 packet pump between the tunnel socket and TUN, then
+  RSD discovery, AppService launch, and process-identifier return.
+- Added a hidden privileged `stupid-app coredevice-helper launch-usb` subcommand that
+  runs the native launch under `sudo`, and `NativeCoreDeviceRunner` in `DeviceKit` that
+  invokes the current executable as that helper through the bounded `ProcessRunner`.
+- Wired `run --usb` installation to launch fully natively: USB install was already
+  native; the launch now uses the native tunnel instead of the Python helper.
+
+### CTC / lock introspection
+
+- The `iosdev-ubuntu` WSL host has no `iosdev` password and no passwordless sudo. Prior
+  sessions always performed privileged operations via `wsl -u root` from Windows. The
+  native helper's `--sudo` path therefore needs a sudoers grant; a temporary NOPASSWD
+  entry restricted to the CLI was added on the test host only, not committed. The
+  handover already records explicit-privilege-boundary guidance; this is data, not a code
+  change.
+
+### Verification
+
+- `swift build` and `swift format lint --strict` pass locally; the macOS suite passes
+  (116 Swift Testing cases plus asset-catalog XCTest).
+- Added hermetic tests: CDTunnel handshake framing, malformed/truncated response
+  rejection, and native runner PID parsing/redaction.
+- On the isolated WSL host, the native flow established the lockdown session, started
+  the CoreDeviceProxy service, completed the CDTunnel handshake
+  (`client fd..::2 server fd..::1:port`), configured the TUN (in-process netlink address
+  dump confirms the client address and `/64` route are applied in the helper netns), and
+  forwarded packets bidirectionally through the packet pump (observed both directions).
+- Native USB installation already completed in roughly one second with no Python.
+
+### Remaining Greenfield Gap
+
+- The RSD/AppService launch over the tunnel forwards packets both ways but the launch
+  did not yet complete on-device during this session; the exchange advances and then
+  stalls, so the tunnel and pump are qualified but the RSD/RemoteXPC AppService launch
+  needs further on-device debugging. Network operation and CoreDevice remote pairing
+  still use the Python helper.

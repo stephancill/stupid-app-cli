@@ -32,8 +32,10 @@ unplugged network install-and-launch runs are also proven on a physical iPhone.
 - `Sources/SigningKit` — provisioning-profile CMS parsing, entitlement derivation,
   native shallow-app signing and verification, pinned public Apple signing trust, and
   IPA packaging.
-- `Sources/DeviceKit` — bounded USB installation plus CoreDevice pairing, tunnel,
-  network installation, and launch integration.
+- `Sources/DeviceKit` — native usbmux discovery, pair-record access, lockdown session
+  TLS, AFC staging, installation proxy, bounded native USB installation, CoreDevice
+  pairing/tunnel/run integration, and the native cancellable OpenSSL 3
+  TLS-PSK/`CDTunnel` connection.
 - `Sources/ProductCore` — product-level environment diagnostics used by `doctor`.
 - `Tools/pymobiledevice3` — the frozen Python 3.13 / pymobiledevice3 8.2.1 environment.
 - `Sources/stupid-app` — the cross-platform CLI.
@@ -54,7 +56,7 @@ stupid-app credentials add         Store ASC API key + team ID (0600 files)
 stupid-app signing setup --kind distribution   Provision a distribution identity + profile
 stupid-app signing setup --kind development    Provision a development identity + profile
 stupid-app devices                  List App Store Connect devices
-stupid-app device pair --usb        Bootstrap CoreDevice remote pairing over USB
+stupid-app device pair --usb        Pair lockdown natively, then bootstrap CoreDevice pairing
 stupid-app run --usb                Build, sign, install, and launch over USB
 stupid-app run --network --udid ... Build, sign, install, and launch over the network
 stupid-app release archive         Build, sign (once, no timestamps), package the IPA
@@ -64,8 +66,8 @@ stupid-app release upload --wait   Upload the IPA and wait for internal TestFlig
 `stupid-app doctor` exits unsuccessfully when a required host dependency is invalid
 and reports incomplete credentials, signing identities, pairing, or project context as
 warnings. It checks the installed SDK against the current host triple and Swift
-major/minor version, validates the bundled Apple WWDR/root trust and the exact frozen
-CoreDevice Python/package versions,
+major/minor version, validates the bundled Apple WWDR/root trust, OpenSSL 3.x, and the
+exact frozen CoreDevice Python/package versions,
 checks owner-only credential and pairing-record modes without reading or printing their
 contents, and validates project configuration plus referenced files when run in a
 project directory.
@@ -115,6 +117,13 @@ swift build --swift-sdk stupid-app-ios
 ```bash
 swift test
 ```
+
+Building `DeviceKit` requires OpenSSL 3.x (`libssl-dev` on Ubuntu or `openssl@3` via
+Homebrew). USB auto-discovery, existing pair-record loading, lockdown session TLS, and
+USB installation now use the native usbmux, AFC, and installation-proxy clients. Fresh
+pairing, launch, remote pairing, network tunneling, RSD, and AppService still use the
+frozen Python stack until their native replacements pass the physical-device acceptance
+gates. The standalone `pymobiledevice3` CLI is no longer required.
 
 ## License and provenance
 

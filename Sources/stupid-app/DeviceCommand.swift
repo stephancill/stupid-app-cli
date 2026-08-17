@@ -31,11 +31,6 @@ struct DevicePairCommand: AsyncParsableCommand {
   var pythonPath: String = "python3"
 
   @Option(
-    name: .customLong("pymobiledevice3"),
-    help: "Path to the pymobiledevice3 CLI used for USB discovery.")
-  var pymobilePath: String = "pymobiledevice3"
-
-  @Option(
     name: .customLong("sudo"), help: "Explicit path to sudo for the privileged CoreDevice helper.")
   var sudoPath: String?
 
@@ -49,6 +44,11 @@ struct DevicePairCommand: AsyncParsableCommand {
 
   @Option(name: .customLong("timeout"), help: "Maximum seconds for discovery and pairing phases.")
   var timeout: Double = 30
+
+  @Flag(
+    name: .customLong("replace-lockdown-record"),
+    help: "Generate and store a new lockdown trust record instead of reusing the existing record.")
+  var replaceLockdownRecord = false
 
   @Option(name: .customLong("home"), help: "Credential store directory.")
   var home: String?
@@ -69,16 +69,29 @@ struct DevicePairCommand: AsyncParsableCommand {
     if let udid {
       targetUDID = udid
     } else {
-      let discovery = PyMobileDevice3Installer(
-        executablePath: pymobilePath,
-        usbmuxAddress: usbmuxAddress,
-        discoveryTimeoutSeconds: timeout
-      )
+      let discovery = USBMuxClient(address: usbmuxAddress, timeoutSeconds: timeout)
       let devices = try discovery.usbDeviceUDIDs()
       guard devices.count == 1 else {
         throw DevicePairError.deviceSelection(devices.count)
       }
       targetUDID = devices[0]
+    }
+
+    let pairer = LockdownPairer(
+      usbmuxAddress: usbmuxAddress,
+      pairingDirectory: homeURL.appendingPathComponent("pairing", isDirectory: true),
+      timeoutSeconds: timeout,
+      progress: { print($0) }
+    )
+    let pairingResult = try pairer.pair(
+      udid: targetUDID,
+      replaceExistingRecord: replaceLockdownRecord
+    )
+    switch pairingResult {
+    case .reusedExistingRecord:
+      print("Reused the existing native lockdown pairing.")
+    case .createdRecord:
+      print("Created a new native lockdown pairing.")
     }
 
     let runner = CoreDeviceRunner(

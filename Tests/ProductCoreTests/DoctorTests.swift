@@ -25,15 +25,14 @@ struct DoctorTests {
         credentialHome: credentials,
         sdkID: "missing-sdk",
         swiftPath: root.appendingPathComponent("missing-swift").path,
-        pythonPath: root.appendingPathComponent("missing-python").path,
-        pymobiledevice3Path: root.appendingPathComponent("missing-pymobiledevice3").path
+        pythonPath: root.appendingPathComponent("missing-python").path
       ))
 
     #expect(results.contains { $0.name == "Swift toolchain" && $0.status == .failure })
     #expect(results.contains { $0.name == "iOS Swift SDK" && $0.status == .failure })
     #expect(results.contains { $0.name == "Native signing trust" && $0.status == .pass })
+    #expect(results.contains { $0.name == "Native CoreDevice TLS" && $0.status == .pass })
     #expect(results.contains { $0.name == "CoreDevice environment" && $0.status == .failure })
-    #expect(results.contains { $0.name == "USB installer" && $0.status == .failure })
     #expect(results.contains { $0.name == "App Store Connect credentials" && $0.status == .pass })
     #expect(!results.map(\.detail).joined().contains(secretValue))
   }
@@ -57,8 +56,7 @@ struct DoctorTests {
         projectRoot: root,
         credentialHome: credentials,
         swiftPath: root.appendingPathComponent("missing").path,
-        pythonPath: root.appendingPathComponent("missing").path,
-        pymobiledevice3Path: root.appendingPathComponent("missing").path
+        pythonPath: root.appendingPathComponent("missing").path
       ))
 
     let credential = try #require(results.first { $0.name == "App Store Connect credentials" })
@@ -89,8 +87,7 @@ struct DoctorTests {
         projectRoot: root,
         credentialHome: root.appendingPathComponent("credentials"),
         swiftPath: root.appendingPathComponent("missing").path,
-        pythonPath: root.appendingPathComponent("missing").path,
-        pymobiledevice3Path: root.appendingPathComponent("missing").path
+        pythonPath: root.appendingPathComponent("missing").path
       ))
 
     let project = try #require(results.first { $0.name == "Project configuration" })

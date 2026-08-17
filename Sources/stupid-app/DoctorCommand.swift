@@ -23,9 +23,6 @@ struct DoctorCommand: AsyncParsableCommand {
   @Option(name: .customLong("python"), help: "Python 3.13 executable from the frozen environment.")
   var pythonPath: String = "python3"
 
-  @Option(name: .customLong("pymobiledevice3"), help: "Path to the frozen pymobiledevice3 CLI.")
-  var pymobiledevice3Path: String = "pymobiledevice3"
-
   @Option(name: .customLong("sudo"), help: "Explicit path to sudo used by the CoreDevice helper.")
   var sudoPath: String?
 
@@ -44,7 +41,6 @@ struct DoctorCommand: AsyncParsableCommand {
         sdkID: sdkID,
         swiftPath: swiftPath,
         pythonPath: pythonPath,
-        pymobiledevice3Path: pymobiledevice3Path,
         sudoPath: sudoPath,
         coreDeviceHelperPath: coreDeviceHelperPath
       ))
