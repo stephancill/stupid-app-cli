@@ -7,6 +7,7 @@ struct StupidApp: AsyncParsableCommand {
     commandName: "stupid-app",
     abstract: "Build, sign, deploy, and release iOS apps without Xcode.",
     subcommands: [
+      DoctorCommand.self,
       NewCommand.self,
       SDKCommand.self,
       BuildCommand.self,

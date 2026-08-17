@@ -1,5 +1,10 @@
 # rcodesign Signing Kernel Pin
 
+> Historical qualification record: `rcodesign` was retired from the product runtime on
+> 2026-08-17 after the project-owned native signer passed the physical-device, macOS
+> `codesign`, App Store processing, and TestFlight gates. No current command requires or
+> invokes this binary.
+
 This document records the pinned revision and provenance for the `rcodesign` signing
 kernel used by the distribution signing pipeline. Treat this document as the source of
 truth for the pin until it is updated.

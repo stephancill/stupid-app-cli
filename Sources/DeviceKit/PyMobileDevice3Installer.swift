@@ -37,7 +37,7 @@ public struct PyMobileDevice3Installer: DeviceInstaller {
       switch self {
       case .binaryMissing(let path):
         return
-          "The pymobiledevice3 CLI is not available at '\(path)'. Install it on the deployment host (e.g. `pip install pymobiledevice3`)."
+          "The pinned pymobiledevice3 CLI is not available at '\(path)'. Provision Tools/pymobiledevice3 with its frozen uv.lock and pass that environment's executable."
       case .installFailed(let detail):
         return
           "Installation failed.\n\(detail)\nConfirm the device is USB-connected, unlocked, and trusted (and that no other device tool is holding usbmuxd)."

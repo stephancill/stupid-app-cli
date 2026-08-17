@@ -1019,3 +1019,434 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
   least-privilege sudo policy setup, and the qualified USBIP-compatible usbmux transport.
 - Add `doctor` checks for Python/package pins, `/dev/net/tun`, privilege policy, pairing
   directory modes, mDNS reachability, signer availability, and SDK compatibility.
+
+## 2026-08-16 - Gate 5 Started: Product Diagnostics
+
+### Summary
+
+- Added `stupid-app doctor` and a testable `ProductCore` integration module.
+- Added structured pass, warning, and failure results for the host Swift toolchain,
+  installed iOS Swift SDK, rcodesign, frozen CoreDevice environment, USB installer,
+  App Store Connect credentials, development/distribution identities, pairing records,
+  project configuration, and Linux TUN/usbmux prerequisites.
+- Exposed installed SDK manifest loading through `SDKVersion.installedManifest` so the
+  doctor can compare the current host triple and Swift major/minor version against the
+  imported bundle rather than checking registration alone.
+- Replaced the device installer's unpinned `pip install pymobiledevice3` recovery advice
+  with the repository's frozen `uv.lock` provisioning requirement.
+
+### Diagnostics And Security
+
+- Required environment defects fail the command; absent credentials, identities,
+  pairing records, project context, or the USB socket are warnings where another
+  workflow can still be used.
+- Credential and signing checks inspect only expected file presence and POSIX modes.
+  They do not load or print secret values.
+- Credential directories must be mode `0700`; secret and pairing-record files must be
+  mode `0600`.
+- Frozen-environment validation invokes the bundled helper's existing exact checks for
+  Python 3.13, pymobiledevice3 8.2.1, and construct-typing 0.7.0 using a temporary
+  pairing directory. Running the doctor does not create or alter credential state.
+- Project checks validate `stupid-app.yml` and require `Package.swift` plus every
+  configured Info.plist, entitlement, icon, and raw-resource path to exist.
+
+### Verification
+
+- `swift format` completed for all modified Swift files.
+- `swift test --filter DoctorTests` passed all three new diagnostic tests.
+- `swift test` passed 66 Swift Testing cases plus seven asset-catalog XCTest cases; the
+  optional local catalog-reference test skipped as designed.
+- `swift build -c release` passed.
+- `stupid-app --help` and `stupid-app doctor --help` expose the new command and options.
+- A real local doctor run reported the available host checks and failed the deliberately
+  unavailable/incompatible SDK, signer, and frozen Python checks with actionable output;
+  no secret values were printed.
+
+### Remaining Gate 5 Work
+
+- Automate the frozen Python environment and root-owned helper installation with a
+  least-privilege sudo policy.
+- Provision the qualified WSL USBIP-compatible usbmux transport with explicit GPL
+  compliance.
+- Add `release status`, broader compatibility/fixture tests, and clean-host setup and
+  recovery documentation.
+- Run the complete acceptance flow through stable commands on clean supported hosts.
+
+## 2026-08-17 - Native Signing And Device Stack Scope
+
+### Summary
+
+- Scoped project-owned Swift replacements for the pinned `rcodesign` signing kernel and
+  `pymobiledevice3` device stack in `docs/native-dependency-replacement-scope.md`.
+- Kept the work outside the current Gate 5 critical path. Existing dependencies remain
+  authoritative until native implementations pass equivalent independent macOS,
+  physical-device, and App Store acceptance gates.
+- Identified the first decisive experiments as a read-only native code-signature
+  parser/verifier and a SwiftNIO SSL TLS-PSK interoperability proof.
+
+### Signing Findings
+
+- The existing `SigningPipeline` is already a narrow replacement boundary: iOS profile,
+  entitlement, and IPA policy can remain project-owned while a native kernel takes over
+  resource sealing, Mach-O mutation, CodeDirectory, requirements, XML/DER entitlement
+  slots, and Apple-compatible CMS.
+- The first native engine should accept only one shallow, thin ARM64 app executable and
+  fail loudly on frameworks, dylibs, extensions, fat binaries, and unknown signable
+  descendants until leaf-first nested signing exists.
+- Native signing cannot be accepted from self-verification alone. Qualification requires
+  macOS `codesign --verify --strict`, physical-device development launch, App Store
+  `VALID`/TestFlight readiness, and TestFlight installation of artifacts signed only by
+  the native engine.
+
+### Device Findings
+
+- Replacing the Python helper requires usbmux/lockdown, modern remote pairing, mDNS,
+  TLS-PSK, TUN forwarding, RemoteXPC/RSD, AFC, installation proxy, and AppService launch.
+- Python 3.13, `uv`, `pymobiledevice3`, and their transitive environment can eventually
+  be removed. Linux TUN privilege, multicast/IPv6, WSL USBIP, and external `usbmuxd`
+  remain unless separately replaced.
+- Raw USB ownership and usbmux v2 multiplexing remain a distinct deferred project. The
+  native device stack should first continue using the qualified `usbmuxd` socket.
+- The TLS-PSK proof should precede the full port because the prior Python 3.12 failure
+  showed this transport layer is an architecture-level compatibility gate.
+
+### Verification
+
+- Reviewed the current signing and device adapter boundaries, the pinned
+  `apple-platform-rs` source, and the pinned `pymobiledevice3` modules used by the bundled
+  helper.
+- This was documentation and architecture research only. No runtime behavior, dependency
+  pin, source implementation, or proof-gate status changed.
+
+## 2026-08-17 - Native Go/No-Go Spikes Promoted
+
+### Decision
+
+- Promoted the native signature parser/verifier and SwiftNIO SSL TLS-PSK interoperability
+  spikes to the project's immediate next work.
+- This supersedes the earlier classification of all native replacement work as outside
+  the current critical path. Full native signer and CoreDevice implementations remain
+  deferred until their respective spike produces a go result.
+- Kept `rcodesign` and the pinned `pymobiledevice3` environment as the validated runtime
+  defaults. There is no fallback, cutover, or proof-gate status change yet.
+
+### Acceptance Boundaries
+
+- The signing spike is read-only and must independently verify sanitized Xcode and
+  `rcodesign` signatures, including mutation failures, without delegating verification
+  back to `rcodesign`.
+- The device spike is limited to a Swift TLS 1.2 PSK connection and one bounded
+  `CDTunnel` exchange. The proven Python stack may create the listener, but Swift must own
+  the tested TLS and handshake path.
+- Both spikes require bounded public-safe diagnostics and deterministic cleanup.
+
+### Verification
+
+- Updated `docs/engineering-handover.md` with active status, go/no-go criteria, ordering,
+  and the dependency-retirement guardrails.
+- Documentation-only priority change; no source implementation or runtime behavior was
+  modified.
+
+## 2026-08-17 - Native Signature Parser And Hash Verification Slice
+
+### Summary
+
+- Started the promoted native signing spike with a read-only
+  `SigningKit.NativeSignatureVerifier` implementation.
+- Added bounded parsing for the supported thin little-endian ARM64 `MH_EXECUTE` shape,
+  Mach-O load commands, final `__LINKEDIT` signature placement, `LC_CODE_SIGNATURE`, the
+  embedded-signature SuperBlob, known slot/blob magic pairs, and SHA-256 CodeDirectory
+  versions through `0x20600`.
+- Added CodeDirectory verification for 4 KiB executable pages and embedded or external
+  special-slot content. External content supplied by the caller must have a corresponding
+  CodeDirectory hash and cannot be silently ignored.
+- Kept the implementation disconnected from `SigningPipeline`; `rcodesign` remains the
+  validated runtime signing kernel.
+
+### Safety And Scope
+
+- Relative offsets use overflow-checked arithmetic and bounded reads. Duplicate slots,
+  overlapping blobs, truncated versioned headers, malformed hash tables, scatter vectors,
+  unsupported hashes/page sizes, non-final signatures, and invalid `__LINKEDIT` placement
+  fail loudly with public-safe errors.
+- Input `Data` is normalized before relative offsets are applied so a non-zero-index slice
+  cannot trap or shift parsing.
+- The hash operation is named `verifyCodeDirectoryHashes` because matching page and slot
+  hashes does not authenticate the CodeDirectory. CMS signature and certificate-chain
+  verification remain mandatory before this can be called complete signature
+  verification.
+
+### Verification
+
+- Added six hermetic tests using a synthetic ARM64 Mach-O/SuperBlob fixture with
+  CodeDirectory, RequirementSet, XML-entitlement, and placeholder CMS blobs.
+- Tests cover successful parsing, second-page mutation, embedded special-slot mutation,
+  changed and missing external content, unsealed supplied external content, non-zero-index
+  `Data` slices, malformed blob offsets, truncation, unsupported input, and invalid
+  `__LINKEDIT` placement.
+- `swift format` completed for the changed Swift source and test files.
+- `swift test` passed 72 Swift Testing cases plus seven asset-catalog XCTest cases; the
+  optional local `actool` differential test skipped as designed.
+- `swift build -c release` passed. Existing warnings remain for the intentionally direct
+  icon fixture and an unrelated unused provisioning-profile OID binding.
+
+### Remaining Spike Work
+
+- Parse and validate RequirementSet, XML entitlements, DER entitlements, CMS SignedData,
+  and `CodeResources` semantics rather than treating those entries only as hashed blobs.
+- Independently verify the CMS signature and Apple certificate chain without invoking
+  `rcodesign`, then prove CodeDirectory mutation fails authentication.
+- Freeze public-safe sanitized Xcode and `rcodesign` fixtures and run the parser plus all
+  mutation classes against both before making a go/no-go decision.
+
+## 2026-08-17 - Native XML And DER Entitlement Verification
+
+### Summary
+
+- Extended `SigningKit.NativeSignatureVerifier` to parse the XML entitlement plist and
+  Apple's version-1 DER plist envelope from signature slots 5 and 7.
+- Added a canonical `EntitlementValue` model for strings, Booleans, signed 64-bit
+  integers, arrays, and nested dictionaries. Unsupported plist or ASN.1 value types fail
+  loudly rather than being coerced.
+- The parser now requires both entitlement representations and rejects semantic
+  differences. DER dictionaries require nonempty, strictly ordered UTF-8 keys, which
+  also rejects duplicate keys.
+- Added `swift-asn1` as a direct `SigningKit` dependency. The wire-shape investigation
+  used the pinned `apple-codesign` 0.29.0 `plist_der.rs` implementation as an auditable
+  MPL-2.0 format reference; the Swift parser and test encoder were written for this
+  repository rather than translated line by line.
+
+### Verification
+
+- Added hermetic entitlement coverage to the synthetic ARM64 signature fixture for
+  strings, Booleans, integers, arrays, nested dictionaries, XML/DER mismatch, and
+  noncanonical DER dictionary ordering.
+- `swift format` completed for the modified package manifest, verifier, and tests.
+- `swift test --filter NativeSignatureVerifierTests` passed all eight focused cases.
+- `swift test` passed 74 Swift Testing cases plus seven asset-catalog XCTest cases; the
+  optional local `actool` differential test skipped as designed.
+- `swift build -c release` passed. The existing unrelated unused provisioning-profile
+  OID warning remains.
+
+### Remaining Spike Work
+
+- Parse and validate RequirementSet semantics and `CodeResources`, including sealed-file
+  and symlink mutations.
+- Independently parse CMS SignedData, authenticate the complete CodeDirectory, and
+  validate the Apple certificate chain without invoking `rcodesign`.
+- Freeze sanitized Xcode and `rcodesign` fixtures and exercise every mutation class
+  against both before deciding whether to promote the full native signer.
+
+## 2026-08-17 - Native Designated Requirement Parsing
+
+### Summary
+
+- Extended `SigningKit.NativeSignatureVerifier` with a bounded parser for the embedded
+  RequirementSet and its nested designated requirement blob.
+- Limited the accepted shallow-app shape to exactly one designated flavor and one
+  expression tree. The accepted operators are identifier, conjunction, Apple and Apple
+  generic anchors, certificate field predicates, and certificate generic/OID predicates;
+  match expressions are limited to `exists` and byte equality.
+- Required the expression's single identifier to equal the CodeDirectory identifier.
+  Certificate predicates are parsed but deliberately not evaluated yet because their
+  authority depends on the still-unimplemented CMS leaf and chain authentication.
+- Added explicit tree-depth and node-count limits and fail-loud checks for unknown
+  flavors/opcodes/flags, malformed offsets and lengths, trailing data, invalid UTF-8,
+  empty OIDs, and nonzero alignment padding.
+- The binary-format investigation used the pinned `apple-codesign` 0.29.0
+  `code_requirement.rs`, `embedded_signature.rs`, and `policy.rs` files as auditable
+  MPL-2.0 references. The Swift parser was implemented directly against the bounded
+  project scope rather than porting the complete requirement DSL.
+
+### Verification
+
+- Replaced the prior opaque requirement placeholder with a synthetic Apple-development
+  designated requirement containing identifier, Apple generic anchor, leaf common-name
+  equality, and WWDR certificate-extension existence predicates.
+- Added deterministic tests for CodeDirectory identifier mismatch, unsupported opcodes,
+  invalid nested-blob offsets, nonzero data padding, and mutation of otherwise valid
+  certificate predicate content.
+- `swift format lint --strict` passed for the package manifest, verifier, and verifier
+  tests.
+- `swift test --filter NativeSignatureVerifierTests` passed all 11 focused cases.
+- `swift test` passed 77 Swift Testing cases plus seven asset-catalog XCTest cases; the
+  optional local `actool` differential test skipped as designed.
+- `swift build -c release` passed. Existing unrelated warnings remain for the unhandled
+  icon test fixture and unused provisioning-profile OID binding.
+
+### Remaining Spike Work
+
+- Parse and verify `CodeResources`, including ordinary-file SHA-1/SHA-256 seals, symlink
+  targets, rule application, path safety, and mutation failures.
+- Parse CMS SignedData, authenticate the complete CodeDirectory and Apple certificate
+  chain, then evaluate the parsed designated requirement certificate predicates against
+  that authenticated chain.
+- Freeze sanitized Xcode and `rcodesign` fixtures and exercise all parser and mutation
+  classes against both before making the native-signing go/no-go decision.
+
+## 2026-08-17 - Shallow-App Native Swift Signer Implemented
+
+### Summary
+
+- Implemented the complete project-owned signer for the deliberately narrow shallow-app
+  shape: one thin little-endian ARM64 `MH_EXECUTE` executable, no nested signable code,
+  4 KiB SHA-256 code pages, XML and Apple DER entitlements, and RSA identities.
+- Added a fail-loud bundle classifier, deterministic SHA-1/SHA-256 `CodeResources`, Apple
+  DER entitlement and WWDR RequirementSet serialization, CodeDirectory/SuperBlob
+  construction, and final `LC_CODE_SIGNATURE` add/replace with `__LINKEDIT` file/vm sizing.
+- CodeDirectory executable-segment flags always include `MAIN_BINARY`; development output
+  with `get-task-allow=true` additionally includes `ALLOW_UNSIGNED`, while distribution
+  output does not.
+- Added detached CMS SignedData generation with RSA-SHA256 PKCS#1 v1.5, the leaf and
+  caller-supplied WWDR intermediate, canonical signed attributes, and Apple cdhash OIDs
+  `1.2.840.113635.100.9.1` and `1.2.840.113635.100.9.2`.
+- Added independent CMS parsing and verification: detached content digest, both cdhash
+  attributes, RSA signature, embedded chain signatures, caller-supplied root trust,
+  certificate validity, RequirementSet certificate predicates, and timestamp absence.
+- Added explicit `SigningPipeline` and CLI engine selection. `rcodesign` remains the
+  default; native selection requires `--signer-engine native`, `--wwdr-intermediate`, and
+  one or more `--trusted-apple-root` values. Missing chain input fails before signing and
+  there is no silent fallback.
+
+### Safety And Scope
+
+- The classifier rejects malformed bundle metadata, executable symlinks, additional
+  executable files, frameworks, extensions, helper/XPC directories, and dynamic
+  libraries. The Mach-O editor rejects malformed commands, missing/finally misplaced
+  `__LINKEDIT`, non-final existing signatures, duplicate signature commands, insufficient
+  zero load-command space, and integer overflow.
+- CMS construction deliberately emits no signing-time attribute, timestamp server call,
+  unsigned RFC 3161 token, or other timestamp. Verification rejects an RFC 3161 token.
+- WWDR and Apple root certificates are explicit operator inputs rather than hard-coded or
+  downloaded implicitly. They are not committed to the repository.
+- The implementation is not physically or App Store qualified. `rcodesign` remains the
+  authoritative production path and no physical-device/App Store compatibility is
+  claimed for native output.
+
+### Verification
+
+- `swift format lint --strict` passed for all new and modified Swift/package files.
+- `swift test --filter SigningKitTests` passed 26 tests across five SigningKit suites.
+- `swift test` passed 84 Swift Testing cases plus seven asset-catalog XCTest cases; the
+  optional local `actool` differential test skipped because its path was unset.
+- `swift build -c release` passed. The pre-existing unused provisioning-profile OID
+  warning and unhandled icon fixture warning remain.
+- `stupid-app release archive --help` exposes explicit signer-engine and certificate-chain
+  options while reporting `rcodesign` as the default.
+- New hermetic tests generate synthetic RSA root/intermediate/leaf certificates, prove
+  deterministic CMS output and timestamp absence, exercise add/replace Mach-O mutation,
+  reject nested code, sign a complete synthetic app, and independently reverify its code
+  pages, special slots, executable-segment flags, resource seals, entitlements,
+  requirements, CMS, and chain.
+
+### Remaining External Gates
+
+- Run differential parsing against sanitized Xcode and `rcodesign` development and
+  distribution fixtures.
+- Pass macOS `codesign --verify --strict` and signature-detail inspection on native output.
+- Install and launch a development artifact signed only by the native engine on a
+  registered physical device.
+- Process a distribution artifact signed only by the native engine to App Store `VALID`
+  and internal TestFlight readiness, then install and launch it through TestFlight.
+
+## 2026-08-17 - Native Signer Apple Qualification Complete
+
+### Summary
+
+- Qualified the project-owned native signer with real Apple Development and Apple
+  Distribution identities on the isolated Linux/WSL host.
+- Selected the matching public Apple WWDR G3 intermediate by comparing the stored leaf
+  issuer hash, and used the Apple Inc. root as the explicit trust anchor. No private
+  certificate material or device identifier was copied into the repository or this log.
+- Corrected three issues found only by independent/live verification: flat iOS bundles
+  need Apple's no-`Resources/` CodeResources rule set; CodeDirectory executable segment
+  base/limit must describe the Mach-O `__TEXT` file range; and CMS must embed the complete
+  leaf, WWDR intermediate, and root chain for iOS runtime trust.
+- Added regression coverage for flat-bundle resource rules, the `__TEXT` boundary, the
+  full three-certificate CMS chain, and development executable-segment flags.
+
+### Distribution Verification
+
+- Produced a native-only distribution IPA on WSL. Exact IPA SHA-256:
+  `c4bd808a8a014c3cfd2177956904b65c71c4ce7b792572f75ad68562ea5f56e2`.
+- Transferred that exact IPA to macOS without re-signing or repackaging.
+- `codesign --verify --strict --verbose=4` reported `valid on disk` and `satisfies its
+  Designated Requirement`.
+- Uploaded the same IPA through `stupid-app release upload --wait`. App Store processing
+  reported `VALID`; internal beta reached `IN_BETA_TESTING`.
+- The resulting TestFlight build installed and remained open on the physical device.
+
+### Development Verification
+
+- Produced a native-only development IPA with SHA-256
+  `8c790e2967a8e1de70be887c5e28fc6f1af6f75ea6413a6d61601ddf7c29de28`.
+- Installed and launched it through the existing unplugged CoreDevice network path.
+- CoreDevice reported successful launch, and the app remained open on the physical
+  device.
+- A same-source `rcodesign` control build confirmed matching CodeDirectory version,
+  flags, code limit, platform, `__TEXT` executable boundary, and executable-segment flags.
+
+### Automated Verification
+
+- WSL: the 26 SigningKit tests passed before live signing, and release builds completed.
+- macOS: targeted `swift format lint --strict` passed; `swift test` passed 85 Swift
+  Testing cases plus seven asset-catalog XCTest cases with one expected optional skip;
+  `swift build -c release` passed.
+- `git diff --check` passed. Existing unrelated warnings remain for the unhandled icon
+  fixture and unused provisioning-profile OID binding.
+
+### Follow-Up
+
+- Native signing now satisfies the development, macOS, App Store, and TestFlight proof
+  gates for the supported shallow-app shape.
+- Productize trusted public certificate-chain provisioning, then make native signing the
+  default and remove the `rcodesign` runtime dependency without retaining a fallback.
+
+## 2026-08-17 - Native Signing Product Cutover Complete
+
+### Summary
+
+- Made the qualified project-owned native signer the only signing path for development
+  runs and distribution archives.
+- Removed the `RcodesignSigner` adapter and all `--rcodesign`, `--signer-engine`,
+  `--wwdr-intermediate`, and `--trusted-apple-root` command options. There is no signer
+  fallback or caller-selectable engine.
+- Bundled Apple's public WWDR G3 intermediate and Apple Inc. root certificates as
+  `SigningKit` resources. Their official DER SHA-256 values are pinned, and loading
+  validates resource integrity, certificate signatures, self-signed root trust, and
+  current validity.
+- Added automatic leaf-chain selection. A stored signing identity must be signed by the
+  qualified WWDR G3 intermediate; malformed leaves, another issuer, certificate
+  rotation, missing resources, checksum changes, expiration, or an invalid chain fail
+  loudly and require a tool update.
+- Changed `doctor` from an external-signer executable check to native signing-trust
+  validation, and changed release-manifest signer provenance to
+  `native-shallow-v1`.
+- Updated current architecture, risk, dependency-retirement, README, and historical
+  `rcodesign` pin documentation. The pin remains only as qualification provenance.
+
+### Verification
+
+- `swift format lint --strict` passed for every Swift/package file changed by the
+  cutover, and `git diff --check` passed.
+- `swift test` passed 87 Swift Testing cases plus all seven asset-catalog XCTest cases;
+  the optional local `actool` differential test skipped as designed.
+- `swift build -c release` passed on macOS. Existing unrelated warnings remain for the
+  unhandled icon fixture and an unused provisioning-profile OID binding.
+- `release archive`, `run`, `release upload`, and `doctor` help output contain no
+  external signer, engine-selection, or caller-supplied chain options.
+- On the isolated x86_64 Ubuntu WSL host, a fresh release build of the cutover source
+  archived the existing proof app with the real stored Apple Distribution identity and
+  profile. Automatic bundled-chain selection succeeded, native post-sign verification
+  passed, and the resulting IPA SHA-256 was
+  `3ba857be1603c53751e328197d768f5ec143484434387b724b12f08e29749ea2`.
+- The first source-transfer attempt failed before compilation because macOS tar emitted
+  AppleDouble metadata files. Recreating the archive with metadata emission disabled
+  resolved the transfer issue. Temporary source copies, scripts, and the signed WSL
+  artifact were removed after verification.
+
+### Remaining Limitation
+
+- The bundled signing trust intentionally supports only the externally qualified WWDR
+  G3 chain. Add and independently requalify a new pinned intermediate/root pair before
+  WWDR G3 expires or before accepting identities issued from another Apple chain.

@@ -46,17 +46,12 @@ public enum SDKVersion {
         }
 
         do {
-            if let bundleURL = try installedBundle(sdkID: sdkID, targetTriple: targetTriple, swiftPath: swiftPath) {
-                let manifestURL = bundleURL.appendingPathComponent("sdk-manifest.json")
-                guard let data = try? Data(contentsOf: manifestURL) else {
-                    throw Error.manifestUnreadable(manifestURL.path)
-                }
-                let manifest = try SDKManifest.decode(data)
-                guard !manifest.iphoneosSDKVersion.isEmpty else {
-                    throw Error.sdkVersionMissing(manifestURL.path)
-                }
-                return manifest.iphoneosSDKVersion
-            }
+            let manifest = try installedManifest(
+                sdkID: sdkID,
+                targetTriple: targetTriple,
+                swiftPath: swiftPath
+            )
+            return manifest.iphoneosSDKVersion
         } catch {
             // fall through to macOS fallback only for real errors; sdkNotInstalled is
             // expected when no SDK is installed.
@@ -92,6 +87,30 @@ public enum SDKVersion {
     public static func isInstalled(sdkID: String, swiftPath: String = "swift") -> Bool {
         guard let installed = try? installedSDKs(swiftPath: swiftPath) else { return false }
         return installed.contains(sdkID)
+    }
+
+    /// Reads the manifest from an installed Swift SDK artifact bundle.
+    public static func installedManifest(
+        sdkID: String,
+        targetTriple: String = "arm64-apple-ios",
+        swiftPath: String = "swift"
+    ) throws -> SDKManifest {
+        guard let bundleURL = try installedBundle(
+            sdkID: sdkID,
+            targetTriple: targetTriple,
+            swiftPath: swiftPath
+        ) else {
+            throw Error.sdkNotInstalled(sdkID)
+        }
+        let manifestURL = bundleURL.appendingPathComponent("sdk-manifest.json")
+        guard let data = try? Data(contentsOf: manifestURL) else {
+            throw Error.manifestUnreadable(manifestURL.path)
+        }
+        let manifest = try SDKManifest.decode(data)
+        guard !manifest.iphoneosSDKVersion.isEmpty else {
+            throw Error.sdkVersionMissing(manifestURL.path)
+        }
+        return manifest
     }
 
     /// Locates the installed artifact bundle root by walking the configured SDK

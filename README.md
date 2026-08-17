@@ -6,8 +6,8 @@ applications without requiring Xcode or macOS at runtime.
 Current status: **Gates 0 through 4 complete; Gate 5 productization remains**. The
 device-only Swift SDK pipeline is proven end-to-end on an isolated Ubuntu WSL host
 (export on macOS, validate and import on Linux, cross-compile to an ARM64 Mach-O), and
-a real Apple Distribution-signed IPA is produced on Linux with the pinned `rcodesign`
-signing kernel and verified independently. The App Store Connect Build Upload client
+a real Apple Distribution-signed IPA is produced on Linux with the project-owned native
+Swift signer and verified independently. The App Store Connect Build Upload client
 (`stupid-app release upload --wait`) uploaded a Linux-built IPA that processed as
 `VALID`, became internally TestFlight-ready, installed through TestFlight, and launched.
 The accepted app icon uses the native `Assets.car` writer with Apple's pinned LZFSE
@@ -30,12 +30,14 @@ unplugged network install-and-launch runs are also proven on a physical iPhone.
   certificate / profile / Build Upload operations; permission-hardened credential
   storage; the release manifest.
 - `Sources/SigningKit` — provisioning-profile CMS parsing, entitlement derivation,
-  the pinned `rcodesign` signing kernel adapter, and IPA packaging.
+  native shallow-app signing and verification, pinned public Apple signing trust, and
+  IPA packaging.
 - `Sources/DeviceKit` — bounded USB installation plus CoreDevice pairing, tunnel,
   network installation, and launch integration.
+- `Sources/ProductCore` — product-level environment diagnostics used by `doctor`.
 - `Tools/pymobiledevice3` — the frozen Python 3.13 / pymobiledevice3 8.2.1 environment.
 - `Sources/stupid-app` — the cross-platform CLI.
-- `docs/rcodesign-pin.md` — the pinned signing kernel and its checksums.
+- `docs/rcodesign-pin.md` — the retired qualification signer and its historical pin.
 - `docs/sdk-export-format.md` — the SDK bundle archive and manifest specification.
 - `docs/engineering-handover.md` — the maintained engineering source of truth.
 - `docs/implementation-notes.md` — the chronological engineering log.
@@ -43,6 +45,7 @@ unplugged network install-and-launch runs are also proven on a physical iPhone.
 ## Commands
 
 ```text
+stupid-app doctor                  Check toolchain, SDK, signer, credentials, and device dependencies
 stupid-app new <name>              Scaffold a SwiftPM/SwiftUI iOS project
 stupid-app sdk export ...          (macOS) export a device-only Swift SDK bundle
 stupid-app sdk import <archive>    (Linux) validate and install an SDK bundle
@@ -57,6 +60,15 @@ stupid-app run --network --udid ... Build, sign, install, and launch over the ne
 stupid-app release archive         Build, sign (once, no timestamps), package the IPA
 stupid-app release upload --wait   Upload the IPA and wait for internal TestFlight
 ```
+
+`stupid-app doctor` exits unsuccessfully when a required host dependency is invalid
+and reports incomplete credentials, signing identities, pairing, or project context as
+warnings. It checks the installed SDK against the current host triple and Swift
+major/minor version, validates the bundled Apple WWDR/root trust and the exact frozen
+CoreDevice Python/package versions,
+checks owner-only credential and pairing-record modes without reading or printing their
+contents, and validates project configuration plus referenced files when run in a
+project directory.
 
 CoreDevice tunneling requires `/dev/net/tun` and `CAP_NET_ADMIN`. The CLI never
 elevates implicitly: run an already-privileged helper or pass an explicit `--sudo`
@@ -106,7 +118,9 @@ swift test
 
 ## License and provenance
 
-Adapts design concepts from xtool (MIT). The pinned `rcodesign` signing kernel is
+Adapts design concepts from xtool (MIT). The retired `rcodesign` qualification path was
 MPL-2.0 (see `docs/rcodesign-pin.md`), and the vendored LZFSE encoder is BSD-3-Clause
-(see `THIRD_PARTY_NOTICES.md`). See `docs/implementation-notes.md` for provenance and
-the engineering handover for the current architecture and gates.
+(see `THIRD_PARTY_NOTICES.md`). The native signer bundles only Apple's public WWDR G3
+intermediate and Apple Inc. root certificates, pinned by DER SHA-256. See
+`docs/implementation-notes.md` for provenance and the engineering handover for the
+current architecture and gates.

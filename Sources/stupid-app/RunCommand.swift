@@ -34,9 +34,6 @@ struct RunCommand: AsyncParsableCommand {
   @Option(name: .customLong("swift"), help: "Path to the host `swift` executable.")
   var swiftPath: String = "swift"
 
-  @Option(name: .customLong("rcodesign"), help: "Path to the pinned rcodesign binary.")
-  var rcodesignPath: String = "rcodesign"
-
   @Option(
     name: .customLong("pymobiledevice3"),
     help: "Path to the pymobiledevice3 CLI used for USB installation.")
@@ -139,7 +136,6 @@ struct RunCommand: AsyncParsableCommand {
           config.entitlementsPath ?? "App.entitlements"),
         configuration: .development,
         bundleID: config.bundleID,
-        rcodesignPath: rcodesignPath,
         product: config.product,
         ipaOutputDirectory: ipaDir
       ))

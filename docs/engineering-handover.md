@@ -19,11 +19,24 @@ scaffolds projects (`stupid-app new` + `stupid-app.yml`), plans and assembles an
 unsigned `.app` with the imported SDK (`stupid-app build`), manages permission-hardened
 App Store Connect credentials and a distribution identity (`stupid-app credentials add`,
 `stupid-app signing setup --kind distribution`), and produces a real Apple
-Distribution-signed IPA with `stupid-app release archive`. The pinned `rcodesign`
-0.29.0 signing kernel (prebuilt musl binaries, no Rust on target hosts) signs once with
-timestamps disabled; the output was independently verified with the project's own
-checks and with macOS `codesign --verify --strict`. See `docs/rcodesign-pin.md` for the
-signer pin and `docs/implementation-notes.md` for verification details.
+Distribution-signed IPA with `stupid-app release archive`. The project-owned native
+Swift signer signs once with timestamps disabled; output is independently checked by the
+native verifier and was qualified with macOS `codesign --verify --strict`, App Store
+processing, and TestFlight installation. The retired `rcodesign` qualification pin
+remains in `docs/rcodesign-pin.md` as historical provenance.
+
+The project-owned native shallow-app signer is also fully qualified. A native-only
+development IPA installed and remained running on a physical iPhone; the exact native
+distribution IPA passed macOS `codesign --verify --strict`, App Store processing reported
+`VALID` and `IN_BETA_TESTING`, and the TestFlight build installed and remained running.
+Native signing is the only command path. The product bundles Apple's public WWDR G3
+intermediate and Apple Inc. root certificates, pins their DER SHA-256 values, validates
+their signatures and validity, and uses them only when the stored signing leaf chains to
+WWDR G3. An unsupported issuer or Apple chain rotation fails loudly and requires a tool
+update; there is no network retrieval, caller-supplied chain, or signer fallback.
+The cut-over command was rebuilt on the isolated WSL host and produced a distribution
+IPA from the existing real identity/profile using only the bundled trust selector and
+native post-sign verifier.
 
 Gate 2 (Linux Build Upload proof) is complete on the isolated WSL host. The App Store
 Connect Build Upload client (`POST /v1/buildUploads`, `POST /v1/buildUploadFiles`,
@@ -53,6 +66,14 @@ one-shot TCP tunneling, development installation verification, and launch throug
 completed with no surviving helper process or tunnel interface. The frozen helper uses
 Python 3.13, pymobiledevice3 8.2.1, and construct-typing 0.7.0; Python 3.12's compatibility
 TLS-PSK path failed against the remote TCP listener with `NO_CIPHERS_AVAILABLE`.
+
+Gate 5 (product CLI) is in progress. `stupid-app doctor` now performs structured
+pass/warning/failure checks for the host Swift and imported SDK compatibility pair,
+signer and frozen device-tool environment, credential/signing/pairing presence and
+permissions, Linux tunnel/usbmux prerequisites, and project configuration. It exits
+unsuccessfully for required-environment failures without reading or printing secret
+contents. Frozen-environment installation, privileged-helper/sudo-policy setup,
+qualified USB transport provisioning, and clean-host acceptance remain open.
 
 Product and executable naming is decided: the CLI and package are `stupid-app`, the
 project-level configuration file is `stupid-app.yml`, the SDK artifact ID is
@@ -219,8 +240,8 @@ stupid-app release status
 
 Implemented so far: `new`, `sdk export`, `sdk import`, `build`, `credentials add`,
 `signing setup --kind distribution|development`, `devices`, `run --usb`,
-`device pair --usb`, `run --network`, `release archive`, and `release upload --wait`.
-The `doctor` and `release status` commands are not yet implemented.
+`device pair --usb`, `run --network`, `release archive`, `release upload --wait`, and
+`doctor`. The `release status` command is not yet implemented.
 
 The command surface is provisional until the proof gates complete. Keep build, signing, install, launch, upload, and status as separable operations even if convenience commands compose them.
 
@@ -239,7 +260,7 @@ Do not copy xtool's large development command wholesale. Keep these concerns as 
 - App Store Connect authentication and APIs. (`ASCKit`)
 - Certificate and provisioning profile management. (`SigningKit` + `ASCKit`)
 - Entitlement derivation and validation. (`SigningKit`)
-- Code-signing adapter. (`SigningKit`)
+- Native code signer and independent verifier. (`SigningKit`)
 - IPA packaging and verification. (`SigningKit`)
 - Device listing and USB installation adapter. (`DeviceKit`, USB install proven;
   CoreDevice launch integration remains)
@@ -388,9 +409,11 @@ The public API can enable several capabilities but cannot associate every concre
 
 ### Signing Engine
 
-Use `apple-codesign`/`rcodesign` as the initial low-level signing engine. It has
-stronger implementations of Mach-O signing, nested bundle traversal, resource sealing,
-CMS, and XML/DER entitlements than xtool's current Zupersign integration.
+The project-owned native Swift signer is the production signing engine for the supported
+shallow-app shape. It owns bundle classification, resource sealing, Mach-O mutation,
+CodeDirectory and requirement serialization, XML/DER entitlements, detached RSA-SHA256
+CMS, public Apple chain embedding, and independent post-sign verification. It emits no
+timestamp and has no external signer fallback.
 
 **Sourcing decision (Gate 1):** provision `rcodesign` per target host as a pinned
 **prebuilt release binary**, not a source compile. Upstream publishes statically linked
@@ -412,7 +435,7 @@ Treat it as a signing kernel, not an iOS workflow solution. The project must imp
 Gate 1 implemented: profile CMS plist extraction (`MobileProvisionParser`), final
 entitlement derivation and profile reconciliation (`EntitlementDeriver`), profile
 embedding, one-signing-pass distribution signing with timestamps disabled
-(`RcodesignSigner`), and IPA packaging/verification (`IPAPacker`).
+(`NativeSigner`), and IPA packaging/verification (`IPAPacker`).
 
 Requirements for the proof:
 
@@ -1248,6 +1271,20 @@ Exit condition: three consecutive unplugged install-and-launch runs pass.
 - Add compatibility and fixture tests.
 - Document setup, SDK export, credentials, pairing, development, release, and recovery.
 
+Status: **in progress**. `stupid-app doctor` is implemented through the testable
+`ProductCore` module. Required checks fail the command; incomplete workflow state is a
+warning. Checks cover host Swift and imported SDK host/Swift compatibility, bundled
+native-signing trust, exact Python 3.13/pymobiledevice3 8.2.1/construct-typing 0.7.0 pins, the
+USB installer executable, owner-only credential/identity/pairing permissions, Linux
+TUN/usbmux prerequisites, and project configuration plus referenced files. Diagnostics
+do not load or print secret values, and CoreDevice environment validation uses a
+temporary pairing directory rather than mutating credential state.
+
+Remaining productization includes frozen-environment and privileged-helper installation,
+least-privilege sudo policy setup, qualified USBIP-compatible usbmux provisioning with
+GPL compliance, `release status`, broader compatibility/fixture coverage, clean-host
+setup and recovery documentation, and the complete acceptance run.
+
 Exit condition: all acceptance criteria run through stable CLI commands on clean supported environments.
 
 ## Test Strategy
@@ -1281,8 +1318,8 @@ Required recurring integration coverage:
 ## Primary Risks
 
 1. Apple SDK licensing may prevent compliant use on non-Apple hardware.
-2. A third-party signer may produce structurally plausible output that App Store Connect rejects.
-3. `rcodesign` does not provide an iOS provisioning or IPA workflow and its built-in verification is not Apple's full policy engine.
+2. Native signing compatibility may drift as Apple changes CodeDirectory, CMS, resource-envelope policy, or the WWDR chain.
+3. The current trust bundle supports WWDR G3 only and must be updated and requalified before that intermediate expires or Apple issues supported identities from another chain.
 4. Swift compiler and Xcode SDK interfaces must remain compatible as versions change.
 5. Linux lacks Apple's resource compilers, limiting the supported project model unless replacements are built. The native app-icon `.car` subset is App Store-validated; other Apple resource compilers (e.g. `momc`) remain out of scope.
 6. Modern iPhone wireless protocols and Developer Disk Image behavior change across iOS versions.
@@ -1293,7 +1330,8 @@ Required recurring integration coverage:
 ## Open Decisions
 
 - First officially supported Linux architecture and distribution (x86_64 Ubuntu 24.04 is the validated proof pair).
-- Whether `rcodesign` remains a pinned subprocess or becomes a directly integrated Rust component later.
+- How signing-trust updates are distributed and requalified before WWDR G3 expires or
+  Apple moves supported identities to another intermediate.
 - Whether owner-only plaintext credential storage remains acceptable beyond technical
   validation or is replaced by an OS keyring/HSM-backed design.
 - Release directory layout and retention policy.
@@ -1302,7 +1340,99 @@ Required recurring integration coverage:
 - Whether the initial WSL x86_64 environment becomes a supported production host or remains a proof environment alongside a future native Linux host.
 - Whether build and release environments are persistent or created ephemerally.
 
+## Active Technical Spikes
+
+The native signing spike and product cutover are complete for the supported shallow-app
+shape. The still-unstarted TLS-PSK spike takes priority over the remaining Gate 5
+productization tasks. Native signing is mandatory and uses the bundled qualified public
+certificate chain.
+
+### Native Signature Parser And Verifier
+
+Status: **complete and externally qualified**. The verifier and
+shallow signer now cover the bounded thin little-endian ARM64 `MH_EXECUTE` shape,
+deterministic SHA-1/SHA-256 resource seals, canonical XML/DER entitlements, designated
+requirements, CodeDirectory/SuperBlob generation, `LC_CODE_SIGNATURE` add/replace,
+`__LINKEDIT` sizing, development/distribution executable-segment flags, detached
+RSA-SHA256 CMS with both Apple cdhash attributes, explicit chain trust, timestamp absence,
+and independent post-sign verification. Hermetic tests
+use generated RSA leaf/intermediate/root certificates and a synthetic Mach-O app; they
+also prove deterministic CMS and signature replacement.
+
+Qualification used the real development and distribution identities with the matching
+Apple WWDR G3 intermediate and Apple root. A native development artifact installed and
+remained open on the registered physical device. The exact native distribution IPA
+passed macOS `codesign --verify --strict`, App Store processing reached `VALID` and
+`IN_BETA_TESTING`, and that build installed and remained open through TestFlight. A
+same-source `rcodesign` control build was used to isolate and correct resource-rule,
+`__TEXT` executable-boundary, and complete-CMS-chain differences. Details and artifact
+hashes are recorded in `docs/implementation-notes.md`.
+
+Implement a read-only Swift parser/verifier for the exact shallow ARM64 app signature
+shape currently produced by Xcode and `rcodesign`. The spike must parse the Mach-O
+embedded-signature SuperBlob, CodeDirectory, RequirementSet, XML and DER entitlements,
+CMS, and `CodeResources`, then independently verify code-page hashes, special slots, the
+CMS signature and certificate chain, entitlement equivalence, and resource seals.
+
+Go criteria:
+
+- Sanitized Xcode and `rcodesign` fixtures parse successfully.
+- Mutating each code page, special slot, entitlement representation, or sealed resource
+  produces a deterministic verification failure.
+- CMS and certificate verification does not delegate to `rcodesign`.
+- Malformed and truncated inputs fail safely with bounded, public-safe diagnostics.
+- The implementation remains narrow enough to proceed to the native shallow-app signer
+  scoped in `docs/native-dependency-replacement-scope.md`.
+
+No-go criteria:
+
+- Required format behavior cannot be independently reproduced from auditable sources and
+  sanitized fixtures.
+- Verification would require retaining `rcodesign` as the verifier or accepting
+  unbounded parsing or cryptographic ambiguity.
+
+### Swift TLS-PSK CoreDevice Interoperability
+
+Status: **promoted; not started**.
+
+Implement the smallest SwiftNIO SSL client that connects to a CoreDevice TCP listener
+created by the proven pinned `pymobiledevice3` control path. This spike is only for the
+TLS 1.2 PSK boundary and one bounded `CDTunnel` handshake; it must not begin the complete
+remote-pairing, TUN, RSD, install, or launch port.
+
+Go criteria:
+
+- Swift completes TLS 1.2 PSK negotiation with the physical device listener.
+- The accepted PSK identity behavior and negotiated cipher are recorded without exposing
+  key material or device identifiers.
+- A bounded `CDTunnel` request receives and validates the expected response shape.
+- Timeout, cancellation, TLS failure, and socket closure leave no helper process,
+  connection, TUN interface, or route behind.
+- The result supports the SwiftNIO SSL architecture proposed for the native CoreDevice
+  stack.
+
+No-go criteria:
+
+- SwiftNIO SSL cannot negotiate the listener's required PSK cipher or identity behavior.
+- Interoperability requires an unsafe global TLS hook, secret-bearing diagnostics, or an
+  additional opaque runtime that does not materially improve on the current dependency.
+
+The spike may use the existing pinned Python stack only to create and control the device
+listener. Its final TLS connection and `CDTunnel` exchange must be implemented in Swift.
+
 ## Deferred Non-Blocking Tasks
+
+### Native Signing And CoreDevice Completion
+
+`docs/native-dependency-replacement-scope.md` defines the work required to replace the
+former `rcodesign` signing path and current `pymobiledevice3` device stack with
+project-owned Swift implementations. Native signing is complete and `rcodesign` has been
+retired independently. Do not remove the Python device dependency until three
+consecutive native unplugged runs pass the existing acceptance gates.
+
+Replacing `pymobiledevice3` does not itself replace `usbmuxd`, WSL USBIP, Linux TUN,
+multicast networking, or the privileged-helper requirement. Raw USB transport remains a
+separate task below.
 
 ### Native USB Transport
 
@@ -1329,8 +1459,8 @@ Scope and acceptance criteria when this task is eventually promoted:
 
 ## Recommended Next Work
 
-Proceed with Gate 5 productization: add `doctor`, automate installation of the frozen
-Python environment and root-owned helper/least-privilege sudo policy, provision the
-qualified USBIP-compatible usbmux transport with explicit GPL compliance, add clean-host
-setup and recovery documentation, and run the complete acceptance flow through stable
-commands.
+Execute the remaining work in this order:
+
+1. Prove SwiftNIO SSL TLS-PSK interoperability and one bounded `CDTunnel` handshake
+   against a physical device listener created by the proven stack.
+2. Resume remaining Gate 5 productization work and clean-host acceptance.
