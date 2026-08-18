@@ -2023,3 +2023,113 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
   installs and launches through the fully native USB path.
 - Implement native CoreDevice remote pairing and the network run path to retire the
   remaining Python helper.
+
+## 2026-08-18 - Native CoreDevice Network Run Path
+
+### Summary
+
+- Implemented the native `run --network` path so the deployment loop no longer invokes
+  Python. The remaining Python helper is now limited to the one-time `device pair --usb`
+  CoreDevice remote-pair bootstrap.
+- Added `RemotepairingDiscovery` (Swift mDNS/DNS-SD): DNS name encode/decode with
+  compression pointers, PTR/SRV/TXT/A/AAAA record parsing, IPv6 RFC-5952 formatting, a
+  multicast UDP browser for `_remotepairing._tcp.local.`, and candidate assembly that
+  sorts link-local IPv4 first.
+- Added `RemotePairing` + `RemotePairingChannel`: the RPPairing framing
+  (`RPPairing` + Int16 length + JSON), the XPC JSON envelope (plain and streamEncrypted),
+  the remote pairing record reader, TLV8 codec, host-ID (UUIDv3) derivation, and the
+  Pair-Verify exchange using X25519 ECDH, HKDF-SHA512, ChaCha20-Poly1305, and Ed25519
+  signing. `createTCPListener()` returns the listener port and the derived PSK.
+- Extended `CCoreDeviceTLS` with a persistent PSK tunnel: `tunnel_connect` performs the
+  TLS 1.2 PSK-AES128-GCM-SHA256 handshake and CDTunnel exchange while retaining the live
+  socket, and `tunnel_relay` pumps complete IPv6 packets between the TLS connection and a
+  TUN descriptor (mirroring the lockdown relay).
+- Added `PersistentCoreDeviceTunnel` (Swift wrapper: connect, decode handshake, create
+  TUN + route, start/stop the relay thread) and `NativeNetworkRunner` (mDNS browse →
+  candidate pair-verify → persistent tunnel → RSD peer resolution → AFC + installation
+  proxy over the `*.shim.remote` RSD services → AppService launch).
+- Wired `stupid-app run --network --udid <udid>` in `RunCommand` to `NativeNetworkRunner`;
+  removed `--python` and `--coredevice-helper` from `run`.
+
+### Verification
+
+- `swift build` and `swift format lint --strict` pass (formatted all new files).
+- `swift test` passes 132 cases (added 9: mDNS DNS codec/browse parse, TLV8, host ID,
+  record load, identifier globbing, ChaCha20-Poly1305 wire round-trip, sequence nonce,
+  session HKDF labels, address sorting). The network connect/TLS/relay candidates are
+  exercised only by unit fixture logic; on-device qualification remains on the WSL host.
+
+### Limitations And Follow-Up
+
+- Not physically qualified yet. Clean-host and three-consecutive-unplugged-run
+  acceptance must run on the isolated WSL host (requires `--sudo`/NOPASSWD, USBIP iPhone
+  passthrough for a fresh pair, and an existing `remote_<id>.plist` from a prior pair).
+- `device pair --usb` still calls the Python helper for the CoreDevice remote-pair
+  bootstrap. The last Python removal is native SRP-3072 Pair-Setup over the RSD
+  CoreDevice tunnel service, which needs a BigInt + SRP-3072 client and OPACK device-info
+  encoding, then cutting `device pair`, `doctor`, and the helper resources over and
+  removing `Tools/pymobiledevice3` and `uv`.
+
+## 2026-08-18 - Native SRP-3072 Pair-Setup Crypto Core
+
+- Implemented the cryptographic core required to make the last Python path
+  (`device pair --usb` CoreDevice remote-pair bootstrap) native.
+- `BigUInt` (`Sources/DeviceKit/BigUInt.swift`): an unsigned arbitrary-precision
+  integer sized for the 3072-bit SRP group (little-endian 64-bit limbs), with
+  add/subtract/multiply, binary long division, byte/hex conversion, and modular
+  exponentiation via Montgomery multiplication.
+- `SRPClient` (`Sources/DeviceKit/SRPClient.swift`): mirrors `srptools`
+  `SRPClientSession`/`SRPContext` exactly for `Pair-Setup`/SHA-512/PRIME-3072/G=5:
+  k, x, verifier, u, premaster (negative-base handling), K, M, and M2.
+- `OPack` (`Sources/DeviceKit/OPack.swift`): a minimal OPACK encoder matching
+  `opack2` byte-for-byte for the pairing `device_info` dictionary.
+- Validation: `SRPClient` matches a deterministic srptools vector for a fixed
+  private `a`, salt, and server public (A, K, M, M2 all match); `OPack` matches
+  `opack2.dumps` byte-for-byte; `BigUInt` has unit + small-value modPow checks.
+  The reference-vector ordering pitfall (`process(other_public, salt)`) was
+  caught and the test regenerated.
+
+### Remaining Work
+
+- Wire the RSD `com.apple.internal.dt.coredevice.untrusted.tunnelservice`
+  RemoteXPC exchange (ServiceVersion handshake, mangledTypeName wrapping, XPC
+  adaptation of the plain/streamEncrypted envelope) plus the Pair-Setup message
+  sequence (consent, proof, save-on-peer, session keys, remote unlock, local
+  record write) into `device pair --usb`.
+- Cut `device pair`, `doctor`, and the helper resources over; remove
+  `CoreDeviceRunner`, `Sources/DeviceKit/Resources/pymobiledevice3_helper.py`,
+  and `Tools/pymobiledevice3`/`uv`.
+- Physically qualify on the WSL/USBIP deployment host (fresh pair + three
+  unplugged network runs). On-device acceptance requires the iPhone on the
+  deployment host, not the authoring Mac.
+
+## 2026-08-18 - RSD Pair-Setup Orchestration And Record Format
+
+- Added `CoreDeviceRemotePairing` (`Sources/DeviceKit/CoreDeviceRemotePairing.swift`): the
+  Pair-Setup message sequence (consent, SRP proof, encrypted save-on-peer, session keys,
+  remote-unlock, record assembly) over the RSD untrusted tunnelservice envelope transport.
+  It reuses `SRPClient`, `OPack`, `RemotePairing` TLV8, and the ChaCha20-Poly1305/HKDF
+  helpers. The transport is a send/receive closure the caller wires to `RemoteXPCService`;
+  because the device pushes the awaiting-consent event, the transport supports a
+  receive-only call (`nil` send).
+- Added `RemoteXPCService.receiveValue()` and `request(_:)` to `RSDClient` for the pushed
+  ServiceVersion and the non-reply-flag envelope exchange, and `XPCValue.dataValue`.
+- Fixed `RemotePairing.Record` so `remote_unlock_host_key` is parsed as a string: an
+  on-device probe of an existing `remote_<id>.plist` showed it is a base64 `string`, not
+  `data`. This previously would have made the native network path reject the record.
+- Made `OPackValue` an `indirect` enum with a `dictionary([OPackEntry])` case to resolve a
+  recursive-`Sendable` circular-reference when used from a `Sendable` orchestrator.
+
+### Status At Handoff
+
+- Fully native and macOS-tested (141 cases): the `run --network` path (mDNS DNS-SD,
+  Pair-Verify, persistent OpenSSL PSK tunnel, TUN relay, install/launch over RSD) and the
+  SRP-3072/OPACK crypto core.
+- `CoreDeviceRemotePairing` compiles but is not yet on-device validated; the WSL build was
+  interrupted on an unrelated `CLZFSE` C-module error before qualification.
+- Remaining to fully remove Python: wire `device pair --usb` to `CoreDeviceRemotePairing`
+  over the native CoreDevice USB tunnel + RSD, cut `doctor` and the helper resources over,
+  delete `CoreDeviceRunner`, `Sources/DeviceKit/Resources/pymobiledevice3_helper.py`, and
+  `Tools/pymobiledevice3`+`uv`, then qualify on a clean `iosdev-ubuntu` host (fresh pair +
+  three unplugged network runs). The WSL `.build` needs a clean rebuild to clear the stale
+  CLZFSE module state.

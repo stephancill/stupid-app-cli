@@ -37,6 +37,11 @@ public enum XPCValue: Equatable, Sendable {
     if case .bool(let value) = self { return value }
     return nil
   }
+
+  public var dataValue: Data? {
+    if case .data(let value) = self { return value }
+    return nil
+  }
 }
 
 /// Bounded encoder and decoder for the RemoteXPC binary dictionary format

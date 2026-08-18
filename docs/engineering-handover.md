@@ -100,9 +100,19 @@ the owner-only CoreDevice pairing cache, establishes session TLS, and enables an
 wireless lockdown. A native RemoteXPC/RSD slice now implements the XPC binary dictionary
 codec (verified byte-for-byte against the pinned pymobiledevice3 reference), the
 RemoteXPC HTTP/2-derived framing and handshake, an RSD client that resolves device UDID
-and advertised services, and a CoreDevice AppService launch client. The pinned Python
-stack remains mandatory because it still owns CoreDevice listener creation, remote
-pairing, TUN forwarding, RSD launch orchestration, and the network run path.
+and advertised services, and a CoreDevice AppService launch client.
+
+The network run path is now fully native: a Swift mDNS DNS-SD browser discovers
+`_remotepairing._tcp.local.` advertisements, a native remote-pairing client reads the
+saved remote pairing record and performs the X25519/HKDF-SHA512/ChaCha20-Poly1305
+Pair-Verify over the advertised listener, and a persistent OpenSSL TLS-PSK tunnel
+(added to `CCoreDeviceTLS`) relays IPv6 packets to a TUN interface. Reachability install
+runs AFC + installation proxy over the RSD `*.shim.remote` services, and launch reuses
+the CoreDevice AppService client. `stupid-app run --network --udid <udid>` no longer
+invokes Python. The pinned Python stack now remains only for the `device pair --usb`
+CoreDevice remote-pair bootstrap (native SRP-3072 Pair-Setup is the remaining work); the
+standalone Python CLI adapter is removed and `run --network`'s `--python` and
+`--coredevice-helper` options are gone.
 
 Product and executable naming is decided: the CLI and package are `stupid-app`, the
 project-level configuration file is `stupid-app.yml`, the SDK artifact ID is

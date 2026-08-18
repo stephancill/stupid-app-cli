@@ -249,6 +249,19 @@ public final class RemoteXPCService: @unchecked Sendable {
     socket.closeImmediately()
   }
 
+  /// Reads the next message the peer pushes without a prior request. Used by
+  /// the CoreDevice tunnel service to receive the initial `ServiceVersion`.
+  public func receiveValue() throws -> XPCValue {
+    try remote.receiveResponse()
+  }
+
+  /// Sends a request and reads the matching response, without the reply flag.
+  /// This matches the CoreDevice tunnel service envelope exchange.
+  public func request(_ body: [String: XPCValue]) throws -> XPCValue {
+    try remote.sendRequest(body, wantingReply: false)
+    return try remote.receiveResponse()
+  }
+
   public func invoke(_ body: [String: XPCValue]) throws -> XPCValue {
     try remote.sendRequest(body, wantingReply: true)
     return try remote.receiveResponse()

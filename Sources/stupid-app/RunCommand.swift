@@ -35,24 +35,18 @@ struct RunCommand: AsyncParsableCommand {
   var swiftPath: String = "swift"
 
   @Option(
-    name: .customLong("python"),
-    help: "Python 3.13 executable from the frozen pymobiledevice3 environment.")
-  var pythonPath: String = "python3"
-
-  @Option(
     name: .customLong("sudo"),
     help: "Explicit path to sudo for the privileged CoreDevice helper.")
   var sudoPath: String?
 
   @Option(
-    name: .customLong("coredevice-helper"),
-    help: "Root-owned installed CoreDevice helper path; defaults to the bundled helper.")
-  var coreDeviceHelperPath: String?
-
-  @Option(
     name: .customLong("usbmux"),
     help: "usbmuxd address (Unix socket or numeric HOST:PORT) used for USB operations.")
   var usbmuxAddress: String?
+
+  @Option(
+    name: .customLong("discovery-timeout"), help: "Maximum seconds allowed for device discovery.")
+  var discoveryTimeout: Double = 15
 
   @Option(
     name: .customLong("install-timeout"), help: "Maximum seconds allowed for installation.")
@@ -74,26 +68,13 @@ struct RunCommand: AsyncParsableCommand {
 
     let credentialHome = credentialHomeURL()
     let pairingDirectory = credentialHome.appendingPathComponent("pairing", isDirectory: true)
-    let coreDevice = CoreDeviceRunner(
-      pythonPath: pythonPath,
+    let nativeRunner = NativeCoreDeviceRunner(
       sudoPath: sudoPath,
-      helperPath: coreDeviceHelperPath,
       pairingDirectory: pairingDirectory,
       usbmuxAddress: usbmuxAddress,
-      installTimeoutSeconds: installTimeout,
       launchTimeoutSeconds: launchTimeout
     )
-    if usb {
-      let nativeRunner = NativeCoreDeviceRunner(
-        sudoPath: sudoPath,
-        pairingDirectory: pairingDirectory,
-        usbmuxAddress: usbmuxAddress,
-        launchTimeoutSeconds: launchTimeout
-      )
-      try nativeRunner.validateEnvironment(requirePrivileges: true)
-    } else {
-      try coreDevice.validateEnvironment(requirePrivileges: true)
-    }
+    try nativeRunner.validateEnvironment(requirePrivileges: true)
 
     let context = try ASCContext.resolve(home: home, purpose: "run")
 
@@ -173,13 +154,19 @@ struct RunCommand: AsyncParsableCommand {
       let pid = try nativeRunner.launchUSB(bundleID: config.bundleID, udid: targetUDID)
       print("Launched \(config.bundleID) (pid \(pid)).")
     } else if let udid {
-      print("Installing and launching on the selected device over the network...")
-      try coreDevice.installAndLaunchNetwork(
+      let networkRunner = NativeNetworkRunner(
+        pairingDirectory: credentialHome.appendingPathComponent("pairing", isDirectory: true),
+        udid: udid,
         ipa: output.ipaURL,
         bundleID: config.bundleID,
-        udid: udid
+        discoveryTimeoutSeconds: discoveryTimeout,
+        installTimeoutSeconds: installTimeout,
+        launchTimeoutSeconds: launchTimeout,
+        progress: { print($0) }
       )
-      print("Installed and launched \(config.bundleID).")
+      print("Installing and launching on the selected device over the network...")
+      let pid = try networkRunner.installAndLaunch()
+      print("Installed and launched \(config.bundleID) (pid \(pid)).")
     }
   }
 

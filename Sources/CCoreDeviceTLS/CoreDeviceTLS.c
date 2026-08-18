@@ -505,3 +505,466 @@ void stupid_app_coredevice_tls_destroy(stupid_app_coredevice_tls_connection *con
   free(connection->host);
   free(connection);
 }
+
+// ---------------------------------------------------------------------------
+// Persistent remote-pairing TCP tunnel
+// ---------------------------------------------------------------------------
+
+struct stupid_app_coredevice_tls_tunnel {
+  SSL *ssl;
+  SSL_CTX *context;
+  int socket_fd;
+  int timeout_milliseconds;
+  atomic_bool cancelled;
+  pthread_mutex_t socket_mutex;
+};
+
+enum stupid_app_coredevice_tls_tunnel_result {
+  STUPID_APP_COREDEVICE_TLS_TUNNEL_OK = 0,
+  STUPID_APP_COREDEVICE_TLS_TUNNEL_INVALID_INPUT = 1,
+  STUPID_APP_COREDEVICE_TLS_TUNNEL_CONNECT_FAILED = 2,
+  STUPID_APP_COREDEVICE_TLS_TUNNEL_CONFIGURATION_FAILED = 3,
+  STUPID_APP_COREDEVICE_TLS_TUNNEL_HANDSHAKE_FAILED = 4,
+  STUPID_APP_COREDEVICE_TLS_TUNNEL_WRITE_FAILED = 5,
+  STUPID_APP_COREDEVICE_TLS_TUNNEL_READ_FAILED = 6,
+  STUPID_APP_COREDEVICE_TLS_TUNNEL_TIMED_OUT = 7,
+  STUPID_APP_COREDEVICE_TLS_TUNNEL_CANCELLED = 8,
+  STUPID_APP_COREDEVICE_TLS_TUNNEL_UNEXPECTED_PROTOCOL = 9,
+  STUPID_APP_COREDEVICE_TLS_TUNNEL_INVALID_RESPONSE = 10,
+};
+
+static void tunnel_close_socket(stupid_app_coredevice_tls_tunnel *tunnel) {
+  pthread_mutex_lock(&tunnel->socket_mutex);
+  int socket_fd = tunnel->socket_fd;
+  tunnel->socket_fd = -1;
+  if (socket_fd >= 0) {
+    close(socket_fd);
+  }
+  pthread_mutex_unlock(&tunnel->socket_mutex);
+}
+
+static void tunnel_set_socket(stupid_app_coredevice_tls_tunnel *tunnel, int socket_fd) {
+  pthread_mutex_lock(&tunnel->socket_mutex);
+  tunnel->socket_fd = socket_fd;
+  pthread_mutex_unlock(&tunnel->socket_mutex);
+}
+
+static int tunnel_cancellation(stupid_app_coredevice_tls_tunnel *tunnel) {
+  return atomic_load(&tunnel->cancelled) ? STUPID_APP_COREDEVICE_TLS_TUNNEL_CANCELLED : 0;
+}
+
+static int tunnel_deadline(stupid_app_coredevice_tls_tunnel *tunnel, int64_t deadline) {
+  int cancelled = tunnel_cancellation(tunnel);
+  if (cancelled != 0) {
+    return cancelled;
+  }
+  int64_t now = monotonic_milliseconds();
+  return now < 0 || now >= deadline ? STUPID_APP_COREDEVICE_TLS_TUNNEL_TIMED_OUT : 0;
+}
+
+static int tunnel_wait_for_socket(
+  stupid_app_coredevice_tls_tunnel *tunnel,
+  int socket_fd,
+  short events,
+  int64_t deadline
+) {
+  while (1) {
+    int state = tunnel_deadline(tunnel, deadline);
+    if (state != 0) {
+      return state;
+    }
+    int64_t now = monotonic_milliseconds();
+    int remaining = (int)(deadline - now);
+    int interval = remaining < POLL_SLICE_MILLISECONDS ? remaining : POLL_SLICE_MILLISECONDS;
+    struct pollfd descriptor = {.fd = socket_fd, .events = events};
+    int result = poll(&descriptor, 1, interval);
+    if (result > 0) {
+      return STUPID_APP_COREDEVICE_TLS_TUNNEL_OK;
+    }
+    if (result < 0 && errno != EINTR) {
+      return tunnel_cancellation(tunnel);
+    }
+  }
+}
+
+static int tunnel_wait_for_ssl(
+  stupid_app_coredevice_tls_tunnel *tunnel,
+  int operation_result,
+  int64_t deadline,
+  int phase_failure
+) {
+  int error = SSL_get_error(tunnel->ssl, operation_result);
+  if (error == SSL_ERROR_WANT_READ) {
+    return tunnel_wait_for_socket(tunnel, tunnel->socket_fd, POLLIN, deadline);
+  }
+  if (error == SSL_ERROR_WANT_WRITE) {
+    return tunnel_wait_for_socket(tunnel, tunnel->socket_fd, POLLOUT, deadline);
+  }
+  return tunnel_cancellation(tunnel) != 0
+    ? STUPID_APP_COREDEVICE_TLS_TUNNEL_CANCELLED
+    : phase_failure;
+}
+
+int stupid_app_coredevice_tls_tunnel_connect(
+  const char *host,
+  uint16_t port,
+  const uint8_t *psk,
+  size_t psk_length,
+  int timeout_milliseconds,
+  uint8_t *handshake_response,
+  size_t handshake_capacity,
+  size_t *handshake_length,
+  stupid_app_coredevice_tls_tunnel **tunnel_output
+) {
+  if (host == NULL || host[0] == '\0' || port == 0 || psk == NULL || psk_length == 0 ||
+      psk_length > 256 || timeout_milliseconds <= 0 || handshake_response == NULL ||
+      handshake_capacity < 10 || handshake_length == NULL || tunnel_output == NULL) {
+    return STUPID_APP_COREDEVICE_TLS_TUNNEL_INVALID_INPUT;
+  }
+  int version_result = stupid_app_coredevice_tls_validate_openssl();
+  if (version_result != STUPID_APP_COREDEVICE_TLS_OK) {
+    return STUPID_APP_COREDEVICE_TLS_TUNNEL_CONFIGURATION_FAILED;
+  }
+
+  stupid_app_coredevice_tls_connection *connection = NULL;
+  int create_result = stupid_app_coredevice_tls_create(
+    host, port, psk, psk_length, timeout_milliseconds, &connection);
+  if (create_result != STUPID_APP_COREDEVICE_TLS_OK) {
+    return STUPID_APP_COREDEVICE_TLS_TUNNEL_CONFIGURATION_FAILED;
+  }
+
+  stupid_app_coredevice_tls_tunnel *tunnel = calloc(1, sizeof(*tunnel));
+  if (tunnel == NULL) {
+    stupid_app_coredevice_tls_destroy(connection);
+    return STUPID_APP_COREDEVICE_TLS_TUNNEL_CONFIGURATION_FAILED;
+  }
+  tunnel->socket_fd = -1;
+  tunnel->timeout_milliseconds = timeout_milliseconds;
+  atomic_init(&tunnel->cancelled, false);
+  if (pthread_mutex_init(&tunnel->socket_mutex, NULL) != 0) {
+    free(tunnel);
+    stupid_app_coredevice_tls_destroy(connection);
+    return STUPID_APP_COREDEVICE_TLS_TUNNEL_CONFIGURATION_FAILED;
+  }
+
+  int64_t now = monotonic_milliseconds();
+  if (now < 0 || timeout_milliseconds > INT64_MAX - now) {
+    stupid_app_coredevice_tls_destroy(connection);
+    pthread_mutex_destroy(&tunnel->socket_mutex);
+    free(tunnel);
+    return STUPID_APP_COREDEVICE_TLS_TUNNEL_CONFIGURATION_FAILED;
+  }
+  int64_t deadline = now + timeout_milliseconds;
+
+  int socket_fd = -1;
+  int result = connect_socket(connection, deadline, &socket_fd);
+  if (result != STUPID_APP_COREDEVICE_TLS_OK) {
+    stupid_app_coredevice_tls_destroy(connection);
+    pthread_mutex_destroy(&tunnel->socket_mutex);
+    free(tunnel);
+    return STUPID_APP_COREDEVICE_TLS_TUNNEL_CONNECT_FAILED;
+  }
+  tunnel_set_socket(tunnel, socket_fd);
+
+  tunnel->context = SSL_CTX_new(TLS_client_method());
+  if (tunnel->context == NULL ||
+      SSL_CTX_set_min_proto_version(tunnel->context, TLS1_2_VERSION) != 1 ||
+      SSL_CTX_set_max_proto_version(tunnel->context, TLS1_2_VERSION) != 1 ||
+      SSL_CTX_set_cipher_list(tunnel->context, "PSK-AES128-GCM-SHA256") != 1) {
+    result = STUPID_APP_COREDEVICE_TLS_TUNNEL_CONFIGURATION_FAILED;
+    goto cleanup;
+  }
+  SSL_CTX_set_verify(tunnel->context, SSL_VERIFY_NONE, NULL);
+  SSL_CTX_set_psk_client_callback(tunnel->context, provide_psk);
+  tunnel->ssl = SSL_new(tunnel->context);
+  if (tunnel->ssl == NULL || SSL_set_fd(tunnel->ssl, socket_fd) != 1) {
+    result = STUPID_APP_COREDEVICE_TLS_TUNNEL_CONFIGURATION_FAILED;
+    goto cleanup;
+  }
+  SSL_set_app_data(tunnel->ssl, connection);
+
+  // TLS 1.2 PSK handshake.
+  for (;;) {
+    int state = tunnel_deadline(tunnel, deadline);
+    if (state != 0) {
+      result = state;
+      goto cleanup;
+    }
+    int operation_result = SSL_connect(tunnel->ssl);
+    if (operation_result == 1) {
+      break;
+    }
+    int wait = tunnel_wait_for_ssl(
+      tunnel, operation_result, deadline, STUPID_APP_COREDEVICE_TLS_TUNNEL_HANDSHAKE_FAILED);
+    if (wait != STUPID_APP_COREDEVICE_TLS_TUNNEL_OK) {
+      result = wait;
+      goto cleanup;
+    }
+  }
+  if (SSL_version(tunnel->ssl) != TLS1_2_VERSION ||
+      strcmp(SSL_get_cipher_name(tunnel->ssl), "PSK-AES128-GCM-SHA256") != 0) {
+    result = STUPID_APP_COREDEVICE_TLS_TUNNEL_UNEXPECTED_PROTOCOL;
+    goto cleanup;
+  }
+
+  // CDTunnel handshake: write clientHandshakeRequest, read the response header
+  // and body, then return the response bytes for Swift to parse.
+  static const uint8_t magic[] = {'C', 'D', 'T', 'u', 'n', 'n', 'e', 'l'};
+  static const uint8_t request_body[] =
+    "{\"mtu\":16000,\"type\":\"clientHandshakeRequest\"}";
+  uint8_t request[10 + sizeof(request_body) - 1];
+  memcpy(request, magic, 8);
+  request[8] = (uint8_t)(((sizeof(request_body) - 1) >> 8) & 0xFF);
+  request[9] = (uint8_t)((sizeof(request_body) - 1) & 0xFF);
+  memcpy(request + 10, request_body, sizeof(request_body) - 1);
+
+  size_t written = 0;
+  while (written < sizeof(request)) {
+    size_t part = 0;
+    int write_result =
+      SSL_write_ex(tunnel->ssl, request + written, sizeof(request) - written, &part);
+    if (write_result == 1 && part > 0) {
+      written += part;
+      continue;
+    }
+    int wait = tunnel_wait_for_ssl(
+      tunnel, write_result, deadline, STUPID_APP_COREDEVICE_TLS_TUNNEL_WRITE_FAILED);
+    if (wait != STUPID_APP_COREDEVICE_TLS_TUNNEL_OK) {
+      result = wait;
+      goto cleanup;
+    }
+  }
+
+  size_t received = 0;
+  while (received < 10) {
+    size_t part = 0;
+    int read_result =
+      SSL_read_ex(tunnel->ssl, handshake_response + received, 10 - received, &part);
+    if (read_result == 1 && part > 0) {
+      received += part;
+      continue;
+    }
+    int wait = tunnel_wait_for_ssl(
+      tunnel, read_result, deadline, STUPID_APP_COREDEVICE_TLS_TUNNEL_READ_FAILED);
+    if (wait != STUPID_APP_COREDEVICE_TLS_TUNNEL_OK) {
+      result = wait;
+      goto cleanup;
+    }
+  }
+  if (memcmp(handshake_response, magic, sizeof(magic)) != 0) {
+    result = STUPID_APP_COREDEVICE_TLS_TUNNEL_INVALID_RESPONSE;
+    goto cleanup;
+  }
+  size_t body_length = ((size_t)handshake_response[8] << 8) | handshake_response[9];
+  if (body_length > handshake_capacity - 10) {
+    result = STUPID_APP_COREDEVICE_TLS_TUNNEL_INVALID_RESPONSE;
+    goto cleanup;
+  }
+  size_t response_offset = 10;
+  while (response_offset < 10 + body_length) {
+    size_t part = 0;
+    int read_result = SSL_read_ex(
+      tunnel->ssl,
+      handshake_response + response_offset,
+      10 + body_length - response_offset,
+      &part);
+    if (read_result == 1 && part > 0) {
+      response_offset += part;
+      continue;
+    }
+    int wait = tunnel_wait_for_ssl(
+      tunnel, read_result, deadline, STUPID_APP_COREDEVICE_TLS_TUNNEL_READ_FAILED);
+    if (wait != STUPID_APP_COREDEVICE_TLS_TUNNEL_OK) {
+      result = wait;
+      goto cleanup;
+    }
+  }
+  *handshake_length = 10 + body_length;
+
+  // The connection object is no longer needed. Detach its socket (now owned by
+  // the retained tunnel) and its PSK so destruction cannot double-close the
+  // socket that carries the live tunnel.
+  connection->socket_fd = -1;
+
+  // The connection object is no longer needed; its psk/socket are now owned by
+  // the retained SSL and tunnel socket.
+  stupid_app_coredevice_tls_cancel(connection);
+  stupid_app_coredevice_tls_destroy(connection);
+  *tunnel_output = tunnel;
+  return STUPID_APP_COREDEVICE_TLS_TUNNEL_OK;
+
+cleanup:
+  if (tunnel->ssl != NULL) {
+    SSL_free(tunnel->ssl);
+  }
+  if (tunnel->context != NULL) {
+    SSL_CTX_free(tunnel->context);
+  }
+  tunnel_close_socket(tunnel);
+  pthread_mutex_destroy(&tunnel->socket_mutex);
+  connection->socket_fd = -1;
+  stupid_app_coredevice_tls_destroy(connection);
+  free(tunnel);
+  return result;
+}
+
+int stupid_app_coredevice_tls_tunnel_relay(
+  stupid_app_coredevice_tls_tunnel *tunnel,
+  int tun_fd,
+  volatile int *stop
+) {
+  if (tunnel == NULL || tunnel->ssl == NULL || tunnel->socket_fd < 0 || tun_fd < 0 ||
+      stop == NULL) {
+    return STUPID_APP_COREDEVICE_TLS_TUNNEL_INVALID_INPUT;
+  }
+  signal(SIGPIPE, SIG_IGN);
+  int64_t relay_deadline;
+  int64_t now = monotonic_milliseconds();
+  if (now < 0 || tunnel->timeout_milliseconds > INT64_MAX - now) {
+    return STUPID_APP_COREDEVICE_TLS_TUNNEL_CONFIGURATION_FAILED;
+  }
+  relay_deadline = now + tunnel->timeout_milliseconds;
+
+  uint8_t *inbound = malloc(131072);
+  size_t inbound_length = 0;
+  uint8_t *outbound = malloc(65536);
+  if (inbound == NULL || outbound == NULL) {
+    free(inbound);
+    free(outbound);
+    return STUPID_APP_COREDEVICE_TLS_TUNNEL_CONFIGURATION_FAILED;
+  }
+  int result = STUPID_APP_COREDEVICE_TLS_TUNNEL_OK;
+  while (!*stop) {
+    int64_t loop_now = monotonic_milliseconds();
+    if (loop_now < 0 || loop_now >= relay_deadline) {
+      result = STUPID_APP_COREDEVICE_TLS_TUNNEL_TIMED_OUT;
+      break;
+    }
+    int remaining = (int)(relay_deadline - loop_now);
+
+    struct pollfd descriptors[2] = {
+      {.fd = tunnel->socket_fd, .events = POLLIN},
+      {.fd = tun_fd, .events = POLLIN},
+    };
+    int waited = poll(descriptors, 2, remaining < 50 ? remaining : 50);
+    if (waited < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      result = STUPID_APP_COREDEVICE_TLS_TUNNEL_CONFIGURATION_FAILED;
+      break;
+    }
+
+    // Device -> host.
+    if (descriptors[0].revents & (POLLIN | POLLHUP | POLLERR)) {
+      size_t received = 0;
+      int read_result =
+        SSL_read_ex(tunnel->ssl, inbound + inbound_length, 131072 - inbound_length, &received);
+      if (read_result == 1 && received > 0) {
+        inbound_length += received;
+        size_t offset = 0;
+        while (offset + 40 <= inbound_length) {
+          size_t payload = ((size_t)inbound[offset + 4] << 8) | inbound[offset + 5];
+          size_t packet_length = 40 + payload;
+          if (packet_length > inbound_length - offset) {
+            break;
+          }
+          ssize_t packet_written = write(tun_fd, inbound + offset, packet_length);
+          if (packet_written != (ssize_t)packet_length) {
+            result = STUPID_APP_COREDEVICE_TLS_TUNNEL_WRITE_FAILED;
+            offset = inbound_length;
+            break;
+          }
+          offset += packet_length;
+        }
+        if (offset < inbound_length) {
+          memmove(inbound, inbound + offset, inbound_length - offset);
+          inbound_length -= offset;
+        } else {
+          inbound_length = 0;
+        }
+      } else if (read_result == 0) {
+        break;
+      } else {
+        int error = SSL_get_error(tunnel->ssl, read_result);
+        if (error != SSL_ERROR_WANT_READ && error != SSL_ERROR_WANT_WRITE) {
+          result = STUPID_APP_COREDEVICE_TLS_TUNNEL_READ_FAILED;
+          break;
+        }
+      }
+    }
+
+    // Host -> device.
+    if (descriptors[1].revents & (POLLIN | POLLHUP | POLLERR)) {
+      ssize_t packet_length = read(tun_fd, outbound, 65536);
+      if (packet_length > 0) {
+        size_t offset = 0;
+        while (offset < (size_t)packet_length) {
+          size_t written_chunk = 0;
+          int write_result = SSL_write_ex(
+            tunnel->ssl, outbound + offset, (size_t)packet_length - offset, &written_chunk);
+          if (write_result == 1 && written_chunk > 0) {
+            offset += written_chunk;
+            continue;
+          }
+          int error = SSL_get_error(tunnel->ssl, write_result);
+          if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE) {
+            short events = error == SSL_ERROR_WANT_READ ? POLLIN : POLLOUT;
+            int64_t write_deadline;
+            int64_t write_now = monotonic_milliseconds();
+            if (write_now < 0 || tunnel->timeout_milliseconds > INT64_MAX - write_now) {
+              result = STUPID_APP_COREDEVICE_TLS_TUNNEL_CONFIGURATION_FAILED;
+              offset = (size_t)packet_length;
+              break;
+            }
+            write_deadline = write_now + tunnel->timeout_milliseconds;
+            if (tunnel_wait_for_socket(tunnel, tunnel->socket_fd, events, write_deadline) !=
+                STUPID_APP_COREDEVICE_TLS_TUNNEL_OK) {
+              result = STUPID_APP_COREDEVICE_TLS_TUNNEL_TIMED_OUT;
+              offset = (size_t)packet_length;
+              break;
+            }
+            continue;
+          }
+          result = STUPID_APP_COREDEVICE_TLS_TUNNEL_WRITE_FAILED;
+          offset = (size_t)packet_length;
+          break;
+        }
+      } else if (packet_length < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+        result = STUPID_APP_COREDEVICE_TLS_TUNNEL_READ_FAILED;
+        break;
+      }
+    }
+  }
+  free(inbound);
+  free(outbound);
+  return result;
+}
+
+void stupid_app_coredevice_tls_tunnel_cancel(stupid_app_coredevice_tls_tunnel *tunnel) {
+  if (tunnel == NULL) {
+    return;
+  }
+  atomic_store(&tunnel->cancelled, true);
+  pthread_mutex_lock(&tunnel->socket_mutex);
+  int socket_fd = tunnel->socket_fd;
+  if (socket_fd >= 0) {
+    shutdown(socket_fd, SHUT_RDWR);
+  }
+  pthread_mutex_unlock(&tunnel->socket_mutex);
+}
+
+void stupid_app_coredevice_tls_tunnel_destroy(stupid_app_coredevice_tls_tunnel *tunnel) {
+  if (tunnel == NULL) {
+    return;
+  }
+  if (tunnel->ssl != NULL) {
+    SSL_free(tunnel->ssl);
+  }
+  if (tunnel->context != NULL) {
+    SSL_CTX_free(tunnel->context);
+  }
+  tunnel_close_socket(tunnel);
+  pthread_mutex_destroy(&tunnel->socket_mutex);
+  free(tunnel);
+}

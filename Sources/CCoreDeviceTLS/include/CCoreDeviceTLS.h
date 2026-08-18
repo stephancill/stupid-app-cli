@@ -45,4 +45,29 @@ void stupid_app_coredevice_tls_cancel(stupid_app_coredevice_tls_connection *conn
 void stupid_app_coredevice_tls_destroy(stupid_app_coredevice_tls_connection *connection);
 int stupid_app_coredevice_tls_validate_openssl(void);
 
+// A persistent CoreDevice remote-pairing TCP tunnel. After connect it retains
+// the live SSL connection so IPv6 packets can be relayed to a TUN device.
+typedef struct stupid_app_coredevice_tls_tunnel stupid_app_coredevice_tls_tunnel;
+
+int stupid_app_coredevice_tls_tunnel_connect(
+  const char *host,
+  uint16_t port,
+  const uint8_t *psk,
+  size_t psk_length,
+  int timeout_milliseconds,
+  uint8_t *handshake_response,
+  size_t handshake_capacity,
+  size_t *handshake_length,
+  stupid_app_coredevice_tls_tunnel **tunnel
+);
+
+int stupid_app_coredevice_tls_tunnel_relay(
+  stupid_app_coredevice_tls_tunnel *tunnel,
+  int tun_fd,
+  volatile int *stop
+);
+
+void stupid_app_coredevice_tls_tunnel_cancel(stupid_app_coredevice_tls_tunnel *tunnel);
+void stupid_app_coredevice_tls_tunnel_destroy(stupid_app_coredevice_tls_tunnel *tunnel);
+
 #endif
