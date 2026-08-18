@@ -14,9 +14,9 @@ The accepted app icon uses the native `Assets.car` writer with Apple's pinned LZ
 reference encoder and `actool`-matching icon metadata.
 Development signing, USB installation, CoreDevice pairing, and three consecutive
 unplugged network install-and-launch runs are proven on a physical iPhone. The native
-`device pair --usb` and native USB launch are proven; the native `run --network` path is
-currently blocked by a device-side rejection of the RSD connection over the native
-network tunnel (see `docs/implementation-notes.md`).
+`device pair --usb`, native USB launch, and the fully native `run --network` path are
+qualified end-to-end without Python; see `docs/implementation-notes.md` for the
+investigation that resolved the network-run relay defect.
 
 ## Package layout
 
@@ -46,6 +46,7 @@ network tunnel (see `docs/implementation-notes.md`).
 - `docs/sdk-export-format.md` — the SDK bundle archive and manifest specification.
 - `docs/engineering-handover.md` — the maintained engineering source of truth.
 - `docs/implementation-notes.md` — the chronological engineering log.
+- `docs/clean-host-setup.md` — clean-host setup and recovery procedures.
 
 ## Commands
 
@@ -64,6 +65,7 @@ stupid-app run --usb                Build, sign, install, and launch over USB
 stupid-app run --network --udid ... Build, sign, install, and launch over the network
 stupid-app release archive         Build, sign (once, no timestamps), package the IPA
 stupid-app release upload --wait   Upload the IPA and wait for internal TestFlight
+stupid-app release status          Report the last release's recorded or live state
 ```
 
 `stupid-app doctor` exits unsuccessfully when a required host dependency is invalid

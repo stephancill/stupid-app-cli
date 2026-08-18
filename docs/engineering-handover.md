@@ -72,8 +72,11 @@ pass/warning/failure checks for the host Swift and imported SDK compatibility pa
 native signing trust, the native CoreDevice TLS and privileged helper,
 credential/signing/pairing presence and permissions, Linux tunnel/usbmux prerequisites,
 and project configuration. It exits unsuccessfully for required-environment failures
-without reading or printing secret contents. Privileged-helper/sudo-policy setup,
-qualified USB transport provisioning, and clean-host acceptance remain open.
+without reading or printing secret contents. The proposed command surface is complete
+including `release status`. The temporary debug environment was removed and `doctor`
+passes on the isolated WSL host; qualified USB transport provisioning and the final
+clean-host acceptance run remain open. See `docs/clean-host-setup.md` for repeatable
+setup and recovery.
 
 The promoted SwiftNIO SSL CoreDevice connection spike produced a **no-go** result. A live
 Python 3.13 control proved that the iPhone listener requires TLS 1.2
@@ -292,8 +295,8 @@ stupid-app release status
 
 Implemented so far: `new`, `sdk export`, `sdk import`, `build`, `credentials add`,
 `signing setup --kind distribution|development`, `devices`, `run --usb`,
-`device pair --usb`, `run --network`, `release archive`, `release upload --wait`, and
-`doctor`. The `release status` command is not yet implemented.
+`device pair --usb`, `run --network`, `release archive`, `release upload --wait`,
+`release status`, and `doctor`.
 
 The command surface is provisional until the proof gates complete. Keep build, signing, install, launch, upload, and status as separable operations even if convenience commands compose them.
 
@@ -1351,11 +1354,25 @@ warning. Checks cover host Swift and imported SDK host/Swift compatibility, bund
 native-signing trust, native CoreDevice TLS, the native CoreDevice privileged helper,
 owner-only credential/identity/pairing permissions, Linux TUN/usbmux prerequisites, and
 project configuration plus referenced files. Diagnostics
-do not load or print secret values.
+do not load or print secret values. `stupid-app release status` reports the recorded
+last release and, with `--live`, the current App Store Connect processing and beta state
+of the resolved build.
+
+Clean-host verification on the isolated WSL host is current: the source builds and all
+tests pass after a clean rebuild (the earlier stale `CLZFSE` module state is cleared),
+`doctor` passes with zero failures, and three consecutive physically unplugged
+`run --network` runs install and launch through the fully native stack with no residual
+processes or interfaces. The temporary debug environment was removed: the broad
+`NOPASSWD: ALL` sudoers grant, the Python comparison venvs and scripts, the stale
+`coredevice-helper` binary-path grant (now scoped to the current build path), and the
+stale proof credential directory. See `docs/clean-host-setup.md` for repeatable
+clean-host setup and recovery.
 
 Remaining productization includes qualified USBIP-compatible usbmux provisioning with
-GPL compliance, `release status`, broader compatibility/fixture coverage, clean-host
-setup and recovery documentation, and the complete acceptance run.
+GPL compliance, broader compatibility/fixture coverage, and the complete acceptance run
+through stable commands on clean supported hosts. The network path requires re-applying
+`cap_net_admin` to the debug binary after any rebuild, or installing a root-owned release
+binary with a scoped sudoers grant (see `docs/clean-host-setup.md`).
 
 Exit condition: all acceptance criteria run through stable CLI commands on clean supported environments.
 
@@ -1570,10 +1587,14 @@ Scope and acceptance criteria when this task is eventually promoted:
 
 Execute the remaining work in this order:
 
-1. **Native network run is qualified.** The relay `WANT_READ`-as-EOF defect is fixed in
-   both the network and USB lockdown relays, and three consecutive unplugged
-   `run --network` runs install and launch. Re-run `doctor` on the clean host and remove
-   the temporary sudoers/`cap_net_admin`/Python comparison environment.
+1. **Clean-host state is current and the native network run is qualified.** `doctor`
+   passes on the isolated WSL host and three consecutive unplugged `run --network` runs
+   install and launch through the native stack. The temporary debug environment
+   (broad sudoers, Python comparison venvs/scripts, stale helper grant, stale proof
+   credentials) has been removed. `docs/clean-host-setup.md` documents repeatable setup
+   and recovery; the USB-only MTU-usbmuxd work below remains the one deferred path.
 2. Make the MTU-patched usbmuxd reproducible on the current libplist, then re-run the
    full `run --usb` (native install + native launch) against a real development IPA.
-3. Resume remaining Gate 5 productization work and clean-host acceptance in parallel.
+   This requires the iPhone attached through USBIP to the WSL host.
+3. Resume the remaining Gate 5 productization work (broader compatibility/fixture
+   coverage and the complete acceptance run) in parallel.

@@ -11,7 +11,9 @@ struct ReleaseCommand: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "release",
     abstract: "Distribution build, signing, and upload operations.",
-    subcommands: [ReleaseArchiveCommand.self, ReleaseUploadCommand.self]
+    subcommands: [
+      ReleaseArchiveCommand.self, ReleaseUploadCommand.self, ReleaseStatusCommand.self,
+    ]
   )
 }
 

@@ -58,7 +58,10 @@ struct CoreDeviceTLSConnectionTests {
         preSharedKey: Data(repeating: 7, count: 32)
       )
     }
-    #expect(start.duration(to: clock.now) < .seconds(2))
+    // The C deadline fires at ~250 ms; the wall-clock bound must tolerate global
+    // queue dispatch delay under full-suite parallel load (isolation ~0.25 s) while
+    // still failing if the deadline were ever removed or raised to the default.
+    #expect(start.duration(to: clock.now) < .seconds(10))
   }
 
   @Test("task cancellation interrupts an in-flight TLS exchange")
