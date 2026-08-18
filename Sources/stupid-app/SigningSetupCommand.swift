@@ -1,6 +1,8 @@
 import ArgumentParser
+import Crypto
 import Foundation
 import ASCKit
+import ProjectCore
 import SigningKit
 
 /// `stupid-app signing`: manage signing identities, profiles, and certificate setup.
@@ -12,12 +14,14 @@ struct SigningCommand: AsyncParsableCommand {
     )
 }
 
-/// `stupid-app signing setup`: creates distribution or development identities and
-/// provisioning profiles through the App Store Connect public API.
+/// `stupid-app signing setup`: one-stop credential and signing bootstrap. Creates or
+/// imports distribution and development identities and provisioning profiles through
+/// the App Store Connect public API, and optionally stores credentials and reuses
+/// Xcode-managed identities.
 struct SigningSetupCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "setup",
-        abstract: "Create or import an Apple signing identity and provisioning profile."
+        abstract: "Bootstrap credentials and provisioning from a single App Store Connect key."
     )
 
     enum Kind: String, CaseIterable, ExpressibleByArgument {
@@ -25,11 +29,11 @@ struct SigningSetupCommand: AsyncParsableCommand {
         case development
     }
 
-    @Option(name: .customLong("kind"), help: "signing kind: distribution or development.")
-    var kind: Kind = .distribution
+    @Option(name: .customLong("kind"), help: "Signing kind to provision (repeatable; defaults to both distribution and development).")
+    var kinds: [Kind] = []
 
-    @Option(name: .customLong("bundle-id"), help: "Exact bundle identifier to provision.")
-    var bundleID: String?
+    @Option(name: .customLong("bundle-id"), help: "Exact bundle identifier to provision (repeatable).")
+    var bundleIDs: [String] = []
 
     @Option(name: .customLong("profile-name"), help: "Provisioning profile name prefix (defaults to bundle ID).")
     var profileName: String?
@@ -49,15 +53,40 @@ struct SigningSetupCommand: AsyncParsableCommand {
     @Option(name: .customLong("cert-id"), help: "App Store Connect certificate resource ID when importing an existing identity.")
     var importCertID: String?
 
+    @Flag(name: .customLong("from-xcode"), help: "Reuse an existing signing identity and profile already managed by Xcode (macOS only).")
+    var fromXcode: Bool = false
+
+    @Option(name: .customLong("key-id"), help: "App Store Connect API key ID (stored when provided).")
+    var keyID: String?
+
+    @Option(name: .customLong("issuer-id"), help: "App Store Connect issuer ID (stored when provided).")
+    var issuerID: String?
+
+    @Option(name: .customLong("p8"), help: "Path to the App Store Connect .p8 API key file (stored when provided).")
+    var p8Path: String?
+
+    @Option(name: .customLong("team-id"), help: "Apple Developer Team ID (stored when provided).")
+    var teamID: String?
+
     @Option(name: .customLong("home"), help: "Credential store directory.")
     var home: String?
 
     mutating func run() async throws {
-        let context = try ASCContext.resolve(home: home, purpose: "signing setup")
-        let operations = context.operations()
-        let identityManager = IdentityManager(store: context.credentialStore)
+        // Store the App Store Connect key and team ID when supplied, so a fresh user
+        // needs no separate `credentials add`.
+        if keyID != nil || issuerID != nil || p8Path != nil {
+            var credentials = CredentialsAddCommand()
+            credentials.keyID = keyID
+            credentials.issuerID = issuerID
+            credentials.p8Path = p8Path
+            credentials.teamID = teamID
+            credentials.home = home
+            try await credentials.run()
+        }
 
-        guard let bundleID else {
+        let effectiveKinds = kinds.isEmpty ? [Kind.distribution, Kind.development] : kinds
+        let bundles = try resolveBundleIDs()
+        guard !bundles.isEmpty else {
             throw SigningSetupError.bundleIDRequired
         }
 
@@ -66,21 +95,44 @@ struct SigningSetupCommand: AsyncParsableCommand {
             throw SigningSetupError.partialImport
         }
 
-        switch kind {
-        case .distribution:
-            try runDistribution(
-                operations: operations,
-                identityManager: identityManager,
-                context: context,
-                bundleID: bundleID
-            )
-        case .development:
-            try runDevelopment(
-                operations: operations,
-                identityManager: identityManager,
-                context: context,
-                bundleID: bundleID
-            )
+        if fromXcode {
+            let context = try optionalASCContext()
+            for kind in effectiveKinds {
+                for bundleID in bundles {
+                    try runFromXcode(kind: kind, bundleID: bundleID, context: context)
+                }
+            }
+            return
+        }
+
+        let context = try ASCContext.resolve(home: home, purpose: "signing setup")
+        let operations = context.operations()
+        let identityManager = IdentityManager(store: context.credentialStore)
+
+        for kind in effectiveKinds {
+            for bundleID in bundles {
+                switch kind {
+                case .distribution:
+                    try runDistribution(
+                        operations: operations,
+                        identityManager: identityManager,
+                        context: context,
+                        bundleID: bundleID
+                    )
+                case .development:
+                    guard let deviceUDID else {
+                        print("Skipped development setup for \(bundleID): provide --udid to register a device.")
+                        continue
+                    }
+                    try runDevelopment(
+                        operations: operations,
+                        identityManager: identityManager,
+                        context: context,
+                        bundleID: bundleID,
+                        deviceUDID: deviceUDID
+                    )
+                }
+            }
         }
     }
 
@@ -163,15 +215,13 @@ struct SigningSetupCommand: AsyncParsableCommand {
         operations: ASCOperations,
         identityManager: IdentityManager,
         context: ASCContext,
-        bundleID: String
+        bundleID: String,
+        deviceUDID: String
     ) throws {
         // 1. Bundle ID and physical device.
         let bundleResourceID = try operations.getOrCreateBundleID(name: bundleID, identifier: bundleID)
         print("Bundle ID \(bundleID) -> \(bundleResourceID)")
 
-        guard let deviceUDID else {
-            throw SigningSetupError.udidRequired
-        }
         let device = try operations.getOrRegisterDevice(udid: deviceUDID, name: deviceName ?? "iPhone")
         print("Device \(device.id) (\(device.udid ?? deviceUDID))")
 
@@ -253,6 +303,140 @@ struct SigningSetupCommand: AsyncParsableCommand {
         return data
     }
 
+    // MARK: - Xcode credential reuse
+
+    /// Returns the explicitly-supplied bundle IDs, or the bundle ID from a
+    /// `stupid-app.yml` present in the current directory when none were supplied.
+    private func resolveBundleIDs() throws -> [String] {
+        if !bundleIDs.isEmpty { return bundleIDs }
+        let configURL = URL(fileURLWithPath: "stupid-app.yml")
+        guard let data = try? Data(contentsOf: configURL) else { return [] }
+        let config = try AppConfig.decode(data)
+        return [config.bundleID]
+    }
+
+    private func optionalASCContext() throws -> ASCContext? {
+        let homePath = home ?? FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".stupid-app/credentials").path
+        let store = CredentialStore(home: URL(fileURLWithPath: homePath))
+        guard let teamID = try? store.loadTeamID(), let key = try? store.loadASCKey() else { return nil }
+        return ASCContext(apiKey: key, teamID: teamID, homeURL: store.home, credentialStore: store)
+    }
+
+    /// Imports an existing identity and exact provisioning profile for a kind and
+    /// bundle from the user's Xcode-managed Keychain and profile folder (macOS only).
+    private func runFromXcode(kind: Kind, bundleID: String, context: ASCContext?) throws {
+        #if canImport(Darwin)
+        let importKind: XcodeCredentialImporter.SigningKind =
+            kind == .distribution ? .distribution : .development
+
+        let homeURL = URL(fileURLWithPath: home ?? FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".stupid-app/credentials").path)
+        let store = CredentialStore(home: homeURL)
+        let identityManager = IdentityManager(store: store)
+
+        let identities = try XcodeCredentialImporter.listIdentities(kind: importKind)
+        guard !identities.isEmpty else {
+          throw SigningSetupError.noXcodeIdentity(kind.rawValue)
+        }
+
+        let profilesDirectory = XcodeCredentialImporter.xcodeProfilesDirectory()
+
+        // Prefer an identity that already has an exact profile for the bundle ID, so
+        // the imported profile certifies the imported certificate.
+        var chosen = identities[0]
+        if identities.count > 1,
+           let match = identities.first(where: {
+               XcodeCredentialImporter.selectProfileURL(
+                   from: profilesDirectory, bundleID: bundleID, kind: importKind,
+                   certSHA1: $0.sha1, teamID: $0.teamID
+               ) != nil
+           }) {
+            chosen = match
+        }
+
+        let extracted = try XcodeCredentialImporter.extract(sha1: chosen.sha1)
+        guard let teamID = chosen.teamID, !teamID.isEmpty else {
+            throw SigningSetupError.teamIDMissingFromIdentity
+        }
+        guard let profileURL = XcodeCredentialImporter.selectProfileURL(
+            from: profilesDirectory, bundleID: bundleID, kind: importKind,
+            certSHA1: chosen.sha1, teamID: teamID
+        ) else {
+            throw SigningSetupError.noXcodeProfile(bundleID, kind.rawValue)
+        }
+
+        let certificateID = try resolveCertificateID(
+            context: context, kind: kind, certPEM: extracted.certPEM
+        )
+
+        switch importKind {
+        case .distribution:
+            try identityManager.storeDistribution(
+                privateKeyPEM: extracted.keyPEM,
+                certificatePEM: extracted.certPEM,
+                certificateID: certificateID,
+                teamID: teamID
+            )
+        case .development:
+            try identityManager.storeDevelopment(
+                privateKeyPEM: extracted.keyPEM,
+                certificatePEM: extracted.certPEM,
+                certificateID: certificateID,
+                teamID: teamID
+            )
+        }
+        print("Imported \(kind.rawValue) identity from Xcode (\(chosen.commonName))")
+
+        // Copy the original signed profile bytes so the embedded profile is unchanged.
+        let profileName = kind == .distribution ? "\(bundleID) AppStore" : "\(bundleID) Development"
+        let stored = try copyProfile(from: profileURL, profileName: profileName, home: homeURL)
+        print("Stored provisioning profile for \(bundleID) at \(stored.path)")
+
+        if certificateID == nil {
+            print("NOTE: no App Store Connect key is stored; certificate ID was not resolved. `release upload` and new-profile creation will need `stupid-app credentials add` first.")
+        }
+        #else
+        throw SigningSetupError.unsupported("`--from-xcode` is only available on macOS with Xcode-managed signing credentials.")
+        #endif
+    }
+
+    /// Resolves an App Store Connect certificate resource ID by matching the imported
+    /// certificate's content fingerprint, when an ASC context is available.
+    private func resolveCertificateID(
+        context: ASCContext?,
+        kind: Kind,
+        certPEM: String
+    ) throws -> String? {
+        guard let context else { return nil }
+        let certificateType = kind == .distribution ? "DISTRIBUTION" : "DEVELOPMENT"
+        let remoteCertificates = try context.operations().listCertificates(certificateType: certificateType)
+        let localDER = try base64Data(certPEM)
+        let localFingerprint = SHA256(data: localDER)
+        for certificate in remoteCertificates {
+            let remoteDER = try base64Data(certificate.certificateContentBase64)
+            if SHA256(data: remoteDER) == localFingerprint {
+                return certificate.id
+            }
+        }
+        return nil
+    }
+
+    private func SHA256(data: Data) -> String {
+        Crypto.SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Copies a `.mobileprovision` file into the store's `profiles/` directory at the
+    /// deterministic path used by `run` and `release archive`.
+    private func copyProfile(from source: URL, profileName: String, home: URL) throws -> URL {
+        let profilesDir = home.appendingPathComponent("profiles", isDirectory: true)
+        try FileManager.default.createDirectory(at: profilesDir, withIntermediateDirectories: true)
+        let url = profilesDir.appendingPathComponent("\(profileName).mobileprovision")
+        try FileManager.default.copyItem(at: source, to: url)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        return url
+    }
+
     private func storeProfile(_ data: Data, profileName: String, home: URL) throws {
         let profilesDir = home.appendingPathComponent("profiles", isDirectory: true)
         try FileManager.default.createDirectory(at: profilesDir, withIntermediateDirectories: true)
@@ -269,6 +453,9 @@ enum SigningSetupError: Error, CustomStringConvertible {
     case storedIdentityMissingCertID
     case partialImport
     case udidRequired
+    case noXcodeIdentity(String)
+    case teamIDMissingFromIdentity
+    case noXcodeProfile(String, String)
 
     var description: String {
         switch self {
@@ -282,6 +469,12 @@ enum SigningSetupError: Error, CustomStringConvertible {
             return "Importing requires all of --import-key, --import-cert, and --cert-id."
         case .udidRequired:
             return "Development setup requires --udid to register the physical device."
+        case let .noXcodeIdentity(kind):
+            return "No '\(kind)' signing identity was found in the login Keychain. Add one in Xcode (Accounts -> Apple ID -> Manage Certificates) and rerun."
+        case .teamIDMissingFromIdentity:
+            return "The selected Keychain identity has no Team ID in its common name; provide one via `credentials add --team-id` and rerun."
+        case let .noXcodeProfile(bundleID, kind):
+            return "No '\(kind)' provisioning profile for '\(bundleID)' is installed for the selected identity. Generate one in Xcode and rerun."
         }
     }
 }

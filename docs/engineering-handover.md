@@ -171,6 +171,147 @@ project-level configuration file is `stupid-app.yml`, the SDK artifact ID is
 rather than a standalone executable. The WSL distribution name `iosdev-ubuntu` remains
 unchanged.
 
+## Next Priority: One-Step Credential Bootstrap And Xcode Credential Reuse
+
+Status: **implemented** (`stupid-app signing setup` as the single provisioning command,
+including `--from-xcode`), with a clean-host macOS proof still open. See the
+"Implementation Notes" subsection and `docs/implementation-notes.md`. This is the next
+implementation priority after the current productization work. It reduces the credential
+setup burden and reuses signing credentials the user has already configured in Xcode.
+
+### Motivation
+
+Xcode bootstraps signing from a single sign-in: with an Apple ID session and
+"Automatically manage signing", every signing credential is derived and persisted in
+well-known locations — certificates and private keys as codesigning identities in the
+login Keychain (item CN `Apple Development:` / `Apple Distribution:`), provisioning
+profiles in `~/Library/MobileDevice/Provisioning Profiles/*.mobileprovision`, and App
+IDs/capabilities/devices in the Developer portal.
+
+`stupid-app` cannot replicate the Apple-ID sign-in because the product invariant forbids
+private Apple authentication and mandates App Store Connect team API keys plus public
+APIs. One credential is therefore irreducible: the user must generate a single ASC team
+API key (`.p8`) once. Everything else is derived automatically by
+`stupid-app signing setup`, which is now the single provisioning command (the separate
+`setup` bootstrap was collapsed into it).
+
+### Command Surface
+
+```text
+stupid-app signing setup [--key-id --issuer-id --p8 --team-id] [--bundle-id ...] [--kind ...]
+                         [--udid ...] [--from-xcode]
+```
+
+- `signing setup` is the one-stop credential and signing bootstrap. When ASC credential
+  options are provided (`--key-id`, `--issuer-id`, `--p8`, `--team-id`), it stores them
+  first (no separate `credentials add` needed); otherwise it uses the already-stored App
+  Store Connect key. It then provisions the requested `--kind`(s) (default both
+  distribution and development) for each `--bundle-id` (repeatable).
+- `--bundle-id` may be omitted when the command is run from a project directory
+  containing `stupid-app.yml`; the bundle ID is then read from that configuration file.
+- Development setup runs only when `--udid` is provided (as a device must be
+  registered); otherwise it is skipped with a note.
+- The only manual input a fresh user creates is the single ASC `.p8` plus its IDs; every
+  certificate, profile, and device registration step derives from it through the public
+  API. Team ID is normally a flag but auto-derives from an imported Xcode profile when
+  combined with `--from-xcode`.
+
+  **Where to obtain each credential (fresh user):**
+
+  1. **App Store Connect API key (`.p8`, plus its Key ID and Issuer ID)** — the one
+     manual credential. Sign in to App Store Connect and open
+     <https://appstoreconnect.apple.com/access/api> (Users and Access → Integrations →
+     App Store Connect API → Generate API Key). Create a key with App Manager or Admin
+     (Admin covers all operations; the minimum required role is narrowed empirically).
+     After generation, App Store Connect shows the **Key ID** and **Issuer ID** and
+     offers a one-time download of the `.p8` file. Download and keep the `.p8` private;
+     it cannot be downloaded again. Requires a paid Apple Developer Program membership.
+  2. **Developer Team ID (10-character, e.g. `<team-identifier>`)** — sign in to
+     <https://developer.apple.com/account> and open **Membership Details**; the Team ID
+     is shown there. On macOS with Xcode configured, `signing setup --from-xcode`
+     derives it automatically instead.
+  3. **Bundle IDs** — supplied by the user as `--bundle-id`, or read from `stupid-app.yml`.
+
+  Feed these to `stupid-app signing setup` as `--key-id`, `--issuer-id`, `--p8 <path>`,
+  and `--team-id` (or via the `ASC_API_KEY_ID`, `ASC_API_ISSUER_ID`, `ASC_API_KEY_PATH`,
+  and `DEVELOPER_TEAM_ID` environment variables).
+- `signing setup --from-xcode` is macOS/Xcode-present-only. It:
+  1. Enumerates codesigning identities via `security find-identity -v -p codesigning`,
+     matches by purpose (CN prefix), and prefers the identity whose CN team matches the
+     target.
+  2. Extracts the identity to PEM (certificate via `security find-certificate -c`; private
+     key via `security export -t identities -f pkcs12` split through `openssl pkcs12`).
+     Keychain export policy: try a non-interactive export first so an already-authorized
+     or `sudo` run succeeds, and only invoke the interactive Keychain authorization dialog
+     when the item is access-restricted. Temp p12 lives in a `0700` temp directory and is
+     deleted; credential material is never logged.
+  3. Stores key and certificate via the existing `IdentityManager`
+     `storeDevelopment`/`storeDistribution` (atomic, `0600`). Signing continues to use the
+     project-owned native signer from the permission-hardened store; the Keychain is never
+     a signing-time dependency.
+  4. Derives the team ID from the certificate or the matched profile's `TeamIdentifier`.
+  5. Selects the exact `--bundle-id` provisioning profile from
+     `~/Library/MobileDevice/Provisioning Profiles` using `MobileProvisionParser`
+     (application-identifier equals the bundle ID, kind matches, and certificate
+     fingerprint matches the identity) and stores it in `profiles/`.
+  6. When an ASC key is present, resolves the identity's App Store Connect
+     `certificateID` by fingerprint via `GET /v1/certificates`; otherwise stores nil
+     (sufficient for local build/run/release-archive; `release upload` requires an
+     ASC-keyed step and fails loudly otherwise).
+  7. Fails loudly on non-macOS or Xcode-absent hosts and when the exact bundle ID has no
+     matching profile.
+
+### Scope Boundaries
+
+- Xcode reuse is a one-time import of the user's own existing identities via the public
+  `security` and `openssl` tools and the public ASC API. It adds no private Apple
+  authentication.
+- This deliberately extends the macOS non-goal in
+  `docs/macos-host-support-scope.md` (which excludes Keychain identities as a *signing
+  kernel* at runtime). The Keychain is consulted only to import material once; the native
+  signer remains the only signing engine and the hardened credential store remains the
+  only persisted credential location.
+- Exported material is written atomically with mode `0600`; temporary p12 files are
+  cleaned up and never appear in logs, manifests, or commits.
+
+### Implementation Notes
+
+- New `Sources/SigningKit/XcodeCredentialImporter.swift` for keychain enumeration,
+  export, and exact profile selection; reuse `MobileProvisionParser`, `IdentityManager`,
+  and `CredentialStore`.
+- `Sources/stupid-app/SigningSetupCommand.swift` is the single provisioning command: it
+  stores credentials when supplied, provisions multiple `--kind`s and `--bundle-id`s,
+  defaults the bundle ID from `stupid-app.yml` when omitted, and supports `--from-xcode`.
+  The short-lived separate `Sources/stupid-app/SetupCommand.swift` was folded into it and
+  removed.
+- `IdentityManager.storeDevelopment`/`storeDistribution` accept an optional
+  `certificateID` so an imported identity without an App Store Connect key is
+  representable.
+- `ASCOperations.listCertificates(certificateType:)` resolves an imported identity's App
+  Store Connect certificate ID by content fingerprint.
+
+### Verified Behavior And Environment Findings
+
+- Keychain identities are enumerated with `security find-identity` (default search list,
+  not a single keychain, which would return a different subset) and must not be exported
+  through `SecKeyCopyExternalRepresentation` (returns empty for Keychain keys). The
+  private key is recovered by exporting identities from every accessible search-list
+  Keychain as PKCS#12 and matching the chosen certificate by RSA modulus, tolerating
+  non-RSA keys and locked/password-protected Keychains (skipped, with an actionable
+  error when no key matches).
+- Xcode-managed `.mobileprovision` files omit `ProfileType` (they carry
+  `IsXcodeManaged`); the signing kind is inferred from the profile's `get-task-allow`
+  entitlement, falling back to the provisioned-device list.
+- On this Mac, `--from-xcode --kind distribution` correctly fails loudly: the matching
+  distribution private key lives in a password-protected project `build.keychain` and
+  cannot be extracted, and no development profile for the development identity exists in
+  `~/Library/MobileDevice/Provisioning Profiles`. Both are environment-specific, not
+  code defects. A clean-host macOS proof (identity in an unlocked Keychain plus a
+  matching Xcode-managed profile) is still required.
+- Regression tests cover identity-line parsing, team-ID derivation, and exact profile
+  selection with sanitized fixtures and no credentials (`XcodeCredentialImporterTests`,
+  7 tests).
+
 ## Product Goal
 
 Create a CLI that supports a complete iOS application workflow without requiring Xcode or a Mac during normal development and release operations:

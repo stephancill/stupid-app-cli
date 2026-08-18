@@ -18,6 +18,13 @@ unplugged network install-and-launch runs are proven on a physical iPhone. The n
 qualified end-to-end without Python; see `docs/implementation-notes.md` for the
 investigation that resolved the network-run relay defect.
 
+macOS host support is implemented through Gate M3: the Xcode-present build path, the
+`simctl` simulator run loop (`stupid-app run --simulator`), a macOS-produced distribution
+release qualified through TestFlight, and Xcode-present physical-device deployment. A
+single `stupid-app signing setup` command bootstraps all signing credentials from one App
+Store Connect API key and can reuse the identities and provisioning profiles Xcode already
+manages on macOS (`--from-xcode`).
+
 ## Package layout
 
 - `Sources/SDKCore` — cross-platform primitives: SHA-256 wrapper (`swift-crypto`),
@@ -57,16 +64,42 @@ stupid-app sdk export ...          (macOS) export a device-only Swift SDK bundle
 stupid-app sdk import <archive>    (Linux) validate and install an SDK bundle
 stupid-app build                   Build an unsigned iOS .app with the imported SDK
 stupid-app credentials add         Store ASC API key + team ID (0600 files)
-stupid-app signing setup --kind distribution   Provision a distribution identity + profile
-stupid-app signing setup --kind development    Provision a development identity + profile
+stupid-app signing setup [...]     Bootstrap credentials + provision identities/profiles (see below)
 stupid-app devices                  List App Store Connect devices
 stupid-app device pair --usb        Pair lockdown natively, then bootstrap CoreDevice pairing
 stupid-app run --usb                Build, sign, install, and launch over USB
 stupid-app run --network --udid ... Build, sign, install, and launch over the network
-stupid-app release archive         Build, sign (once, no timestamps), package the IPA
-stupid-app release upload --wait   Upload the IPA and wait for internal TestFlight
-stupid-app release status          Report the last release's recorded or live state
+stupid-app run --simulator [--udid] Build, sign, install, and launch in a simulator (Xcode-present)
+stupid-app simulators               List simulator runtimes and devices
+stupid-app release archive          Build, sign (once, no timestamps), package the IPA
+stupid-app release upload --wait    Upload the IPA and wait for internal TestFlight
+stupid-app release status           Report the last release's recorded or live state
 ```
+
+`stupid-app signing setup` is the one-stop provisioning command:
+
+```bash
+# Fresh user: single ASC key bundles credentials + distribution + development provisioning
+stupid-app signing setup --key-id <id> --issuer-id <id> --p8 <key.p8> --team-id <TEAM> \
+  --bundle-id net.example.app --udid <device-udid>
+
+# From a project directory, the bundle ID is read from stupid-app.yml (--bundle-id optional)
+stupid-app signing setup --kind distribution --udid <device-udid>
+
+# Reuse an identity/profile Xcode already manages (macOS)
+stupid-app signing setup --kind distribution --from-xcode
+```
+
+- `--kind` is repeatable and defaults to both `distribution` and `development` when
+  omitted; `--bundle-id` is repeatable and, when omitted, is read from `stupid-app.yml`
+  in the current directory.
+- Credential options (`--key-id`, `--issuer-id`, `--p8`, `--team-id`) store the App Store
+  Connect key and team ID when supplied, so a fresh user may skip a separate
+  `credentials add`.
+- Development provisioning runs only when `--udid` is provided (a physical device must
+  be registered); otherwise it is skipped with a note.
+- `--from-xcode` (macOS only) imports an existing Keychain identity and the exact
+  Xcode-managed provisioning profile for the bundle instead of minting new credentials.
 
 `stupid-app doctor` exits unsuccessfully when a required host dependency is invalid
 and reports incomplete credentials, signing identities, pairing, or project context as
@@ -77,8 +110,9 @@ checks owner-only credential and pairing-record modes without reading or printin
 contents, and validates project configuration plus referenced files when run in a
 project directory.
 
-CoreDevice tunneling requires `/dev/net/tun` and `CAP_NET_ADMIN`. The CLI never
-elevates implicitly: run an already-privileged helper or pass an explicit `--sudo`
+CoreDevice tunneling requires `/dev/net/tun` and `CAP_NET_ADMIN` on Linux (a `utun`
+kernel-control socket on macOS). The CLI never elevates implicitly: run an
+already-privileged helper or pass an explicit `--sudo`
 path. Production setup should install the helper root-owned and grant only that exact
 command in sudoers. Pairing records are stored under the permission-
 hardened credential directory.

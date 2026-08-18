@@ -206,6 +206,38 @@ public struct ASCOperations: Sendable {
         try listCertificateIDs(certificateType: "DISTRIBUTION")
     }
 
+    /// Fetches full certificate resources (ID, serial number, content) for an exact
+    /// certificate type. Used to match a locally held identity to its App Store
+    /// Connect certificate by content fingerprint.
+    public func listCertificates(certificateType: String) throws -> [Certificate] {
+        let response = try client.request(
+            method: .get,
+            path: "certificates",
+            query: [URLQueryItem(name: "filter[certificateType]", value: certificateType)]
+        )
+        struct Envelope: Decodable {
+            struct Data: Decodable {
+                let id: String
+                struct Attributes: Decodable {
+                    let certificateContent: String
+                    let serialNumber: String?
+                }
+                let attributes: Attributes
+            }
+            let data: [Data]
+        }
+        guard let envelope = try? JSONDecoder().decode(Envelope.self, from: response.data) else {
+            throw ASCError.malformedPayload("certificates list")
+        }
+        return envelope.data.map {
+            Certificate(
+                id: $0.id,
+                certificateContentBase64: $0.attributes.certificateContent,
+                serialNumber: $0.attributes.serialNumber
+            )
+        }
+    }
+
     /// Fetches all development certificate IDs.
     public func listDevelopmentCertificateIDs() throws -> [String] {
         try listCertificateIDs(certificateType: "DEVELOPMENT")

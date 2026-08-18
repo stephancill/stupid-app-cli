@@ -74,15 +74,21 @@ public struct IdentityManager {
     }
 
     /// Stores a generated or imported private key and certificate pair for a purpose.
+    /// `certificateID` may be nil when no App Store Connect identity is resolvable;
+    /// the stored identity then supports local build/run/release-archive only.
     public func storeDistribution(
         privateKeyPEM: String,
         certificatePEM: String,
-        certificateID: String,
+        certificateID: String?,
         teamID: String
     ) throws {
         try store.writeSecret(Secret.distributionKey.rawValue, data: Data(privateKeyPEM.utf8))
         try store.writeSecret(Secret.distributionCert.rawValue, data: Data(certificatePEM.utf8))
-        try store.writeSecret(Secret.distributionCertID.rawValue, data: Data(certificateID.utf8))
+        if let certificateID {
+            try store.writeSecret(Secret.distributionCertID.rawValue, data: Data(certificateID.utf8))
+        } else {
+            try? FileManager.default.removeItem(at: store.fileURL(forSecret: Secret.distributionCertID.rawValue))
+        }
         try store.writeSecret(Secret.developerTeamID.rawValue, data: Data(teamID.utf8))
     }
 
@@ -95,16 +101,20 @@ public struct IdentityManager {
         )
     }
 
-    /// Stores a development identity (private key + certificate + certificate ID).
+    /// Stores a development identity (private key + certificate + optional certificate ID).
     public func storeDevelopment(
         privateKeyPEM: String,
         certificatePEM: String,
-        certificateID: String,
+        certificateID: String?,
         teamID: String
     ) throws {
         try store.writeSecret(Secret.developmentKey.rawValue, data: Data(privateKeyPEM.utf8))
         try store.writeSecret(Secret.developmentCert.rawValue, data: Data(certificatePEM.utf8))
-        try store.writeSecret(Secret.developmentCertID.rawValue, data: Data(certificateID.utf8))
+        if let certificateID {
+            try store.writeSecret(Secret.developmentCertID.rawValue, data: Data(certificateID.utf8))
+        } else {
+            try? FileManager.default.removeItem(at: store.fileURL(forSecret: Secret.developmentCertID.rawValue))
+        }
         try store.writeSecret(Secret.developerTeamID.rawValue, data: Data(teamID.utf8))
     }
 

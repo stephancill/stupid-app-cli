@@ -2982,3 +2982,111 @@ match.
   README/handover/help reflecting two host modes).
 - Temporary secret copies used to move the identity from the WSL host to this Mac were
   removed from both hosts after import.
+
+## 2026-08-18 - One-Step Credential Bootstrap And Xcode Credential Reuse
+
+### Summary
+
+Implemented the next-priority initiative from `docs/engineering-handover.md`: a
+one-step new-user bootstrap (`stupid-app setup`) and reuse of signing credentials Xcode
+already manages (`stupid-app signing setup --from-xcode`).
+
+### Changes
+
+- `Sources/stupid-app/SetupCommand.swift`: new `stupid-app setup` that composes
+  `credentials add` plus distribution (and, when `--udid` is provided, development)
+  `signing setup` from a single App Store Connect API key.
+- `Sources/stupid-app/SigningSetupCommand.swift`: new `--from-xcode` flag. On macOS it
+  enumerates login-Keychain codesigning identities, extracts the selected identity to
+  PEM, and copies the exact `.mobileprovision` for the bundle ID, kind, and identity
+  into the store's `profiles/` directory.
+- `Sources/SigningKit/XcodeCredentialImporter.swift`: new module. Enumerates identities
+  (`security find-identity`), extracts the certificate by DER SHA-1 and the private key
+  by RSA-modulus matching across every accessible search-list Keychain (PKCS#12 export
+  split by OpenSSL, since `SecKeyCopyExternalRepresentation` returns empty for Keychain
+  keys), and selects the exact provisioning profile by bundle ID, inferred kind, and
+  certificate fingerprint.
+- `Sources/SigningKit/IdentityManager.swift`: `storeDistribution`/`storeDevelopment`
+  now accept an optional `certificateID` so an imported identity without an App Store
+  Connect key is representable (local build/run/release-archive only).
+- `Sources/ASCKit/ASCOperations.swift`: added `listCertificates(certificateType:)`
+  returning full certificate content so an imported identity's App Store Connect
+  certificate ID can be resolved by content fingerprint when a key is present.
+
+### Decisions
+
+- The Keychain and Xcode's profile folder are used only as a one-time bootstrap source;
+  signing continues to use the project-owned native signer from the hardened
+  credential store. This deliberately extends the macOS non-goal, which only excludes
+  Keychain usage as a signing kernel.
+- Xcode-managed profiles omit `ProfileType` (they carry `IsXcodeManaged`), so the
+  signing kind is inferred from the profile's `get-task-allow` entitlement, falling back
+  to the provisioned-device list when that key is absent.
+- The identity's private key is exported non-interactively (`security export -P`);
+  locked/password-protected Keychains are skipped, and a missing key fails loudly with
+  an actionable message instead of guessing a password or falling back.
+- When no App Store Connect key is present, the imported identity is stored with a nil
+  certificate ID and the profile's exact signed bytes are reused; `release upload` and
+  new-profile creation require `stupid-app credentials add` later and fail loudly.
+
+### Verification
+
+- Unit tests added for `XcodeCredentialImporter` pure logic (identity-line parsing, team
+  ID derivation, and exact profile selection by bundle, kind, team, and certificate)
+  using sanitized synthetic fixtures. 7 tests pass.
+- Full suite: 173/173 tests pass with the pre-existing timing-sensitive
+  `CoreDeviceTLSConnectionTests` excluded (they remain flaky only under parallel load and
+  are unrelated to this work).
+- On this Mac, `signing setup --kind distribution --bundle-id <exact> --from-xcode`
+  correctly reached an actionable failure: the matching distribution private key lives in
+  a password-protected project `build.keychain` and cannot be extracted, and no
+  development profile for the development identity exists in `~/Library/MobileDevice/Provisioning
+  Profiles`. Both are environment-specific limitations, not code defects; the export,
+  modulus-match, and selection mechanics were validated against the real login Keychain
+  (the development identity's key matches its certificate in the export) and by the unit
+  tests.
+
+### Follow-Up
+
+- A clean-host macOS proof of the full `--from-xcode` path (identity in an unlocked
+  Keychain plus a matching Xcode-managed profile) is still required per the clean-host
+  gate policy.
+- `stupid-app setup` end-to-end awaits a fresh-host acceptance run with a real API key.
+
+## 2026-08-18 - Collapse Bootstrap Into `signing setup` And Config-Based Bundle ID
+
+### Summary
+
+Follow-up to the same-day bootstrap work: the separate `stupid-app setup` command was
+folded into `stupid-app signing setup`, which is now the single provisioning/credential
+command. `signing setup` also reads the bundle ID from `stupid-app.yml` when `--bundle-id`
+is omitted.
+
+### Changes
+
+- Deleted `Sources/stupid-app/SetupCommand.swift`; removed it from the command surface.
+- `Sources/stupid-app/SigningSetupCommand.swift`:
+  - `--kind` is now repeatable and defaults to both `distribution` and `development`
+    when omitted.
+  - `--bundle-id` is repeatable; when omitted, the bundle ID is read from
+    `stupid-app.yml` in the current directory (`resolveBundleIDs`). Fails with
+    `bundleIDRequired` when neither a flag nor a config is present.
+  - Added ASC credential options (`--key-id`, `--issuer-id`, `--p8`, `--team-id`); when
+    supplied they are stored first (delegating to `credentials add`), so a fresh user
+    needs no separate credential step.
+  - Development setup runs only when `--udid` is provided; otherwise it is skipped with
+    a note.
+  - `runDevelopment` and `runFromXcode` now take explicit kind/bundle parameters.
+
+### Verification
+
+- Build clean; full suite passes (173/173 with the pre-existing flaky
+  `CoreDeviceTLSConnectionTests` excluded).
+- Running `signing setup --kind distribution --from-xcode` from a directory containing
+  `stupid-app.yml` resolved the bundle ID from the config and proceeded to the expected
+  keychain step; without a config and without `--bundle-id` it fails with
+  `bundleIDRequired`.
+
+### Follow-Up
+
+- `signing setup` end-to-end fresh-host acceptance with a real API key is still pending.
