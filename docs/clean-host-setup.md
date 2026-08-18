@@ -92,10 +92,40 @@ never elevates implicitly. Two supported arrangements:
   ```
   The CLI then runs with `--sudo /usr/bin/sudo`. Do not grant broad `NOPASSWD: ALL`.
 
-Verification: `stupid-app doctor --sdk-id ios-dev` reports the tunnel device check as
-`PASS`, and `stupid-app run --network ...` completes.
+### 6. USB transport (MTU-patched usbmuxd)
 
-### 6. Health check
+Stock Ubuntu `usbmuxd` 1.1.1 uses a 49,152-byte USB transfer unit whose zero-length
+packet boundary is lost through WSL USBIP, so large IPA transfers stall. The qualified
+`USB_MTU=16383` build forces a physical short-packet boundary and completes installs. It
+links against the current system libplist and is provisioned as a persistent systemd
+service:
+
+```bash
+# Build once from the ignored usbmuxd-1.1.1-patched source with USB_MTU=16383,
+# then register it (GPL-3.0; do not distribute the daemon with the product).
+cat > /etc/systemd/system/usbmuxd-mtu.service <<'UNIT'
+[Unit]
+Description=usbmuxd (MTU-patched for WSL USBIP)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/home/iosdev/usbmuxd-1.1.1-patched/src/usbmuxd -f -U usbmux
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload
+systemctl enable --now usbmuxd-mtu.service
+```
+
+Small-message lockdown/tunnel traffic works with the stock daemon, but `run --usb`
+(install) and `device pair --usb` require the MTU-patched daemon running on the socket
+`/var/run/usbmuxd`. Stop the stock unit and start `usbmuxd-mtu.service` before USB
+installs.
+
+### 7. Health check
 
 ```bash
 stupid-app doctor --sdk-id ios-dev
@@ -122,7 +152,9 @@ stupid-app release status
 3. Confirm the pairing record still exists:
    `ls ~/.stupid-app/credentials/pairing/remote_*.plist`.
 4. If the record is gone or a fresh device was introduced, run
-   `stupid-app device pair --usb` once (requires USB) then retry.
+   `stupid-app device pair --usb` once (requires USB) then retry. A fresh pair shows
+   an on-device Trust dialog; pass a generous `--timeout` (e.g. `--timeout 180`)
+   because the default 30 seconds can expire before the dialog is answered.
 5. Re-run `stupid-app doctor --sdk-id ios-dev` and fix any failures.
 
 ### The host was re-imported or restored from an image
@@ -136,7 +168,8 @@ so after restore:
    directory from a secure owner-only backup.
 3. Re-pair the device (phase 4) or restore the pairing directory.
 4. Re-apply the privilege boundary (phase 5).
-5. Run `doctor` (phase 6).
+5. Re-enable the MTU-patched usbmuxd service (phase 6).
+6. Run `doctor` (phase 7).
 
 Treat WSL exports, virtual disks, and backups as secret-bearing once credentials are
 present, and store them with equivalent protection to the credential directory.

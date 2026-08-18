@@ -2468,3 +2468,69 @@ for the next debugging session and produces no output in normal operation.
 - Make the MTU-patched usbmuxd reproducible on the current libplist, then re-run the
   full `run --usb` against a real development IPA. This requires USB pass-through and
   remains the only deferred transport path.
+
+## 2026-08-18 - USB Path Re-Qualified: TCP_NODELAY Fix, MTU-usbmuxd Service, Fresh Pair
+
+### Summary
+
+- Fixed a latent defect that broke every native USB socket operation on Linux: the
+  `TCP_NODELAY` setsockopt introduced for RemoteXPC frame segmentation was applied to
+  all sockets, including the AF_UNIX usbmuxd socket, where Linux returns EOPNOTSUPP
+  (errno 95). The client therefore could not connect to the daemon, so `run --usb`
+  and `device pair --usb` failed before any device operation.
+- Re-qualified the full native USB path on the isolated WSL host: three consecutive
+  `run --usb` runs installed and launched through the native stack, and a fresh
+  native `device pair --usb --replace-lockdown-record` completed both the lockdown
+  trust and the SRP-3072 CoreDevice Pair-Setup bootstrap.
+- Provisioned the MTU-patched usbmuxd (`USB_MTU=16383`) as a persistent
+  `usbmuxd-mtu.service` systemd unit. The existing qualified build links against the
+  current system libplist, so no source rebuild was required.
+- Documented the USB transport setup and recovery in `docs/clean-host-setup.md`.
+
+### TCP_NODELAY Fix
+
+- `SocketConnection.init` now asks `connect` whether the socket is TCP; the Unix-socket
+  path reports `isTCP: false` and `configure` applies `TCP_NODELAY` only to TCP
+  sockets. This preserves the RemoteXPC handshake frame segmentation for tunnel/RSD
+  connections while no longer attempting the invalid option on the usbmuxd Unix
+  socket.
+- Added a hermetic regression test with a Unix-socket fake usbmux server proving the
+  full `ReadBUID` exchange completes over AF_UNIX. The test uses a short socket name
+  (the first attempt used a 36-char UUID path that exceeded the 104-byte macOS
+  `sun_path` limit and was shortened to a numeric suffix).
+
+### MTU-usbmuxd Provisioning
+
+- The qualified `usbmuxd-1.1.1-patched` source (ignored, GPL-3.0, not distributed)
+  already contains the `USB_MTU 16383` change and a working binary. It is registered
+  as `usbmuxd-mtu.service` with `Restart=on-failure` and is started before USB
+  installs. The stock systemd unit targets a usbmuxd the installed binary does not
+  support, so the MTU service replaces it for the socket path.
+- Backgrounded daemons do not survive a `wsl.exe` command returning, so the service
+  unit is the reliable lifecycle for the patched daemon on this host.
+
+### Fresh Pair Verification
+
+- The first fresh-pair attempt timed out because the default 30-second timeout expired
+  while the on-device Trust dialog waited for confirmation. Re-running with
+  `--timeout 180` after the dialog was answered completed: new lockdown record stored,
+  wireless lockdown enabled and verified, CoreDevice remote pairing record persisted,
+  and ownership returned to the invoking user.
+- After the fresh pair, a network `run --network` still installed and launched using
+  the freshly written records, confirming the two record types interoperate.
+
+### Verification
+
+- macOS: `swift format lint --strict` passes; `swift test` passes 145 cases across 27
+  suites including the new Unix-socket regression test.
+- WSL: clean build; `swift test` passes 146 cases (145 + the new test).
+- Physical WSL/USBIP: three consecutive `run --usb` install-and-launch runs with zero
+  residual processes/interfaces; fresh native pair with the on-device Trust dialog;
+  network run with the fresh records.
+
+### Follow-Up
+
+- Re-export and re-import the SDK bundle so the host registers `stupid-app-ios`
+  instead of the legacy `ios-dev` ID.
+- Broader compatibility/fixture coverage and the complete acceptance run through
+  stable commands on clean supported hosts remain for Gate 5.

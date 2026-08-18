@@ -60,6 +60,18 @@ struct USBMuxClientTests {
     #expect(try client.usbDeviceUDIDs() == ["test-usb-udid"])
   }
 
+  @Test("completes a Unix-socket usbmux exchange without applying TCP_NODELAY")
+  func unixSocketExchange() throws {
+    let server = try FakeUSBMuxServerUnixSocket { request in
+      #expect(request["MessageType"] as? String == "ReadBUID")
+      return ["MessageType": "Result", "Number": 0, "BUID": "test-buid"]
+    }
+    defer { server.stop() }
+    let client = USBMuxClient(address: server.socketPath, timeoutSeconds: 2)
+    let buid = try client.readBUID()
+    #expect(buid == "test-buid")
+  }
+
   @Test("times out when usbmuxd does not complete a response")
   func timeout() throws {
     let server = try FakeUSBMuxServer(responseDelay: 0.25) { _ in
@@ -401,6 +413,95 @@ private final class FakeUSBMuxServer: @unchecked Sendable {
   func stop() {
     shutdown(descriptor, Int32(SHUT_RDWR))
     close(descriptor)
+  }
+
+  private static func read(_ descriptor: Int32, count: Int) throws -> Data {
+    var data = Data(count: count)
+    var offset = 0
+    while offset < count {
+      let result = data.withUnsafeMutableBytes {
+        recv(descriptor, $0.baseAddress!.advanced(by: offset), count - offset, 0)
+      }
+      guard result > 0 else { throw ServerError.setup }
+      offset += result
+    }
+    return data
+  }
+
+  enum ServerError: Error {
+    case setup
+  }
+}
+
+/// A minimal Unix-socket usbmux server used to prove the client connects over an
+/// AF_UNIX socket (which must not apply TCP_NODELAY, an EOPNOTSUPP error on Linux).
+private final class FakeUSBMuxServerUnixSocket: @unchecked Sendable {
+  let socketPath: String
+  private let descriptor: Int32
+  private let queue = DispatchQueue(label: "stupid-app.tests.usbmux-unix")
+
+  init(
+    usbmuxResponse: @escaping @Sendable ([String: Any]) -> [String: Any],
+    responseDelay: TimeInterval = 0
+  ) throws {
+    #if os(Linux)
+      let socketType = Int32(SOCK_STREAM.rawValue)
+    #else
+      let socketType = SOCK_STREAM
+    #endif
+    let socketDescriptor = socket(AF_UNIX, socketType, 0)
+    guard socketDescriptor >= 0 else { throw ServerError.setup }
+    let path = FileManager.default.temporaryDirectory
+      .appendingPathComponent("stupid-app-usbmux-\(UInt32.random(in: 0..<UInt32.max)).sock").path
+    var address = sockaddr_un()
+    address.sun_family = sa_family_t(AF_UNIX)
+    let pathCapacity = MemoryLayout.size(ofValue: address.sun_path)
+    withUnsafeMutablePointer(to: &address.sun_path) { destination in
+      destination.withMemoryRebound(to: CChar.self, capacity: pathCapacity) { destination in
+        path.withCString { source in
+          _ = strncpy(destination, source, pathCapacity - 1)
+        }
+      }
+    }
+    unlink(path)
+    let bindResult = withUnsafePointer(to: &address) { pointer in
+      pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+        bind(socketDescriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+      }
+    }
+    guard bindResult == 0, listen(socketDescriptor, 1) == 0 else {
+      close(socketDescriptor)
+      throw ServerError.setup
+    }
+    descriptor = socketDescriptor
+    socketPath = path
+    queue.async { [descriptor] in
+      let client = accept(descriptor, nil, nil)
+      guard client >= 0 else { return }
+      defer { close(client) }
+      do {
+        let headerData = try Self.read(client, count: 16)
+        let header = try USBMuxClient.decodeHeader(headerData)
+        let payload = try Self.read(client, count: header.length - 16)
+        let request = try #require(
+          PropertyListSerialization.propertyList(from: payload, format: nil) as? [String: Any]
+        )
+        if responseDelay > 0 {
+          Thread.sleep(forTimeInterval: responseDelay)
+        }
+        let packet = try USBMuxClient.encodePacket(body: usbmuxResponse(request), tag: header.tag)
+        for byte in packet {
+          var value = byte
+          _ = withUnsafeBytes(of: &value) { send(client, $0.baseAddress, 1, 0) }
+        }
+      } catch {}
+    }
+  }
+
+  func stop() {
+    shutdown(descriptor, Int32(SHUT_RDWR))
+    close(descriptor)
+    unlink(socketPath)
   }
 
   private static func read(_ descriptor: Int32, count: Int) throws -> Data {

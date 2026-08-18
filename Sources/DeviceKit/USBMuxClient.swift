@@ -594,9 +594,11 @@ final class SocketConnection: @unchecked Sendable {
       throw USBMuxClient.Error.invalidInput("timeout is too large")
     }
     timeoutMilliseconds = Int32(timeoutSeconds * 1_000)
-    descriptor = try Self.connect(address: address)
+    let connected = try Self.connect(address: address)
+    descriptor = connected.descriptor
     do {
-      try Self.configure(descriptor: descriptor, timeoutSeconds: timeoutSeconds)
+      try Self.configure(
+        descriptor: descriptor, timeoutSeconds: timeoutSeconds, isTCP: connected.isTCP)
     } catch {
       close(descriptor)
       descriptor = -1
@@ -745,11 +747,16 @@ final class SocketConnection: @unchecked Sendable {
     return .invalidResponse("lockdown TLS failed during phase \(result)")
   }
 
-  private static func connect(address: String) throws -> Int32 {
+  private struct ConnectedSocket {
+    var descriptor: Int32
+    var isTCP: Bool
+  }
+
+  private static func connect(address: String) throws -> ConnectedSocket {
     if address.hasPrefix("/") {
-      return try connectUnix(path: address)
+      return ConnectedSocket(descriptor: try connectUnix(path: address), isTCP: false)
     }
-    return try connectTCP(address: address)
+    return ConnectedSocket(descriptor: try connectTCP(address: address), isTCP: true)
   }
 
   private static func connectUnix(path: String) throws -> Int32 {
@@ -835,7 +842,7 @@ final class SocketConnection: @unchecked Sendable {
     throw USBMuxClient.Error.connectionFailed(lastError)
   }
 
-  private static func configure(descriptor: Int32, timeoutSeconds: Double) throws {
+  private static func configure(descriptor: Int32, timeoutSeconds: Double, isTCP: Bool) throws {
     let whole = floor(timeoutSeconds)
     var timeout = timeval()
     timeout.tv_sec = numericCast(Int(whole))
@@ -849,16 +856,19 @@ final class SocketConnection: @unchecked Sendable {
     }
     // RemoteXPC frame segmentation matters on the device: coalescing the
     // handshake into one segment is rejected, so disable Nagle to keep each
-    // write as its own segment.
-    var noDelay: Int32 = 1
-    if setsockopt(
-      descriptor,
-      Int32(IPPROTO_TCP),
-      TCP_NODELAY,
-      &noDelay,
-      socklen_t(MemoryLayout<Int32>.size)
-    ) != 0 {
-      throw USBMuxClient.Error.connectionFailed(errno)
+    // write as its own segment. TCP_NODELAY is invalid on an AF_UNIX socket
+    // (EOPNOTSUPP), which is how the usbmuxd connection is made.
+    if isTCP {
+      var noDelay: Int32 = 1
+      if setsockopt(
+        descriptor,
+        Int32(IPPROTO_TCP),
+        TCP_NODELAY,
+        &noDelay,
+        socklen_t(MemoryLayout<Int32>.size)
+      ) != 0 {
+        throw USBMuxClient.Error.connectionFailed(errno)
+      }
     }
     #if canImport(Darwin)
       var enabled: Int32 = 1

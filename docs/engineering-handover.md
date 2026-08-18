@@ -1292,8 +1292,18 @@ USB CoreDevice tunnel and returned a live process token.
 installation proxy, exact bundle lookup, staged-file cleanup, and explicit install
 timeouts. Gate 4 replaced the invalid direct DVT launch with the native CoreDevice USB
 tunnel helper (`coredevice-helper launch-usb`); the launch is fully native and no Python
-is involved. Patched-usbmuxd provisioning remains productization work for the
-USB install path.
+is involved.
+
+The MTU-patched usbmuxd is now reproducible: the existing qualified `USB_MTU=16383`
+build in the ignored `usbmuxd-1.1.1-patched` source tree links against the current
+system libplist and is provisioned as a persistent `usbmuxd-mtu.service` systemd unit
+on the WSL host (see `docs/clean-host-setup.md`). Three consecutive `run --usb`
+install-and-launch runs pass through the fully native USB stack with zero residual
+state, and a fresh `device pair --usb --replace-lockdown-record` completes the native
+lockdown trust and SRP-3072 Pair-Setup bootstrap. The fresh pair requires confirming the
+on-device Trust dialog; the command default timeout must be raised (e.g. `--timeout
+180`) because the previous attempt timed out at 30 seconds before the dialog was
+answered.
 
 Exit condition: the app launches on the registered device with a valid development signature.
 
@@ -1368,11 +1378,11 @@ processes or interfaces. The temporary debug environment was removed: the broad
 stale proof credential directory. See `docs/clean-host-setup.md` for repeatable
 clean-host setup and recovery.
 
-Remaining productization includes qualified USBIP-compatible usbmux provisioning with
-GPL compliance, broader compatibility/fixture coverage, and the complete acceptance run
-through stable commands on clean supported hosts. The network path requires re-applying
-`cap_net_admin` to the debug binary after any rebuild, or installing a root-owned release
-binary with a scoped sudoers grant (see `docs/clean-host-setup.md`).
+Remaining productization includes broader compatibility/fixture coverage and the
+complete acceptance run through stable commands on clean supported hosts. The network
+path requires re-applying `cap_net_admin` to the debug binary after any rebuild, or
+installing a root-owned release binary with a scoped sudoers grant (see
+`docs/clean-host-setup.md`).
 
 Exit condition: all acceptance criteria run through stable CLI commands on clean supported environments.
 
@@ -1587,14 +1597,12 @@ Scope and acceptance criteria when this task is eventually promoted:
 
 Execute the remaining work in this order:
 
-1. **Clean-host state is current and the native network run is qualified.** `doctor`
-   passes on the isolated WSL host and three consecutive unplugged `run --network` runs
-   install and launch through the native stack. The temporary debug environment
-   (broad sudoers, Python comparison venvs/scripts, stale helper grant, stale proof
-   credentials) has been removed. `docs/clean-host-setup.md` documents repeatable setup
-   and recovery; the USB-only MTU-usbmuxd work below remains the one deferred path.
-2. Make the MTU-patched usbmuxd reproducible on the current libplist, then re-run the
-   full `run --usb` (native install + native launch) against a real development IPA.
-   This requires the iPhone attached through USBIP to the WSL host.
-3. Resume the remaining Gate 5 productization work (broader compatibility/fixture
-   coverage and the complete acceptance run) in parallel.
+1. **The fully native device stack is qualified end to end.** `doctor` passes on the
+   isolated WSL host, three consecutive unplugged `run --network` runs and three
+   consecutive `run --usb` runs install and launch with zero residual state, and a
+   fresh native `device pair --usb` completes. The MTU-patched usbmuxd is provisioned
+   as a persistent systemd service. `docs/clean-host-setup.md` documents repeatable
+   setup and recovery.
+2. Resume the remaining Gate 5 productization work (broader compatibility/fixture
+   coverage, re-exporting the SDK under `stupid-app-ios`, and the complete acceptance
+   run through stable commands on clean supported hosts) in parallel.
