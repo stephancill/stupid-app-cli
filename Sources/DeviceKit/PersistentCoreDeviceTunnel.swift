@@ -83,10 +83,20 @@ public final class PersistentCoreDeviceTunnel: @unchecked Sendable {
     }
 
     tun = try Self.makeTUN(handshake: handshake)
-    // The on-link /64 route created by assigning the client address covers the
-    // server address. Do not add an explicit /128 route here: pymobiledevice3
-    // relies on the kernel's on-link /64 route, and the device's RSD rejects
-    // connections sourced through an explicit off-link route.
+    // macOS treats the on-link /64 route as requiring neighbor discovery, but
+    // the device never answers solicitations, so the host generates ICMPv6
+    // "Destination Unreachable / Address unreachable" once the NDP entry ages
+    // out and the launch exchange intermittently fails. Installing a
+    // point-to-point host route for the server address (as the USB path does)
+    // routes directly to the peer and avoids NDP. Linux keeps the on-link /64
+    // behavior, which is separately qualified.
+    #if os(macOS)
+      do {
+        try tun.addRoute(to: handshake.serverAddress)
+      } catch {
+        throw Error.tun("route to \(handshake.serverAddress) could not be installed")
+      }
+    #endif
   }
 
   deinit {

@@ -23,13 +23,17 @@ via the `com.apple.net.utun_control` kernel-control socket, with macOS-aware 4-b
 protocol-family framing in both C tunnel relays), work area 6 (Darwin process-group
 cleanup in `ProcessRunner` via posix_spawn), work area 7 (native USB verified against
 the built-in usbmuxd), and work area 9 (macOS `doctor` checks) are implemented.
-`device pair --usb` and `run --usb` are physically qualified on a Mac against a
-connected iPhone. The network path now owns the utun inside a privileged
-`coredevice-helper run-network` subcommand (utun creation requires root on macOS);
-discovery, Pair-Verify, tunnel, and install work under root, but the AppService launch
-over the tunnel intermittently times out and Gate M3 step 3 (three unplugged
-`run --network` runs) remains open. The remaining gates (M2 release, M4 Xcode-absent,
-M5 productization) are unchanged and still require clean-host proof.
+ `device pair --usb` and `run --usb` are physically qualified on a Mac against a
+ connected iPhone. The network path now owns the utun inside a privileged
+ `coredevice-helper run-network` subcommand (utun creation requires root on macOS);
+ discovery, Pair-Verify, tunnel, install, and launch work under root, and the three
+ unplugged `run --network` runs are solid on this Mac. The earlier AppService launch
+ intermittency was an IPv6 NDP failure on the on-link `/64` route; the macOS network
+ tunnel now installs a point-to-point host route for the server address, and the native
+ mDNS browser re-issues its PTR query periodically to avoid the intermittent discovery
+ miss. The remaining gates (M2 release, M4 Xcode-absent,
+ M5 productization) are unchanged and still require clean-host proof.
+
 
 ## Design Decisions (confirmed)
 
@@ -394,10 +398,12 @@ On the clean Mac with a physical iPhone:
    (2026-08-18): native install + CoreDevice launch, no residual processes/interfaces.**
 3. `run --network --udid <udid>` installs and launches physically unplugged, three
    consecutive runs, with zero residual helper processes, interfaces, or routes after
-   each run. **In progress:** the network path now runs through the privileged
-   `coredevice-helper run-network` subcommand; discovery, Pair-Verify, the tunnel, and
-   install work under root, but the AppService launch over the tunnel intermittently
-   times out and needs relay debugging before the three unplugged runs can be claimed.
+   each run. **Qualified on this Mac (2026-08-18): three consecutive unplugged runs
+   pass through the privileged `coredevice-helper run-network` subcommand, after the
+   AppService launch intermittency was fixed (macOS IPv6 NDP on the on-link `/64` was
+   failing; a point-to-point host route for the server address now bypasses NDP) and
+   the native mDNS browser now re-issues its PTR query periodically. A clean-host macOS
+   run is still required per the clean-host gate policy.**
 
 Exit condition: the wireless acceptance criteria run on macOS with no leftover state.
 This proves the shared macOS device stack once.

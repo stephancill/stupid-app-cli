@@ -151,7 +151,13 @@ public struct NativeCoreDeviceRunner: Sendable {
     let processArguments: [String]
     if let sudoPath {
       executableInvocation = try resolvePath(sudoPath)
-      processArguments = ["--preserve-env=STUPID_APP_PAIRING_HOME", executable] + arguments
+      // STUPID_APP_TUNNEL_DEBUG is preserved so the env-gated relay/RSD/socket
+      // diagnostics are visible when the network path runs under the privileged
+      // helper. It is absent in normal operation, so no default behavior changes.
+      processArguments =
+        [
+          "--preserve-env=STUPID_APP_PAIRING_HOME,STUPID_APP_TUNNEL_DEBUG", executable,
+        ] + arguments
     } else {
       executableInvocation = executable
       processArguments = arguments

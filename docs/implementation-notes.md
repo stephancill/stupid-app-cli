@@ -2861,3 +2861,68 @@ match.
 - Re-export/re-import the SDK bundle so hosts register `stupid-app-ios` instead of
   the legacy `ios-dev` ID.
 - Run the M2 (macOS-produced release) and remaining M4/M5 gates on clean hosts.
+
+## 2026-08-18 - macOS Network Run Intermittency Fixed: NDP Host Route And mDNS Re-query
+
+### Summary
+
+- Diagnosed and fixed the remaining macOS Gate M3 step 3 blocker: the AppService
+  launch (and sometimes the install-proxy exchange) over the network tunnel
+  intermittently timed out, while USB `run --usb` remained solid.
+- Root cause: macOS treats the tunnel client address's on-link `/64` route as a
+  shared medium and performs IPv6 neighbor discovery (NDP). The device never
+  answers neighbor solicitations, so when the NDP neighbor entry for the device's
+  tunnel address aged out, macOS generated ICMPv6 "Destination Unreachable /
+  Address unreachable" for the host's own TCP traffic and the exchange stalled.
+  This is why it was intermittent: it worked while the NDP entry was fresh and
+  failed after it expired.
+- Fix: on macOS, install a point-to-point host route for the tunnel server address
+  (the same route the USB launch path already installs), so the host routes
+  directly to the peer and performs no NDP for that destination. Linux keeps its
+  separately qualified on-link `/64` behavior.
+- Also fixed an intermittent native mDNS discovery miss: the browse sent one PTR
+  query at start and listened, but multicast responses can be dropped. The browser
+  now re-issues the PTR query every couple of seconds for the browse window,
+  mirroring standard DNS-SD browsers.
+
+### Findings
+
+- The relay was not at fault in this case (unlike the earlier Linux `WANT_READ`
+  misread-as-EOF bug). STUPID_APP_TUNNEL_DEBUG packet dumps showed the installer
+  ran to completion and the launch response (a 545-byte TCP payload) was sent by
+  the device, but macOS returned ICMPv6 type 1 code 3 (address unreachable),
+  sourced from the utun link-local, embedded the device's own response, and
+  retransmitted it. That is the signature of NDP resolution failure for an
+  on-link neighbor.
+- `route -n get` confirmed the on-link `/64` route existed but with a connected
+  `Uc` scope; after the fix it returns a point-to-point host route
+  (`<UP,GATEWAY,HOST,DONE,STATIC>` / `UGHS`) with the client as gateway.
+- The C relay gaining a raw hex dump for the first N bytes of host->device packets
+  (gated on STUPID_APP_TUNNEL_DEBUG) is retained; it is what identified the
+  ICMPv6 unreachable payload. `STUPID_APP_TUNNEL_DEBUG` is now also preserved
+  through the privileged helper's sudo invocation so the diagnosic is visible on
+  the macOS network path.
+
+### Verification
+
+- Three consecutive physically-unconnected `run --network` runs each built,
+  signed once, packaged, discovered, tunneled, installed, verified, and launched
+  the development app (pids returned), with zero residual helper processes or
+  residual TUN interfaces after each.
+- A 10-iteration native-browse probe found the device on all 10 (0 misses),
+  versus 1 miss in 8 before the periodic re-query.
+- `swift format lint --strict` passes for the changed Swift files and the C relay.
+- `swift test` passes all 173 cases across 32 suites (the pre-existing flaky
+  `CoreDeviceTLSConnectionTests` totalTimeout wall-clock assertion passes in
+  isolation and remains unaffected).
+- `git diff --check` passes.
+
+### Follow-Up
+
+- Gate M3 step 3 ("three unplugged `run --network` runs") is now satisfied on this
+  Mac; a clean-host macOS run still needs repeating per the handover's clean-host
+  gate policy.
+- Re-export/re-import the SDK bundle so hosts register `stupid-app-ios` instead of
+  the legacy `ios-dev` ID.
+- Run the remaining M2 (macOS-produced release), M4 (Xcode-absent), and M5
+  (productization) gates on clean hosts.

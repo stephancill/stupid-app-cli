@@ -942,6 +942,11 @@ int stupid_app_coredevice_tls_tunnel_relay(
         if (debug) {
           fprintf(stderr, "[relay] host->device %zd bytes", packet_length);
           if (packet_length >= 44) {
+            size_t dump = packet_length < 64 ? (size_t)packet_length : 64;
+            fprintf(stderr, " raw:");
+            for (size_t i = 0; i < dump; i++) {
+              fprintf(stderr, " %02x", outbound[i]);
+            }
             unsigned int seq = ((unsigned int)outbound[44] << 24) | ((unsigned int)outbound[45] << 16) |
               ((unsigned int)outbound[46] << 8) | outbound[47];
             unsigned int ack = ((unsigned int)outbound[48] << 24) | ((unsigned int)outbound[49] << 16) |

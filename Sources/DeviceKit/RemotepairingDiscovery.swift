@@ -313,9 +313,19 @@ public struct RemotepairingDiscovery: Sendable {
 
     var records: [Record] = []
     let deadline = Date().addingTimeInterval(timeout)
+    var lastQuery = Date.distantPast
     while Date() < deadline {
       let remaining = deadline.timeIntervalSinceNow
       guard remaining > 0 else { break }
+      // Re-issue the PTR query every couple of seconds. mDNS responders answer
+      // sending responses to the multicast group, which can be dropped, so a
+      // single query at browse start is not reliable; re-querying mirrors how
+      // standard DNS-SD browsers keep a service resolvable for the window.
+      if Date().timeIntervalSince(lastQuery) >= 2 {
+        try? sendPTRQuery(socket4, ipv6: false)
+        if let socket6 { try? sendPTRQuery(socket6, ipv6: true) }
+        lastQuery = Date()
+      }
       for socket in [socket4, socket6].compactMap({ $0 }) {
         guard Date() < deadline else { break }
         guard let message = try? Self.receive(descriptor: socket, timeout: min(0.2, remaining)),

@@ -21,18 +21,22 @@ build through Xcode's SDK in place with the real `LC_BUILD_VERSION` SDK value. T
 simulator run loop is also implemented (Gate M1): `stupid-app simulators` lists
 runtimes/devices and `stupid-app run --simulator [--udid <id>]` builds for
 `arm64-apple-ios-simulator` in place, ad-hoc signs the app, and boots/installs/launches
-through `simctl`. The macOS device stack (Gate M3) is now ported: a native `utun`
-backend in `CTUN` (kernel-control socket), macOS-aware 4-byte framing in both C tunnel
-relays, Darwin process-group cleanup in `ProcessRunner` (posix_spawn group leader), and
-macOS `doctor` checks. `device pair --usb` and `run --usb` are physically qualified on a
-Mac against a connected iPhone; `run --network` runs through a new privileged
-`coredevice-helper run-network` subcommand and the tunnel/install path works under root,
-but the AppService launch over the tunnel intermittently times out and needs the same
-iterative relay debugging the Linux path received (Gate M3 step 3 open). The Xcode-absent
-macOS path (M4) remains. Linux remains the validated reference host and macOS must pass
-its own clean-host proof gates (Gate M0: Xcode-present build; M1: simulator run loop; M2:
-macOS-produced release; M3: Xcode-present device deployment; M4: Xcode-absent path; M5:
-productization).
+ through `simctl`. The macOS device stack (Gate M3) is now ported: a native `utun`
+ backend in `CTUN` (kernel-control socket), macOS-aware 4-byte framing in both C tunnel
+ relays, Darwin process-group cleanup in `ProcessRunner` (posix_spawn group leader), and
+ macOS `doctor` checks. `device pair --usb` and `run --usb` are physically qualified on a
+ Mac against a connected iPhone; `run --network` runs through a new privileged
+ `coredevice-helper run-network` subcommand and the three unplugged install-and-launch
+ runs are now solid on this Mac. The earlier AppService launch intermittency was an
+ IPv6 neighbor-discovery problem (macOS performed NDP on the on-link `/64` and the device
+ never answered, so the host returned "address unreachable" once the neighbor entry aged
+ out); the network tunnel now installs a point-to-point host route for the server address
+ on macOS, and the native mDNS browser re-issues its PTR query periodically to avoid the
+ intermittent discovery miss. The Xcode-absent
+ macOS path (M4) remains. Linux remains the validated reference host and macOS must pass
+ its own clean-host proof gates (Gate M0: Xcode-present build; M1: simulator run loop; M2:
+ macOS-produced release; M3: Xcode-present device deployment; M4: Xcode-absent path; M5:
+ productization).
 
 The project is in technical validation. Gate 0 (SDK and compiler proof) is complete: a
 device-only, checksummed iPhoneOS Swift SDK bundle is exported on macOS by
@@ -1453,14 +1457,17 @@ requirement is still open. Summary:
   through TestFlight. Not started.
 - **Gate M3: Xcode-present device deployment.** `device pair --usb`, `run --usb`, and
   three consecutive unplugged `run --network` runs pass on a physical iPhone with zero
-  residual state, using the built-in usbmuxd and a new macOS `utun` backend. In
-  progress: the `utun` backend (kernel-control socket), macOS-aware relay framing,
-  Darwin process-group cleanup, and macOS `doctor` checks are implemented; `device pair
-  --usb` and `run --usb` are physically qualified on this Mac. The network path runs
-  through a privileged `coredevice-helper run-network` subcommand (utun creation
-  requires root on macOS); discovery/Pair-Verify/tunnel/install work under root but the
-  AppService launch over the tunnel intermittently times out, so the three unplugged
-  runs are not yet claimed.
+  residual state, using the built-in usbmuxd and a new macOS `utun` backend. The `utun`
+  backend (kernel-control socket), macOS-aware relay framing, Darwin process-group
+  cleanup, and macOS `doctor` checks are implemented; `device pair --usb` and `run --usb`
+  are physically qualified on this Mac. The network path runs through a privileged
+  `coredevice-helper run-network` subcommand (utun creation requires root on macOS) and
+  the three unplugged install-and-launch runs are now solid on this Mac. The earlier
+  launch intermittency was an IPv6 NDP failure (macOS did neighbor discovery on the
+  on-link `/64` and the device never answered, so the host returned "address
+  unreachable"); the macOS network tunnel now installs a point-to-point host route for
+  the server address, and the native mDNS browser re-issues its PTR query periodically.
+  A clean-host macOS run is still required per the clean-host gate policy.
 - **Gate M4: Xcode-absent path.** `sdk export --host <mac-triple>` with macOS-hosted
   Darwin tools, import, build, release, and device runs without Xcode (swift.org host
   Swift; CLT only if empirically unavoidable). Not started.
@@ -1711,7 +1718,7 @@ Execute the remaining work in this order:
    run through stable commands on clean supported hosts) in parallel.
 3. Continue the macOS host support gates in `docs/macos-host-support-scope.md`. M0
    (Xcode-present build), M1 (simulator run loop), and the Gate M3 device-stack port are
-   implemented; `device pair --usb` and `run --usb` are physically qualified on a Mac.
-   Next: resolve the intermittent macOS network-run AppService launch timeout and
-   complete Gate M3 step 3 (three unplugged `run --network` runs), then Gate M2
-   (macOS-produced release), M4 (Xcode-absent path), and M5 (productization).
+   implemented; `device pair --usb`, `run --usb`, and the three unplugged
+   `run --network` runs are physically qualified on a Mac (the network-path NDP and
+   mDNS intermittencies are resolved). Next: Gate M2 (macOS-produced release), M4
+   (Xcode-absent path), and M5 (productization), plus a clean-host macOS run.
