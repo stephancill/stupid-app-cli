@@ -26,18 +26,8 @@ struct DevicePairCommand: AsyncParsableCommand {
   var udid: String?
 
   @Option(
-    name: .customLong("python"),
-    help: "Python 3.13 executable from the frozen pymobiledevice3 environment.")
-  var pythonPath: String = "python3"
-
-  @Option(
     name: .customLong("sudo"), help: "Explicit path to sudo for the privileged CoreDevice helper.")
   var sudoPath: String?
-
-  @Option(
-    name: .customLong("coredevice-helper"),
-    help: "Root-owned installed CoreDevice helper path; defaults to the bundled helper.")
-  var coreDeviceHelperPath: String?
 
   @Option(name: .customLong("usbmux"), help: "usbmuxd address (unix socket or HOST:PORT).")
   var usbmuxAddress: String?
@@ -94,13 +84,11 @@ struct DevicePairCommand: AsyncParsableCommand {
       print("Created a new native lockdown pairing.")
     }
 
-    let runner = CoreDeviceRunner(
-      pythonPath: pythonPath,
+    let runner = NativeCoreDeviceRunner(
       sudoPath: sudoPath,
-      helperPath: coreDeviceHelperPath,
       pairingDirectory: homeURL.appendingPathComponent("pairing", isDirectory: true),
       usbmuxAddress: usbmuxAddress,
-      discoveryTimeoutSeconds: timeout
+      launchTimeoutSeconds: timeout
     )
     try runner.validateEnvironment(requirePrivileges: true)
     print("Pairing the selected USB device...")

@@ -108,6 +108,40 @@ struct RemoteXPCConnectionTests {
     }
   }
 
+  @Test("CoreDevice tunnel service parses ServiceVersion and the pairing handshake")
+  func tunnelServiceConnect() async throws {
+    let server = try FakeRemoteXPCServer.withTunnelService(
+      deviceIdentifier: "DEVICE-RP-ID-0001")
+    defer { server.stop() }
+
+    let client = RSDClient(host: "127.0.0.1", port: server.port, timeoutSeconds: 5)
+    let peerInfo = try client.connect()
+    let service = try client.connect(
+      service: CoreDeviceTunnelService.serviceName, peerInfo: peerInfo)
+    let tunnelService = CoreDeviceTunnelService(service: service)
+    try tunnelService.connect()
+
+    #expect(tunnelService.deviceIdentifier == "DEVICE-RP-ID-0001")
+    #expect(tunnelService.deviceModel == "iPhone15,2")
+    #expect(tunnelService.nextSequenceNumber == 1)
+    try await waitForTunnelServiceRequest(server)
+
+    let request = try #require(server.lastTunnelServiceRequest?.dictionaryValue)
+    // The envelope is wrapped in the mangled type name.
+    #expect(
+      request["mangledTypeName"]
+        == .string("RemotePairing.ControlChannelMessageEnvelope"))
+    let envelope = request["value"]?.dictionaryValue
+    #expect(envelope?["originatedBy"] == .string("host"))
+    let plain = envelope?["message"]?.dictionaryValue?["plain"]?.dictionaryValue
+    let inner = plain?["_0"]?.dictionaryValue
+    let handshake = inner?["request"]?.dictionaryValue?["_0"]?.dictionaryValue?["handshake"]?
+      .dictionaryValue?["_0"]?.dictionaryValue
+    #expect(handshake?["wireProtocolVersion"] == .int64(19))
+    #expect(
+      handshake?["hostOptions"]?.dictionaryValue?["attemptPairVerify"] == .bool(true))
+  }
+
   @Test("AppService launch rejects output without a process identifier")
   func missingProcessID() throws {
     let value: XPCValue = .dictionary([
@@ -139,6 +173,17 @@ struct RemoteXPCConnectionTests {
     while server.lastServiceRequest == nil {
       guard ContinuousClock.now < deadline else {
         Issue.record("The fake RSD server did not receive a service request")
+        return
+      }
+      try await Task.sleep(for: .milliseconds(20))
+    }
+  }
+
+  private func waitForTunnelServiceRequest(_ server: FakeRemoteXPCServer) async throws {
+    let deadline = ContinuousClock.now + .seconds(5)
+    while server.lastTunnelServiceRequest == nil {
+      guard ContinuousClock.now < deadline else {
+        Issue.record("The fake server did not receive the tunnel-service handshake")
         return
       }
       try await Task.sleep(for: .milliseconds(20))
@@ -209,9 +254,65 @@ private final class FakeRemoteXPCServer: @unchecked Sendable {
     )
   }
 
+  /// Advertises the CoreDevice tunnel service and scripts its ServiceVersion
+  /// push plus the attemptPairVerify handshake response.
+  static func withTunnelService(deviceIdentifier: String) throws -> FakeRemoteXPCServer {
+    let handshakeValue: XPCValue = .dictionary([
+      "mangledTypeName": .string("RemotePairing.ControlChannelMessageEnvelope"),
+      "value": .dictionary([
+        "message": .dictionary([
+          "plain": .dictionary([
+            "_0": .dictionary([
+              "response": .dictionary([
+                "_1": .dictionary([
+                  "handshake": .dictionary([
+                    "_0": .dictionary([
+                      "peerDeviceInfo": .dictionary([
+                        "identifier": .string(deviceIdentifier),
+                        "model": .string("iPhone15,2"),
+                      ])
+                    ])
+                  ])
+                ])
+              ])
+            ])
+          ])
+        ])
+      ]),
+    ])
+    return try FakeRemoteXPCServer(
+      peerInfoBuilder: { port in
+        .dictionary([
+          "Properties": .dictionary([
+            "UniqueDeviceID": .string("udid-0001"),
+            "ProductType": .string("iPhone15,2"),
+            "OSVersion": .string("26.1"),
+          ]),
+          "Services": .dictionary([
+            CoreDeviceTunnelService.serviceName: .dictionary([
+              "Port": .uint64(UInt64(port))
+            ])
+          ]),
+        ])
+      },
+      serviceResponses: [],
+      tunnelService: (
+        serviceVersion: try XPCCodec.encodeWrapper(
+          value: .dictionary(["ServiceVersion": .int64(19)]),
+          messageID: 2,
+          flags: 0x0101),
+        handshakeResponse: try XPCCodec.encodeWrapper(
+          value: handshakeValue,
+          messageID: 1,
+          flags: 0x0101)
+      )
+    )
+  }
+
   init(
     peerInfoBuilder: (Int) -> XPCValue?,
-    serviceResponses: [Data]
+    serviceResponses: [Data],
+    tunnelService: (serviceVersion: Data, handshakeResponse: Data)? = nil
   ) throws {
     #if os(Linux)
       let socketType = Int32(SOCK_STREAM.rawValue)
@@ -254,7 +355,11 @@ private final class FakeRemoteXPCServer: @unchecked Sendable {
       peerInfoBytes = nil
     }
 
-    let state = State(peerInfo: peerInfoBytes, serviceResponses: serviceResponses)
+    let state = State(
+      peerInfo: peerInfoBytes,
+      serviceResponses: serviceResponses,
+      tunnelService: tunnelService
+    )
     self.state = state
     queue.async { [descriptor] in
       var connectionCount = 0
@@ -266,7 +371,11 @@ private final class FakeRemoteXPCServer: @unchecked Sendable {
           try Self.runServer(client: client, state: state, connectionIndex: connectionCount)
         } catch {}
         connectionCount += 1
-        if state.serviceResponses.isEmpty, connectionCount >= 1 {
+        let servedServices = connectionCount - 1
+        if state.tunnelService != nil, servedServices >= 1 {
+          break
+        }
+        if state.serviceResponses.isEmpty, state.tunnelService == nil, connectionCount >= 1 {
           break
         }
       }
@@ -281,6 +390,10 @@ private final class FakeRemoteXPCServer: @unchecked Sendable {
     state.lastServiceRequest
   }
 
+  var lastTunnelServiceRequest: XPCValue? {
+    state.lastTunnelServiceRequest
+  }
+
   func stop() {
     shutdown(descriptor, Int32(SHUT_RDWR))
     close(descriptor)
@@ -289,13 +402,20 @@ private final class FakeRemoteXPCServer: @unchecked Sendable {
   private final class State: @unchecked Sendable {
     let peerInfo: Data?
     let serviceResponses: [Data]
+    let tunnelService: (serviceVersion: Data, handshakeResponse: Data)?
     let lock = NSLock()
     var handshakeSucceeded = false
     var lastServiceRequest: XPCValue?
+    var lastTunnelServiceRequest: XPCValue?
 
-    init(peerInfo: Data?, serviceResponses: [Data]) {
+    init(
+      peerInfo: Data?,
+      serviceResponses: [Data],
+      tunnelService: (serviceVersion: Data, handshakeResponse: Data)?
+    ) {
       self.peerInfo = peerInfo
       self.serviceResponses = serviceResponses
+      self.tunnelService = tunnelService
     }
 
     func setHandshakeSucceeded(_ value: Bool) {
@@ -307,6 +427,12 @@ private final class FakeRemoteXPCServer: @unchecked Sendable {
     func setLastServiceRequest(_ value: XPCValue?) {
       lock.lock()
       lastServiceRequest = value
+      lock.unlock()
+    }
+
+    func setLastTunnelServiceRequest(_ value: XPCValue?) {
+      lock.lock()
+      lastTunnelServiceRequest = value
       lock.unlock()
     }
   }
@@ -345,6 +471,20 @@ private final class FakeRemoteXPCServer: @unchecked Sendable {
         try write(client, HTTP2Frame.dataFrame(streamID: 3, payload: peerInfo))
       }
       // Keep reading until the peer closes.
+      _ = try? readFrame(client)
+      return
+    }
+
+    if let tunnelService = state.tunnelService, connectionIndex == 1 {
+      // Push ServiceVersion, then answer the attemptPairVerify handshake.
+      try write(
+        client, HTTP2Frame.dataFrame(streamID: 3, payload: tunnelService.serviceVersion))
+      let request = try readFrame(client)
+      if request.kind == .data, let value = try? XPCCodec.decodeWrapper(request.payload).value {
+        state.setLastTunnelServiceRequest(value)
+      }
+      try write(
+        client, HTTP2Frame.dataFrame(streamID: 1, payload: tunnelService.handshakeResponse))
       _ = try? readFrame(client)
       return
     }

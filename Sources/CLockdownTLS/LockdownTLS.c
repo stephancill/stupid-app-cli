@@ -524,7 +524,11 @@ int stupid_app_lockdown_tls_relay_tun(
 
     // Device -> host: read tunnel bytes, then deliver every complete IPv6
     // packet to the TUN, keeping any partial packet buffered for the next round.
-    if (descriptors[0].revents & (POLLIN | POLLHUP | POLLERR)) {
+    // Drain all available decrypted data; SSL_read_ex returns 0 for both a
+    // would-block on the non-blocking socket and a clean peer close, so the
+    // error must be inspected explicitly rather than treating 0 as EOF.
+    int tunnel_closed = 0;
+    while (1) {
       size_t received = 0;
       int read_result = SSL_read_ex(connection->ssl, inbound + inbound_length, 131072 - inbound_length, &received);
       if (read_result == 1 && received > 0) {
@@ -550,16 +554,23 @@ int stupid_app_lockdown_tls_relay_tun(
         } else {
           inbound_length = 0;
         }
-      } else if (read_result == 0) {
-        // Clean TLS close_notify from the peer; the tunnel is finished.
-        break;
-      } else {
-        int error = SSL_get_error(connection->ssl, read_result);
-        if (error != SSL_ERROR_WANT_READ && error != SSL_ERROR_WANT_WRITE) {
-          result = STUPID_APP_LOCKDOWN_TLS_READ_FAILED;
-          break;
-        }
+        continue;
       }
+      int error = SSL_get_error(connection->ssl, read_result);
+      if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE) {
+        break;
+      }
+      if (error == SSL_ERROR_ZERO_RETURN) {
+        // Clean TLS close_notify from the peer; the tunnel is finished.
+        tunnel_closed = 1;
+      } else {
+        result = STUPID_APP_LOCKDOWN_TLS_READ_FAILED;
+        tunnel_closed = 1;
+      }
+      break;
+    }
+    if (tunnel_closed) {
+      break;
     }
 
     // Host -> device: read a packet from the TUN and write it into the tunnel.

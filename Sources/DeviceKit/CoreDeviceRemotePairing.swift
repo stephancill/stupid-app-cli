@@ -40,18 +40,29 @@ public struct CoreDeviceRemotePairing: Sendable {
     }
   }
 
-  /// `transport(outgoing)` frames and sends the outgoing envelope (or performs
-  /// a receive-only read when `nil`) and returns the device's response envelope
-  /// (its `value` dictionary). The caller owns the mangled-Type-Name wrapper.
-  public typealias Transport = @Sendable ([String: XPCValue]?) throws -> [String: XPCValue]
+  /// `transport(outgoing, waitsForResponse)` frames the outgoing envelope and
+  /// returns the device's response envelope (its `value` dictionary). A `nil`
+  /// envelope performs a receive-only read (the device pushes awaiting-consent
+  /// data); `waitsForResponse == false` sends without reading a reply, matching
+  /// the device's fire-and-forget `pairVerifyFailed` event. The caller owns the
+  /// mangled-Type-Name wrapper.
+  public typealias Transport =
+    @Sendable ([String: XPCValue]?, Bool) throws
+    -> [String: XPCValue]?
+
+  public struct ValidationResult: Sendable, Equatable {
+    public var alreadyPaired: Bool
+    public var nextSequenceNumber: Int64
+  }
 
   public func pair(
     transport: @escaping Transport,
     identifier: String,
     hostname: String,
-    pin: String = "000000"
+    pin: String = "000000",
+    initialSequenceNumber: Int64 = 0
   ) throws -> SavedRecord {
-    var session = Session(transport: transport)
+    var session = Session(transport: transport, sequenceNumber: initialSequenceNumber)
     let serverValues = try session.requestConsent(hostname: hostname)
     var client = try session.srpClient(
       serverPublic: serverValues.serverPublic, salt: serverValues.salt, pin: pin)
@@ -66,9 +77,82 @@ public struct CoreDeviceRemotePairing: Sendable {
       remoteUnlockHostKey: remoteUnlock)
   }
 
+  /// Runs the Pair-Verify validation exchange the device requires before it
+  /// accepts Pair-Setup. When the device already recognizes this host (an
+  /// existing record validates), `alreadyPaired` is true and Pair-Setup must be
+  /// skipped; otherwise the device returns an error and the caller proceeds to
+  /// `pair()` from the returned sequence number.
+  public func validatePairing(
+    transport: @escaping Transport,
+    identifier: String,
+    recordPrivateKey: Data?,
+    initialSequenceNumber: Int64 = 0
+  ) throws -> ValidationResult {
+    var session = Session(transport: transport, sequenceNumber: initialSequenceNumber)
+    let x25519 = Curve25519.KeyAgreement.PrivateKey()
+    let x25519Public = x25519.publicKey.rawRepresentation
+
+    let startTLV = RemotePairing.encodeTLV([
+      (.state, Data([0x01])),
+      (.publicKey, x25519Public),
+    ])
+    let startResponse = try session.sendPlain(
+      eventData: startTLV, kind: "verifyManualPairing", sendingHost: nil, startNewSession: true)
+    let startComponents = RemotePairing.decodeTLV(try Session.pairingDataBytes(startResponse))
+    if startComponents[.error] != nil {
+      try session.sendPairVerifyFailed()
+      return ValidationResult(alreadyPaired: false, nextSequenceNumber: session.sequenceNumber)
+    }
+    guard let peerPublicKey = startComponents[.publicKey], peerPublicKey.count == 32 else {
+      throw Error.invalidResponse("the device omitted its X25519 public key")
+    }
+
+    let sharedSecret = try x25519.sharedSecretFromKeyAgreement(
+      with: Curve25519.KeyAgreement.PublicKey(rawRepresentation: peerPublicKey))
+    let exchange = sharedSecret.withUnsafeBytes { Data($0) }
+    let derivedKey = try Client.hkdf(
+      key: exchange,
+      salt: Data("Pair-Verify-Encrypt-Salt".utf8),
+      info: Data("Pair-Verify-Encrypt-Info".utf8))
+
+    var signBuffer = Data()
+    signBuffer.append(x25519Public)
+    signBuffer.append(Data(identifier.utf8))
+    signBuffer.append(peerPublicKey)
+    let signingKey = recordPrivateKey ?? Data(repeating: 0, count: 32)
+    let signer = try Curve25519.Signing.PrivateKey(rawRepresentation: signingKey)
+    let signature = try signer.signature(for: signBuffer)
+
+    let encryptedInner = RemotePairing.encodeTLV([
+      (.identifier, Data(identifier.utf8)),
+      (.signature, signature),
+    ])
+    let encryptedData = try Client.encrypt(
+      key: derivedKey,
+      nonce: Data([0, 0, 0, 0]) + Data("PV-Msg03".utf8),
+      plaintext: encryptedInner)
+    let finishTLV = RemotePairing.encodeTLV([
+      (.state, Data([0x03])),
+      (.encryptedData, encryptedData),
+    ])
+    let finishResponse = try session.sendPlain(
+      eventData: finishTLV, kind: "verifyManualPairing", sendingHost: nil, startNewSession: false)
+    let finishComponents = RemotePairing.decodeTLV(try Session.pairingDataBytes(finishResponse))
+    if finishComponents[.error] != nil {
+      try session.sendPairVerifyFailed()
+      return ValidationResult(alreadyPaired: false, nextSequenceNumber: session.sequenceNumber)
+    }
+    return ValidationResult(alreadyPaired: true, nextSequenceNumber: session.sequenceNumber)
+  }
+
   struct Session: Sendable {
     let transport: Transport
-    var sequenceNumber: Int64 = 0
+    var sequenceNumber: Int64
+
+    init(transport: @escaping Transport, sequenceNumber: Int64 = 0) {
+      self.transport = transport
+      self.sequenceNumber = sequenceNumber
+    }
 
     mutating func requestConsent(hostname: String) throws -> (serverPublic: Data, salt: Data) {
       let tlv = RemotePairing.encodeTLV([
@@ -77,12 +161,17 @@ public struct CoreDeviceRemotePairing: Sendable {
       ])
       let response = try sendPlain(
         eventData: tlv, kind: "setupManualPairing", sendingHost: hostname, startNewSession: true)
-      var components = RemotePairing.decodeTLV(try Self.pairingDataBytes(response))
-      if components[.publicKey] == nil {
-        // Awaiting user consent: the device pushes the pairing data once approved.
+      let isAwaitingConsent =
+        response["event"]?.dictionaryValue?["_0"]?.dictionaryValue?["awaitingUserConsent"] != nil
+      let responseData: Data
+      if isAwaitingConsent {
+        // The device pushes the pairing data once the user approves the Trust dialog.
         let pushed = try receivePlain()
-        components = RemotePairing.decodeTLV(try Self.pairingDataBytes(pushed))
+        responseData = try Self.pairingDataBytes(pushed)
+      } else {
+        responseData = try Self.pairingDataBytes(response)
       }
+      let components = RemotePairing.decodeTLV(responseData)
       guard let serverPublic = components[.publicKey], let salt = components[.salt] else {
         throw Error.invalidResponse("consent omitted the server public key and salt")
       }
@@ -116,13 +205,30 @@ public struct CoreDeviceRemotePairing: Sendable {
         "sequenceNumber": .uint64(UInt64(bitPattern: sequenceNumber)),
       ]
       sequenceNumber += 1
-      let response = try transport(envelope)
+      guard let response = try transport(envelope, true) else {
+        throw Error.transport("the pairing exchange omitted a response")
+      }
       return Self.responsePlain(response)
     }
 
     mutating func receivePlain() throws -> [String: XPCValue] {
-      let response = try transport(nil)
+      guard let response = try transport(nil, true) else {
+        throw Error.transport("the device did not push the expected message")
+      }
       return Self.responsePlain(response)
+    }
+
+    mutating func sendPairVerifyFailed() throws {
+      let inner: [String: XPCValue] = [
+        "event": .dictionary(["_0": .dictionary(["pairVerifyFailed": .dictionary([:])])])
+      ]
+      let envelope: [String: XPCValue] = [
+        "message": .dictionary(["plain": .dictionary(["_0": .dictionary(inner)])]),
+        "originatedBy": .string("host"),
+        "sequenceNumber": .uint64(UInt64(bitPattern: sequenceNumber)),
+      ]
+      sequenceNumber += 1
+      _ = try transport(envelope, false)
     }
 
     static func event(
@@ -286,8 +392,11 @@ public struct CoreDeviceRemotePairing: Sendable {
         "originatedBy": .string("host"),
         "sequenceNumber": .uint64(UInt64(bitPattern: sequenceNumber)),
       ]
-      let response = try transport(envelope)
+      let response = try transport(envelope, true)
       encryptedSequenceNumber += 1
+      guard let response else {
+        throw Error.transport("the encrypted exchange omitted a response")
+      }
       guard
         let stream = response["message"]?.dictionaryValue?["streamEncrypted"]?.dictionaryValue,
         let encryptedData = stream["_0"]?.dataValue
@@ -319,7 +428,9 @@ public struct CoreDeviceRemotePairing: Sendable {
         "sequenceNumber": .uint64(UInt64(bitPattern: sequenceNumber)),
       ]
       sequenceNumber += 1
-      let response = try transport(envelope)
+      guard let response = try transport(envelope, true) else {
+        throw Error.transport("the pairing exchange omitted a response")
+      }
       return Session.responsePlain(response)
     }
 

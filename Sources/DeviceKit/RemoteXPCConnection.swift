@@ -46,33 +46,40 @@ final class RemoteXPCConnection: @unchecked Sendable {
   /// Performs the RemoteXPC handshake and blocks until the peer has sent its
   /// initial SETTINGS frame. The caller should then invoke `completeHandshake`.
   func start() throws {
-    var out = Data()
-    out.append(HTTP2Frame.magic)
-    out.append(
+    let pieces: [Data] = [
+      HTTP2Frame.magic,
       HTTP2Frame.settingsFrame(pairs: [
         (id: 0x3, value: 100),
         (id: 0x4, value: 1_048_576),
-      ]))
-    out.append(HTTP2Frame.windowUpdate(streamID: 0, increment: 983_041))
-    out.append(HTTP2Frame.headersFrame(streamID: Stream.root.rawValue))
-    // The client offers an empty request followed by a bare keep-alive wrapper.
-    out.append(
+      ]),
+      HTTP2Frame.windowUpdate(streamID: 0, increment: 983_041),
+      HTTP2Frame.headersFrame(streamID: Stream.root.rawValue),
+      // The client offers an empty request followed by a bare keep-alive wrapper.
       HTTP2Frame.dataFrame(
-        streamID: Stream.root.rawValue, payload: try xpcEmptyDictionary(flags: 0x0000_0001)))
-    out.append(
+        streamID: Stream.root.rawValue, payload: try xpcEmptyDictionary(flags: 0x0000_0001)),
       HTTP2Frame.dataFrame(
-        streamID: Stream.root.rawValue, payload: xpcEmptyWrapper(flags: 0x0000_0201)))
-    nextMessageID[Stream.root.rawValue]! += 1
-    out.append(HTTP2Frame.headersFrame(streamID: Stream.reply.rawValue))
-    out.append(
+        streamID: Stream.root.rawValue, payload: xpcEmptyWrapper(flags: 0x0000_0201)),
+      HTTP2Frame.headersFrame(streamID: Stream.reply.rawValue),
       HTTP2Frame.dataFrame(
         streamID: Stream.reply.rawValue,
         payload: xpcEmptyWrapper(
-          flags: XPCCodec.Flags.initHandshake.rawValue | XPCCodec.Flags.alwaysSet.rawValue)))
+          flags: XPCCodec.Flags.initHandshake.rawValue | XPCCodec.Flags.alwaysSet.rawValue)),
+    ]
+    nextMessageID[Stream.root.rawValue]! += 1
     nextMessageID[Stream.reply.rawValue]! += 1
-    try connection.write(out)
+    for piece in pieces {
+      try connection.write(piece)
+    }
+    if ProcessInfo.processInfo.environment["STUPID_APP_TUNNEL_DEBUG"] != nil {
+      let out = pieces.reduce(Data(), +)
+      let hex = out.map { String(format: "%02x", $0) }.joined()
+      FileHandle.standardError.write(Data("[rsd] handshake \(out.count): \(hex)\n".utf8))
+    }
 
     let settings = try receiveFrame()
+    if ProcessInfo.processInfo.environment["STUPID_APP_TUNNEL_DEBUG"] != nil {
+      FileHandle.standardError.write(Data("[rsd] received settings frame\n".utf8))
+    }
     guard settings.kind == .settings else {
       throw Error.protocolViolation("expected a SETTINGS frame after the handshake")
     }
@@ -175,8 +182,17 @@ final class RemoteXPCConnection: @unchecked Sendable {
   private func receiveDataFrame() throws -> (streamID: UInt32, payload: Data) {
     while true {
       let frame = try receiveFrame()
+      if ProcessInfo.processInfo.environment["STUPID_APP_TUNNEL_DEBUG"] != nil {
+        FileHandle.standardError.write(
+          Data(
+            "[rsd] frame kind=\(frame.kind.rawValue) flags=\(frame.flags) stream=\(frame.streamID) len=\(frame.payload.count)\n"
+              .utf8))
+      }
       switch frame.kind {
       case .goaway:
+        let text = String(
+          decoding: frame.payload.dropFirst(8).prefix(200), as: UTF8.self)
+        FileHandle.standardError.write(Data("[rsd] GOAWAY: \(text)\n".utf8))
         throw Error.connectionClosed
       case .rstStream:
         throw Error.protocolViolation("the peer reset a stream")

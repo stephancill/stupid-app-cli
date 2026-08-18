@@ -818,6 +818,7 @@ int stupid_app_coredevice_tls_tunnel_relay(
     return STUPID_APP_COREDEVICE_TLS_TUNNEL_INVALID_INPUT;
   }
   signal(SIGPIPE, SIG_IGN);
+  int debug = getenv("STUPID_APP_TUNNEL_DEBUG") != NULL;
   int64_t relay_deadline;
   int64_t now = monotonic_milliseconds();
   if (now < 0 || tunnel->timeout_milliseconds > INT64_MAX - now) {
@@ -846,7 +847,7 @@ int stupid_app_coredevice_tls_tunnel_relay(
       {.fd = tunnel->socket_fd, .events = POLLIN},
       {.fd = tun_fd, .events = POLLIN},
     };
-    int waited = poll(descriptors, 2, remaining < 50 ? remaining : 50);
+    int waited = poll(descriptors, 2, remaining < 2 ? remaining : 2);
     if (waited < 0) {
       if (errno == EINTR) {
         continue;
@@ -855,12 +856,40 @@ int stupid_app_coredevice_tls_tunnel_relay(
       break;
     }
 
-    // Device -> host.
-    if (descriptors[0].revents & (POLLIN | POLLHUP | POLLERR)) {
+    // Device -> host. Drain every available decrypted byte. The drain is
+    // attempted even when poll did not report the socket as readable: OpenSSL
+    // can hold decrypted data in its internal buffer with no new socket bytes,
+    // and SSL_read_ex must return it or the peer-info would sit unread.
+    int tunnel_closed = 0;
+    while (1) {
       size_t received = 0;
       int read_result =
         SSL_read_ex(tunnel->ssl, inbound + inbound_length, 131072 - inbound_length, &received);
       if (read_result == 1 && received > 0) {
+        if (debug) {
+          size_t buffered = inbound_length + received;
+          fprintf(stderr, "[relay] device->host chunk=%zu buffered=%zu raw:", received, buffered);
+          for (size_t i = 0; i < received && i < 40; i++) {
+            fprintf(stderr, " %02x", inbound[inbound_length + i]);
+          }
+          fprintf(stderr, "\n");
+          size_t o = 0;
+          while (o + 40 <= buffered) {
+            size_t plen2 = ((size_t)inbound[o + 4] << 8) | inbound[o + 5];
+            if (o + 40 + plen2 > buffered) break;
+            unsigned int seq = ((unsigned int)inbound[o + 44] << 24) | ((unsigned int)inbound[o + 45] << 16) |
+              ((unsigned int)inbound[o + 46] << 8) | inbound[o + 47];
+            unsigned int ack = ((unsigned int)inbound[o + 48] << 24) | ((unsigned int)inbound[o + 49] << 16) |
+              ((unsigned int)inbound[o + 50] << 8) | inbound[o + 51];
+            unsigned int flags = ((unsigned int)inbound[o + 52] << 8) | inbound[o + 53];
+            unsigned int tcp_len = ((unsigned int)inbound[o + 52] >> 4) * 4;
+            fprintf(stderr,
+              "[relay]   pkt len=%zu src=%02x%02x dst=%02x%02x seq=%08x ack=%08x flags=%04x tcplen=%u payload=%zu\n",
+              plen2 + 40, inbound[o + 40], inbound[o + 41], inbound[o + 42], inbound[o + 43],
+              seq, ack, flags & 0x0fff, tcp_len, plen2 > tcp_len ? plen2 - tcp_len : 0);
+            o += 40 + plen2;
+          }
+        }
         inbound_length += received;
         size_t offset = 0;
         while (offset + 40 <= inbound_length) {
@@ -883,21 +912,48 @@ int stupid_app_coredevice_tls_tunnel_relay(
         } else {
           inbound_length = 0;
         }
-      } else if (read_result == 0) {
-        break;
-      } else {
-        int error = SSL_get_error(tunnel->ssl, read_result);
-        if (error != SSL_ERROR_WANT_READ && error != SSL_ERROR_WANT_WRITE) {
-          result = STUPID_APP_COREDEVICE_TLS_TUNNEL_READ_FAILED;
-          break;
-        }
+        continue;
       }
+      // read_result <= 0. Distinguish a real peer close from a would-block on
+      // the non-blocking socket: SSL_read_ex returns 0 for both SSL_ERROR_WANT_READ
+      // and SSL_ERROR_ZERO_RETURN, so the error must be inspected explicitly.
+      int error = SSL_get_error(tunnel->ssl, read_result);
+      if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE) {
+        break;
+      }
+      if (error == SSL_ERROR_ZERO_RETURN) {
+        if (debug) fprintf(stderr, "[relay] device->host clean close\n");
+        tunnel_closed = 1;
+      } else {
+        if (debug)
+          fprintf(stderr, "[relay] device->host SSL error %d\n", error);
+        result = STUPID_APP_COREDEVICE_TLS_TUNNEL_READ_FAILED;
+        tunnel_closed = 1;
+      }
+      break;
     }
+    if (tunnel_closed) break;
 
     // Host -> device.
     if (descriptors[1].revents & (POLLIN | POLLHUP | POLLERR)) {
       ssize_t packet_length = read(tun_fd, outbound, 65536);
       if (packet_length > 0) {
+        if (debug) {
+          fprintf(stderr, "[relay] host->device %zd bytes", packet_length);
+          if (packet_length >= 44) {
+            unsigned int seq = ((unsigned int)outbound[44] << 24) | ((unsigned int)outbound[45] << 16) |
+              ((unsigned int)outbound[46] << 8) | outbound[47];
+            unsigned int ack = ((unsigned int)outbound[48] << 24) | ((unsigned int)outbound[49] << 16) |
+              ((unsigned int)outbound[50] << 8) | outbound[51];
+            unsigned int flags = ((unsigned int)outbound[52] << 8) | outbound[53];
+            fprintf(stderr, " src=%02x%02x dst=%02x%02x seq=%08x ack=%08x flags=%04x",
+              outbound[40], outbound[41], outbound[42], outbound[43], seq, ack, flags & 0x0fff);
+            fprintf(stderr, " srcIP=%02x%02x:%02x%02x...%02x%02x dstIP=%02x%02x:%02x%02x...%02x%02x",
+              outbound[8], outbound[9], outbound[10], outbound[11], outbound[22], outbound[23],
+              outbound[24], outbound[25], outbound[26], outbound[27], outbound[38], outbound[39]);
+          }
+          fprintf(stderr, "\n");
+        }
         size_t offset = 0;
         while (offset < (size_t)packet_length) {
           size_t written_chunk = 0;

@@ -83,7 +83,10 @@ public final class PersistentCoreDeviceTunnel: @unchecked Sendable {
     }
 
     tun = try Self.makeTUN(handshake: handshake)
-    try tun.addRoute(to: handshake.serverAddress)
+    // The on-link /64 route created by assigning the client address covers the
+    // server address. Do not add an explicit /128 route here: pymobiledevice3
+    // relies on the kernel's on-link /64 route, and the device's RSD rejects
+    // connections sourced through an explicit off-link route.
   }
 
   deinit {
@@ -105,10 +108,16 @@ public final class PersistentCoreDeviceTunnel: @unchecked Sendable {
     lock.unlock()
 
     let descriptor = try tun.descriptor()
-    let tunnelHandle = handle
-    let stopPointer = stopFlag
+    // OpaquePointer is not Sendable; move the pointers across the thread
+    // boundary as integer bit patterns so the @Sendable closure compiles on
+    // every supported host.
+    let tunnelHandleBits = UInt(bitPattern: handle)
+    let stopPointerBits = Int(bitPattern: stopFlag)
     queue.async {
-      _ = stupid_app_coredevice_tls_tunnel_relay(tunnelHandle, descriptor, stopPointer)
+      _ = stupid_app_coredevice_tls_tunnel_relay(
+        OpaquePointer(bitPattern: tunnelHandleBits),
+        descriptor,
+        UnsafeMutablePointer<Int32>(bitPattern: stopPointerBits))
     }
     return (tunDescriptor: descriptor, stop: { [self] in stopRelay() })
   }

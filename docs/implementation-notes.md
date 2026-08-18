@@ -2133,3 +2133,257 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
   `Tools/pymobiledevice3`+`uv`, then qualify on a clean `iosdev-ubuntu` host (fresh pair +
   three unplugged network runs). The WSL `.build` needs a clean rebuild to clear the stale
   CLZFSE module state.
+
+## 2026-08-18 - Native Device Pairing Cutover And Python Stack Removal
+
+### Summary
+
+- Wired `stupid-app device pair --usb` to the native SRP-3072 Pair-Setup bootstrap,
+  removing the last Python product path. `device pair --usb` now performs native
+  lockdown pairing, then a privileged `coredevice-helper pair-usb` subcommand
+  establishes the CoreDevice USB tunnel and completes Pair-Setup over the RSD
+  `com.apple.internal.dt.coredevice.untrusted.tunnelservice` service.
+- Deleted the Python stack: `CoreDeviceRunner`, the bundled
+  `pymobiledevice3_helper.py` resource, `Tools/pymobiledevice3` (`pyproject.toml`,
+  `uv.lock`, and the frozen `.venv`), the Python test file, and the DeviceKit
+  resource declaration. No CLI command invokes Python.
+- Cut `doctor` over: the frozen Python/package check was replaced with a native
+  CoreDevice-helper check, and the `--python`/`--coredevice-helper` options were
+  removed from `doctor` and `device pair`.
+
+### Native Pair-Setup Components
+
+- Refactored `CoreDeviceUSBLauncher` into `USBCoreDeviceTunnel`, which owns the
+  lockdown session, CoreDevice proxy tunnel, CDTunnel handshake, TUN interface,
+  packet relay, and RSD session with a single deferred teardown. Both `launch-usb`
+  and the new `pair-usb` helper reuse it.
+- Added `CoreDeviceTunnelService`, a native client for the RSD tunnel service: it
+  reads the pushed `ServiceVersion`, performs the `attemptPairVerify` handshake
+  (consuming plain sequence zero), captures the device's remote-pairing identifier
+  from `peerDeviceInfo`, and provides the mangled-Type-Name transport closure.
+- Added `CoreDeviceRemotePairer`, which runs `CoreDeviceRemotePairing.pair()` over
+  that transport and writes the `remote_<identifier>.plist` record as a mode-`0600`
+  file inside the mode-`0700` pairing directory, returning ownership to the invoking
+  user when the helper runs under sudo.
+- `CoreDeviceRemotePairing.pair()` now accepts an `initialSequenceNumber` so the
+  Pair-Setup exchange continues the sequence consumed by the handshake.
+- Fixed `requestConsent` to handle the `awaitingUserConsent` response: the device
+  answers the consent request with that event and then pushes the pairing data, so
+  the client must read the push instead of parsing the first response as pairing
+  data.
+
+### Hermetic Verification
+
+- Added a scripted SRP-3072 server test (`CoreDeviceRemotePairingTests`) that
+  mirrors the device math and proves the complete Pair-Setup envelope sequence:
+  consent (both immediate and pushed after a Trust dialog), proof verification,
+  the encrypted PS-Msg05/06 record handoff, and the encrypted
+  `createRemoteUnlockKey` request. The server splits values longer than 255 bytes
+  into repeated TLV8 components, matching the wire length-prefix constraint. A
+  rejected client proof fails loudly.
+- Extended the fake RemoteXPC server with a tunnel-service mode and added a test
+  that `CoreDeviceTunnelService.connect()` parses the pushed `ServiceVersion`,
+  sends the mangled-Type-Name handshake envelope, and extracts the device
+  identifier.
+- `swift test` passes 141 cases across 26 suites; `swift build -c release` and
+  `swift format lint --strict` pass. The pre-existing Homebrew OpenSSL
+  deployment-target warnings and unhandled icon fixture warning remain.
+
+### Limitations And Follow-Up
+
+- The native pair cutover is not yet physically qualified. The isolated
+  `iosdev-ubuntu` WSL host must re-prove a fresh native `device pair --usb`
+  (including the on-device Trust dialog) and three consecutive unplugged
+  `run --network` runs with the cutover source. The WSL `.build` needs a clean
+  rebuild to clear the previously reported stale CLZFSE module state.
+- `device pair --usb` and `run --usb` still require the qualified USBIP-compatible
+  usbmuxd transport for large IPA transfers; small-message lockdown/tunnel traffic
+  works with the stock daemon.
+
+## 2026-08-18 - Native Network Run Physical Qualification: RSD-Over-Tunnel Blocker
+
+### Summary
+
+- Attempted the physical qualification of the fully native device stack on the
+  isolated `iosdev-ubuntu` WSL host: fresh native `device pair --usb`
+  (lockdown + SRP-3072 Pair-Setup) and the native `run --network` path.
+- A fresh native pair succeeded: the remote pairing record was written as a
+  mode-`0600` `remote_<id>.plist` under the mode-`0700` pairing directory and
+  the ownership-handoff back to the invoking user worked.
+- The native `run --network` path is **blocked**: the device's RSD daemon rejects
+  the RSD connection over the native network tunnel, so the native network
+  install/launch cannot complete. This is a genuine open blocker, not a
+  configuration issue.
+
+### Physical Environment
+
+- `iosdev-ubuntu` WSL host reached via the Windows box (`wsl -d iosdev-ubuntu -u iosdev`).
+- A temporary `cap_net_admin=ep` file capability on the `stupid-app` and test
+  binaries provides the TUN capability without full root; a NOPASSWD sudoers
+  entry grants the `coredevice-helper` subcommand (and, temporarily, the Python
+  comparison scripts).
+- The iPhone was passed through from Windows via USBIP (`usbipd attach`) and
+  detached before the network runs to satisfy the unplugged condition.
+
+### Blocker Detail
+
+The native `run --network` (and the isolated RSD client) reaches the device:
+mDNS discovery, the RPPairing Pair-Verify, the TLS-PSK `CDTunnel` handshake, the
+TUN + relay, and the RSD TCP connection all work. The device's RSD daemon then
+sends **only the HTTP/2 SETTINGS frame and immediately closes the tunnel**,
+so the peer-info (and thus install/launch) never arrives.
+
+### Decisive Isolation Result
+
+- `pymobiledevice3 8.2.1` (frozen Python 3.13 environment reconstructed locally)
+  completes the whole network path against the same device, proving the device,
+  network, tunnel, and RSD are all functional.
+- Running pymobiledevice3's **own RSD client over the native tunnel** (native
+  establishes the tunnel, Python connects the RSD) fails with a timeout and the
+  device closes the tunnel after SETTINGS. This proves the defect is in the
+  **native tunnel establishment**, not the native RSD client.
+- The native RSD handshake bytes are byte-identical to the pymobiledevice3
+  reference (verified with a generated 195-byte reference handshake). The RSD
+  connection source address equals the tunnel client address in both cases.
+
+### Ruled Out
+
+- RSD handshake content (byte-identical to the reference).
+- RSD connection source/destination addressing (both use the tunnel client address).
+- RSD handshake TCP segmentation (matched pymobiledevice3 via split writes + TCP_NODELAY).
+- The relay framing: the network relay (`stupid_app_coredevice_tls_tunnel_relay`)
+  is structurally identical to the working USB relay
+  (`stupid_app_lockdown_tls_relay_tun`, which the device accepts over USB).
+- Pairing record and host-identifier derivation (identical to pymobiledevice3).
+- The explicit `/128` server route (removed; the on-link `/64` route now matches
+  pymobiledevice3).
+- The `createListener` `owningProcessName` (changed to `"CoreDeviceService"` to
+  match the reference).
+- Relay poll latency (2 ms vs 50 ms).
+- The device does NOT close an idle tunnel, so the close is specifically tied to
+  the RSD connection over the native tunnel.
+
+### Code Changes Made During This Session
+
+Real fixes and reference-alignment (kept):
+
+- `RemotePairingChannel`: fixed the `PV-Msg03` ChaCha20-Poly1305 nonce to the
+  correct 12 bytes (`00 00 00 00` + `"PV-Msg03"`); it was 8 bytes and would have
+  failed at runtime on the first physical network Pair-Verify.
+- `RemotePairingChannel`: `createTCPListener` now sends `owningProcessName =
+  "CoreDeviceService"` to match the pymobiledevice3 reference.
+- `RemoteXPCConnection`: the RemoteXPC handshake is written frame-by-frame
+  instead of as one concatenated buffer, matching pymobiledevice3's per-frame
+  writes.
+- `USBMuxClient`: `TCP_NODELAY` is applied to sockets so handshake frames are
+  not coalesced into a single segment.
+- `PersistentCoreDeviceTunnel`: the explicit `/128` server route is no longer
+  added; the on-link `/64` route (matching pymobiledevice3) covers the server.
+- Linux-only build fixes for `RemotepairingDiscovery` (`SOCK_DGRAM`, `IPPROTO_*`
+  typed as `Int` on glibc) and `PersistentCoreDeviceTunnel` (OpaquePointer
+  Sendable capture moved through integer bit patterns). These were latent and
+  only surfaced when the network source first built on WSL.
+- `NetworkPathPhysicalTests`: an env-gated physical test harness with modes to
+  (a) browse mDNS + establish the native tunnel + open RSD, (b) hold the tunnel
+  and export its RSD endpoint, (c) delay the RSD connect, (d) hold the tunnel
+  idle without RSD, and (e) connect the native RSD to an external endpoint.
+
+Environment-gated diagnostic logging (kept, disabled unless
+`STUPID_APP_TUNNEL_DEBUG` is set): the C relays log device/host packet activity
+and IPv6/TCP header details, the RemoteXPC connection logs the handshake hex and
+received frame kinds, and the socket layer logs received bytes. This is intended
+for the next debugging session and produces no output in normal operation.
+
+### Verification
+
+- macOS `swift test`: 144 cases across 27 suites pass; `swift build -c release`
+  and `swift format lint --strict` pass; `git diff --check` passes.
+- The pre-existing Homebrew OpenSSL deployment-target and unhandled icon-fixture
+  warnings remain.
+- WSL host: the source builds and all 143 Linux tests pass (the macOS-only
+  differential catalog check skips).
+
+### Recommended Next Steps
+
+1. Capture pymobiledevice3's encrypted `createListener` request and the TLS-PSK
+   tunnel details byte-for-byte and diff against the native implementation; the
+   tunnel establishment is the only remaining un-diffed part.
+2. Use the native tunnel while connecting with pymobiledevice3's RSD client (and
+   vice versa) to continue isolating whether the remaining difference is in the
+   tunnel establishment or the TLS tunnel itself.
+3. Fix the identified difference, then re-run the full qualification: fresh
+   native pair + three consecutive unplugged `run --network` runs.
+4. Re-apply the missing `cap_net_admin` setcap after any test rebuild on WSL
+   (each `swift build` of the test binary wipes the file capability).
+5. When the network run is qualified, re-run `doctor`, then remove the temporary
+   sudoers/Python comparison environment and the debug logging.
+
+## 2026-08-18 - Native Network Run Blocker Resolved: Relay WANT_READ Misread As EOF
+
+### Summary
+
+- Diagnosed and fixed the open blocker that prevented the fully native
+  `run --network` path from completing. With a proven pymobiledevice3 RSD client
+  over the native tunnel also failing identically (device sends only its
+  SETTINGS frame and the client times out), the investigation isolated the
+  defect to the persistent network tunnel relay.
+- Root cause: in `stupid_app_coredevice_tls_tunnel_relay`, the device->host
+  read treated any `SSL_read_ex` return of `0` as a clean peer close. On the
+  non-blocking OpenSSL socket, `SSL_read_ex` returns `0` for `SSL_ERROR_WANT_READ`
+  as well as for `SSL_ERROR_ZERO_RETURN`, so the relays exited after delivering
+  the device's SETTINGS frame and never read the peer-info. The device did not
+  close the tunnel; the RSD client just never received the peer-info.
+- Fixed both the network relay and the identical latent USB lockdown relay
+  (`stupid_app_lockdown_tls_relay_tun`): call `SSL_get_error` and treat only
+  `SSL_ERROR_ZERO_RETURN` as a peer close; `SSL_ERROR_WANT_READ`/`WANT_WRITE`
+  continue the poll loop. Added a device->host drain loop that attempts to read
+  all available decrypted bytes regardless of poll state, because OpenSSL can
+  hold decrypted data in its internal buffer while the raw socket has no new
+  bytes.
+
+### Evidence
+
+- `tcpdump` on the isolated WSL host captured the device continuing to send
+  TLS-encrypted tunnel data for roughly eight seconds after the relay first
+  reported `EOF` (the host TCP stack ACKed it throughout). This proved the
+  device did not close the TLS tunnel and that the relay's EOF was a false
+  `SSL_ERROR_WANT_READ`.
+- The device's initial SETTINGS frame content and the negotiated TLS cipher and
+  ServerHello were byte-identical between the native and the working Python
+  tunnel, confirming the TLS layer was not at fault.
+
+### Ruled Out (with evidence)
+
+- RSD client handshake bytes: byte-identical to the generated pymobiledevice3
+  reference (195 bytes).
+- TLS negotiation: both the native and Python tunnels negotiated cipher
+  `0x00A8` (OpenSSL name `PSK-AES128-GCM-SHA256`) with identical ServerHellos.
+- TUN setup, relay structure, and the packet-level TCP/IP stream over the
+  tunnel: equivalent to the working paths.
+- RPPairing control-connection lifetime: keeping it open across the tunnel did
+  not change the failure and was reverted after the real fix.
+- RSD-connect timing (adding a delay did not change the failure) and the
+  CDTunnel request JSON key order (the USB path uses the same order and works).
+
+### Verification
+
+- The isolated x86_64 Ubuntu WSL host: `RSD OPENED` reported the peer with all
+  service entries, and three consecutive physically unplugged `run --network`
+  runs each assembled, signed once, packaged, discovered, tunneled, installed,
+  verified, and launched the development app. No residual CLI/helper processes
+  or tunnel interfaces remained.
+- macOS `swift test`: the DeviceKit suites (including the relay-adjacent
+  CoreDeviceTLS and CoreDeviceRemotePairing suites) pass. A pre-existing flaky
+  `CoreDeviceTLSConnectionTests.totalTimeout` timing assertion can exceed its
+  2-second bound under full-suite parallel load; it passes consistently in
+  isolation (~0.25 seconds) and is unrelated to this change.
+- `swift format lint --strict` and `git diff --check` pass for the changed files.
+
+### Follow-Up
+
+- Keep the env-gated `STUPID_APP_TUNNEL_DEBUG` relay/RSD/socket logging; it is
+  what surfaced this defect and remains useful for future device-stack work.
+- Re-run `stupid-app doctor` on the clean host and remove the temporary
+  sudoers/`cap_net_admin`/Python comparison environment used during debugging.
+- The native device stack is now fully qualified end-to-end for the network run
+  without Python.

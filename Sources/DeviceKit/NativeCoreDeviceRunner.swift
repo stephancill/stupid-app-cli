@@ -72,8 +72,26 @@ public struct NativeCoreDeviceRunner: Sendable {
     _ = executable
   }
 
+  public func pairUSB(udid: String) throws {
+    var arguments = ["coredevice-helper", "pair-usb"]
+    arguments += ["--udid", udid]
+    arguments += ["--pairing-dir", pairingDirectory.path]
+    if let usbmuxAddress {
+      arguments += ["--usbmux", usbmuxAddress]
+    }
+    arguments += ["--timeout", seconds(max(launchTimeoutSeconds, 60))]
+
+    let result = try runHelper(
+      arguments: arguments, phase: "USB pairing", timeout: max(launchTimeoutSeconds, 60) + 30,
+      udid: udid)
+    guard Self.statusIsOK(result.stdout) else {
+      throw Error.operationFailed(
+        "USB pairing",
+        Self.redact(detail: "helper did not report a successful pairing status", udid: udid))
+    }
+  }
+
   public func launchUSB(bundleID: String, udid: String) throws -> Int64 {
-    let executable = try resolveExecutable()
     var arguments = ["coredevice-helper", "launch-usb"]
     arguments += ["--udid", udid]
     arguments += ["--bundle-id", bundleID]
@@ -82,6 +100,21 @@ public struct NativeCoreDeviceRunner: Sendable {
       arguments += ["--usbmux", usbmuxAddress]
     }
     arguments += ["--timeout", seconds(launchTimeoutSeconds)]
+
+    let result = try runHelper(
+      arguments: arguments, phase: "USB launch", timeout: launchTimeoutSeconds + 30, udid: udid)
+    guard let pid = Self.parsePID(result.stdout) else {
+      throw Error.operationFailed(
+        "USB launch",
+        Self.redact(detail: "helper did not report a process identifier", udid: udid))
+    }
+    return pid
+  }
+
+  private func runHelper(
+    arguments: [String], phase: String, timeout: Double, udid: String?
+  ) throws -> ProcessRunner.Result {
+    let executable = try resolveExecutable()
 
     let executableInvocation: String
     let processArguments: [String]
@@ -101,22 +134,17 @@ public struct NativeCoreDeviceRunner: Sendable {
         executable: executableInvocation,
         arguments: processArguments,
         environment: environment,
-        configuration: .init(maxOutputBytes: 30_000, timeoutSeconds: launchTimeoutSeconds + 30)
+        configuration: .init(maxOutputBytes: 30_000, timeoutSeconds: timeout)
       )
     } catch {
       throw Error.operationFailed(
-        "USB launch", Self.redact(detail: String(describing: error), udid: udid))
+        phase, Self.redact(detail: String(describing: error), udid: udid))
     }
     guard result.succeeded else {
       let detail = [result.stdout, result.stderr].filter { !$0.isEmpty }.joined(separator: "\n")
-      throw Error.operationFailed("USB launch", Self.redact(detail: detail, udid: udid))
+      throw Error.operationFailed(phase, Self.redact(detail: detail, udid: udid))
     }
-    guard let pid = Self.parsePID(result.stdout) else {
-      throw Error.operationFailed(
-        "USB launch",
-        Self.redact(detail: "helper did not report a process identifier", udid: udid))
-    }
-    return pid
+    return result
   }
 
   private func resolveExecutable() throws -> String {
@@ -150,6 +178,17 @@ public struct NativeCoreDeviceRunner: Sendable {
       return nil
     }
     return pid
+  }
+
+  static func statusIsOK(_ output: String) -> Bool {
+    guard
+      let data = output.data(using: .utf8),
+      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      object["status"] as? String == "ok"
+    else {
+      return false
+    }
+    return true
   }
 
   static func redact(detail: String, udid: String?) -> String {

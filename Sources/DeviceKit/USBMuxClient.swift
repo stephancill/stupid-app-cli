@@ -698,6 +698,10 @@ final class SocketConnection: @unchecked Sendable {
         throw USBMuxClient.Error.connectionFailed(errno)
       }
     }
+    if ProcessInfo.processInfo.environment["STUPID_APP_TUNNEL_DEBUG"] != nil {
+      let hex = data.map { String(format: "%02x", $0) }.joined()
+      FileHandle.standardError.write(Data("[sock] read \(count) bytes: \(hex)\n".utf8))
+    }
     return data
   }
 
@@ -841,6 +845,19 @@ final class SocketConnection: @unchecked Sendable {
       setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, timeoutSize) == 0,
       setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &timeout, timeoutSize) == 0
     else {
+      throw USBMuxClient.Error.connectionFailed(errno)
+    }
+    // RemoteXPC frame segmentation matters on the device: coalescing the
+    // handshake into one segment is rejected, so disable Nagle to keep each
+    // write as its own segment.
+    var noDelay: Int32 = 1
+    if setsockopt(
+      descriptor,
+      Int32(IPPROTO_TCP),
+      TCP_NODELAY,
+      &noDelay,
+      socklen_t(MemoryLayout<Int32>.size)
+    ) != 0 {
       throw USBMuxClient.Error.connectionFailed(errno)
     }
     #if canImport(Darwin)

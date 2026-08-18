@@ -69,10 +69,10 @@ TLS-PSK path failed against the remote TCP listener with `NO_CIPHERS_AVAILABLE`.
 
 Gate 5 (product CLI) is in progress. `stupid-app doctor` now performs structured
 pass/warning/failure checks for the host Swift and imported SDK compatibility pair,
-signer and frozen device-tool environment, credential/signing/pairing presence and
-permissions, Linux tunnel/usbmux prerequisites, and project configuration. It exits
-unsuccessfully for required-environment failures without reading or printing secret
-contents. Frozen-environment installation, privileged-helper/sudo-policy setup,
+native signing trust, the native CoreDevice TLS and privileged helper,
+credential/signing/pairing presence and permissions, Linux tunnel/usbmux prerequisites,
+and project configuration. It exits unsuccessfully for required-environment failures
+without reading or printing secret contents. Privileged-helper/sudo-policy setup,
 qualified USB transport provisioning, and clean-host acceptance remain open.
 
 The promoted SwiftNIO SSL CoreDevice connection spike produced a **no-go** result. A live
@@ -106,13 +106,26 @@ The network run path is now fully native: a Swift mDNS DNS-SD browser discovers
 `_remotepairing._tcp.local.` advertisements, a native remote-pairing client reads the
 saved remote pairing record and performs the X25519/HKDF-SHA512/ChaCha20-Poly1305
 Pair-Verify over the advertised listener, and a persistent OpenSSL TLS-PSK tunnel
-(added to `CCoreDeviceTLS`) relays IPv6 packets to a TUN interface. Reachability install
-runs AFC + installation proxy over the RSD `*.shim.remote` services, and launch reuses
-the CoreDevice AppService client. `stupid-app run --network --udid <udid>` no longer
-invokes Python. The pinned Python stack now remains only for the `device pair --usb`
-CoreDevice remote-pair bootstrap (native SRP-3072 Pair-Setup is the remaining work); the
-standalone Python CLI adapter is removed and `run --network`'s `--python` and
-`--coredevice-helper` options are gone.
+(added to `CCoreDeviceTLS`) relays IPv6 packets to a TUN interface. `device pair --usb` is
+also fully native: it performs fresh native lockdown pairing, then a privileged helper
+establishes the CoreDevice USB tunnel, runs the SRP-3072 Pair-Setup exchange over the RSD
+`com.apple.internal.dt.coredevice.untrusted.tunnelservice` service, and writes the
+`remote_<identifier>.plist` record. The pinned Python stack (`CoreDeviceRunner`, the
+bundled helper, and `Tools/pymobiledevice3`) has been removed; no product command invokes
+Python.
+
+**Native `run --network` is now end-to-end qualified** on the isolated WSL host. The
+previous blocker (the device appeared to close the tunnel after its RSD SETTINGS frame,
+so the peer-info never arrived) was a defect in the persistent network relay: it treated
+any `SSL_read_ex` return of `0` as a peer close, but on the non-blocking OpenSSL socket
+that return also means `SSL_ERROR_WANT_READ`. The device kept sending the peer-info; the
+relay had simply exited, so the RSD client never received it. The fix calls
+`SSL_get_error` and treats only `SSL_ERROR_ZERO_RETURN` as a close, and drains all
+available decrypted bytes regardless of poll state. The same latent fix was applied to the
+USB lockdown relay. Three consecutive physically unplugged `run --network` runs now each
+build, sign once, package, discover, tunnel, install, verify, and launch the development
+app with no residual processes or interfaces. See `docs/implementation-notes.md` for the
+full investigation, ruled-out hypotheses, and verification.
 
 Product and executable naming is decided: the CLI and package are `stupid-app`, the
 project-level configuration file is `stupid-app.yml`, the SDK artifact ID is
@@ -549,6 +562,13 @@ Initial direction:
 - Keep a native in-process USB transport as deferred, non-blocking work. It is not a
   prerequisite for Gate 4 or Gate 5 while the qualified external transport remains the
   supported path.
+
+The device stack is now fully native: fresh lockdown pairing, the CoreDevice USB tunnel,
+the SRP-3072 remote-pair bootstrap, the mDNS network path, the Pair-Verify tunnel, and
+network install/launch all run without Python. The `device pair --usb` and `run --usb`
+paths use a privileged `coredevice-helper` subcommand invoked through an explicit `--sudo`
+boundary; the CLI never silently elevates. The external `usbmuxd` daemon and Linux TUN
+device remain external dependencies of the native stack.
 
 The current WSL host is on the same physical LAN as the iPhone and uses WSL mirrored
 networking, making it a better wireless test environment than a public VPS.
@@ -1267,9 +1287,9 @@ USB CoreDevice tunnel and returned a live process token.
 
 `run --usb` now uses native usbmux discovery, lockdown session TLS, AFC streaming,
 installation proxy, exact bundle lookup, staged-file cleanup, and explicit install
-timeouts. Gate 4 replaced the invalid direct DVT launch with the proven CoreDevice helper
-and integrated its privilege, pinned-environment, and lifecycle boundaries. Launch still
-uses that Python helper. Patched-usbmuxd provisioning remains productization work for the
+timeouts. Gate 4 replaced the invalid direct DVT launch with the native CoreDevice USB
+tunnel helper (`coredevice-helper launch-usb`); the launch is fully native and no Python
+is involved. Patched-usbmuxd provisioning remains productization work for the
 USB install path.
 
 Exit condition: the app launches on the registered device with a valid development signature.
@@ -1292,13 +1312,20 @@ forces a TCP tunnel, validates the selected device through RSD, installs and ver
 the exact bundle through InstallationProxy, launches through AppService, and tears the
 stack down in one process lifetime.
 
-The helper runtime is frozen by `Tools/pymobiledevice3/uv.lock`: Python 3.13,
-pymobiledevice3 8.2.1, and construct-typing 0.7.0. Python 3.13 is required because its
-native TLS-PSK callback is the working remote TCP transport; the Python 3.12 sslpsk
-compatibility path reached the device but failed TLS negotiation. Privilege is explicit:
-the operator must run with the required capability or pass `--sudo`, optionally with a
-root-owned installed helper selected by `--coredevice-helper`; the CLI never silently
-elevates.
+The remote-pair bootstrap is now native too: `device pair --usb` runs a privileged
+`coredevice-helper pair-usb` subcommand that establishes the CoreDevice USB tunnel and
+performs the SRP-3072 Pair-Setup exchange over the RSD tunnel service, writing the
+`remote_<identifier>.plist` record directly. The Python helper runtime and
+`Tools/pymobiledevice3` have been deleted; no CLI path invokes Python. Native signing
+and the entire device stack are project-owned.
+
+**Gate 4 re-qualification is complete.** A fresh native `device pair --usb` is proven, and
+the native `run --network` now completes end to end. The earlier rejection was a relay
+defect: it treated `SSL_read_ex` returning `0` for `SSL_ERROR_WANT_READ` as a peer close
+and exited before the device's RSD peer-info arrived. The fix (also applied to the USB
+lockdown relay) distinguishes `SSL_ERROR_ZERO_RETURN` from `WANT_READ`/`WANT_WRITE` and
+drains buffered decrypted data. The three-consecutive-unplugged-runs acceptance proof has
+been re-established with the native stack only (see the status paragraph above).
 
 Three consecutive runs were performed after physical USB disconnection. Each rebuilt,
 development-signed once, installed, verified, and launched the app. After each observed
@@ -1321,14 +1348,12 @@ Exit condition: three consecutive unplugged install-and-launch runs pass.
 Status: **in progress**. `stupid-app doctor` is implemented through the testable
 `ProductCore` module. Required checks fail the command; incomplete workflow state is a
 warning. Checks cover host Swift and imported SDK host/Swift compatibility, bundled
-native-signing trust, exact Python 3.13/pymobiledevice3 8.2.1/construct-typing 0.7.0 pins,
+native-signing trust, native CoreDevice TLS, the native CoreDevice privileged helper,
 owner-only credential/identity/pairing permissions, Linux TUN/usbmux prerequisites, and
 project configuration plus referenced files. Diagnostics
-do not load or print secret values, and CoreDevice environment validation uses a
-temporary pairing directory rather than mutating credential state.
+do not load or print secret values.
 
-Remaining productization includes frozen-environment and privileged-helper installation,
-least-privilege sudo policy setup, qualified USBIP-compatible usbmux provisioning with
+Remaining productization includes qualified USBIP-compatible usbmux provisioning with
 GPL compliance, `release status`, broader compatibility/fixture coverage, clean-host
 setup and recovery documentation, and the complete acceptance run.
 
@@ -1403,9 +1428,13 @@ RSD client, and a fully device-qualified CoreDevice AppService USB launch path: 
 USB `launch-usb` helper resolves the RSD peer, connects the appservice, invokes the launch
 feature, and reports the returned process identifier. It opens the app on the physical
 device and prints a clean JSON status across repeated runs. Native
-signing is mandatory and uses the bundled qualified public certificate chain; the Python
-device stack remains mandatory only for CoreDevice remote pairing and the network run
-path, which are not yet replaced.
+signing is mandatory and uses the bundled qualified public certificate chain. The
+remaining native device work — the SRP-3072 Pair-Setup bootstrap and the network run
+path — is implemented and the Python device stack has been removed. Physical
+qualification on the isolated WSL host is complete: the fresh native pair is proven and
+three consecutive unplugged `run --network` runs install and launch the app. The earlier
+network-run rejection was a relay defect (a `WANT_READ` misread as a peer close) that is
+now fixed in both the network and USB lockdown relays.
 
 ### Native Signature Parser And Verifier
 
@@ -1505,8 +1534,10 @@ connection component, not listener creation or the complete native network stack
 `docs/native-dependency-replacement-scope.md` defines the work required to replace the
 former `rcodesign` signing path and current `pymobiledevice3` device stack with
 project-owned Swift implementations. Native signing is complete and `rcodesign` has been
-retired independently. Do not remove the Python device dependency until three
-consecutive native unplugged runs pass the existing acceptance gates.
+retired independently. The device stack is fully native and the Python dependency has
+been removed; the isolated WSL host has proven the fresh native pair, native USB tunnel,
+and the native network run (three consecutive unplugged runs install and launch). The
+replacement is considered physically qualified.
 
 Replacing `pymobiledevice3` does not itself replace `usbmuxd`, WSL USBIP, Linux TUN,
 multicast networking, or the privileged-helper requirement. Raw USB transport remains a
@@ -1539,8 +1570,10 @@ Scope and acceptance criteria when this task is eventually promoted:
 
 Execute the remaining work in this order:
 
-1. Make the MTU-patched usbmuxd reproducible on the current libplist, then re-run the
+1. **Native network run is qualified.** The relay `WANT_READ`-as-EOF defect is fixed in
+   both the network and USB lockdown relays, and three consecutive unplugged
+   `run --network` runs install and launch. Re-run `doctor` on the clean host and remove
+   the temporary sudoers/`cap_net_admin`/Python comparison environment.
+2. Make the MTU-patched usbmuxd reproducible on the current libplist, then re-run the
    full `run --usb` (native install + native launch) against a real development IPA.
-2. Implement native CoreDevice remote pairing and the network run path over the native
-   service stack to retire the pinned Python helper.
 3. Resume remaining Gate 5 productization work and clean-host acceptance in parallel.

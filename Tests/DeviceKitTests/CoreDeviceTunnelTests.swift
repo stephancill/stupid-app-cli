@@ -56,6 +56,14 @@ struct NativeCoreDeviceRunnerTests {
     #expect(NativeCoreDeviceRunner.parsePID(#"{"status":"ok","pid":0}"#) == nil)
   }
 
+  @Test("statusIsOK accepts a successful helper status line")
+  func statusIsOK() {
+    #expect(NativeCoreDeviceRunner.statusIsOK(#"{"status":"ok","operation":"pair-usb"}"#))
+    #expect(!NativeCoreDeviceRunner.statusIsOK(#"{"status":"error"}"#))
+    #expect(!NativeCoreDeviceRunner.statusIsOK("not json"))
+    #expect(!NativeCoreDeviceRunner.statusIsOK(""))
+  }
+
   @Test("device identifier is redacted from helper diagnostics")
   func redaction() {
     let udid = "00008100-PRIVATE-DEVICE-ID"

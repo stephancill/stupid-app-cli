@@ -30,26 +30,20 @@ public enum Doctor {
     public var credentialHome: URL
     public var sdkID: String
     public var swiftPath: String
-    public var pythonPath: String
     public var sudoPath: String?
-    public var coreDeviceHelperPath: String?
 
     public init(
       projectRoot: URL,
       credentialHome: URL,
       sdkID: String = "stupid-app-ios",
       swiftPath: String = "swift",
-      pythonPath: String = "python3",
-      sudoPath: String? = nil,
-      coreDeviceHelperPath: String? = nil
+      sudoPath: String? = nil
     ) {
       self.projectRoot = projectRoot
       self.credentialHome = credentialHome
       self.sdkID = sdkID
       self.swiftPath = swiftPath
-      self.pythonPath = pythonPath
       self.sudoPath = sudoPath
-      self.coreDeviceHelperPath = coreDeviceHelperPath
     }
   }
 
@@ -99,19 +93,14 @@ public enum Doctor {
       })
 
     let pairingDirectory = input.credentialHome.appendingPathComponent("pairing", isDirectory: true)
-    let validationDirectory = FileManager.default.temporaryDirectory
-      .appendingPathComponent("stupid-app-doctor-\(UUID().uuidString)", isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: validationDirectory) }
     results.append(
-      check(name: "CoreDevice environment") {
-        let runner = CoreDeviceRunner(
-          pythonPath: input.pythonPath,
+      check(name: "CoreDevice helper") {
+        let runner = NativeCoreDeviceRunner(
           sudoPath: input.sudoPath,
-          helperPath: input.coreDeviceHelperPath,
-          pairingDirectory: validationDirectory
+          pairingDirectory: pairingDirectory
         )
         try runner.validateEnvironment(requirePrivileges: false)
-        return "Python 3.13, pymobiledevice3 8.2.1, and construct-typing 0.7.0 are available."
+        return "The native CoreDevice helper is available; privileged operations use sudo."
       })
 
     results.append(credentialResult(home: input.credentialHome))

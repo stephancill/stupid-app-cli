@@ -262,6 +262,12 @@ public final class RemoteXPCService: @unchecked Sendable {
     return try remote.receiveResponse()
   }
 
+  /// Sends an envelope without reading a response. The CoreDevice tunnel
+  /// service's `pairVerifyFailed` event is fire-and-forget.
+  public func send(_ body: [String: XPCValue]) throws {
+    try remote.sendRequest(body, wantingReply: false)
+  }
+
   public func invoke(_ body: [String: XPCValue]) throws -> XPCValue {
     try remote.sendRequest(body, wantingReply: true)
     return try remote.receiveResponse()

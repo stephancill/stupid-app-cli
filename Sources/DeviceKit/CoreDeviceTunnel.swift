@@ -60,75 +60,18 @@ public struct CoreDeviceUSBLauncher: Sendable {
     guard !bundleID.isEmpty, !udid.isEmpty else {
       throw Error.launch("bundle identifier and device identifier are required")
     }
-    let mux = USBMuxClient(address: usbmuxAddress, timeoutSeconds: timeoutSeconds)
-    guard
-      let device = try mux.devices().first(where: {
-        $0.connectionType == .usb && $0.serialNumber == udid
-      })
-    else {
-      throw Error.deviceNotFound
-    }
-    guard let pairData = try pairRecordData(mux: mux, udid: udid) else {
-      throw Error.pairRecordMissing
-    }
-    let pairRecord = try LockdownPairRecord(data: pairData)
-    let lockdown = try mux.connectLockdown(deviceID: device.deviceID)
-    _ = try lockdown.queryType()
-    try lockdown.startSession(using: pairRecord)
-    defer { try? lockdown.stopSession() }
-    progress?("Established the native lockdown session.")
-
-    let service = try lockdown.startService(
-      "com.apple.internal.devicecompute.CoreDeviceProxy",
-      pairRecord: pairRecord
+    let tunnel = try USBCoreDeviceTunnel(
+      usbmuxAddress: usbmuxAddress,
+      pairingDirectory: pairingDirectory,
+      timeoutSeconds: timeoutSeconds,
+      udid: udid,
+      progress: progress
     )
-    let tunnelConnection = try mux.connectService(
-      deviceID: device.deviceID,
-      service: service,
-      pairRecord: pairRecord
-    )
-    progress?("Connected to the CoreDevice proxy service.")
-
-    let handshake = try performTunnelHandshake(over: tunnelConnection)
-    progress?(
-      "CoreDevice tunnel established (client \(handshake.clientAddress) server \(handshake.serverAddress):\(handshake.serverRSDPort))."
-    )
-
-    let tun = try createTUN(handshake: handshake)
-    defer { tun.close() }
-    try tun.addRoute(to: handshake.serverAddress)
-    progress?("Configured the native tunnel interface.")
-
-    let tunDescriptor = try tun.descriptor()
-    let relay = TunnelRelay(tunnel: tunnelConnection, tunDescriptor: tunDescriptor)
-    relay.start()
-    defer {
-      relay.stop()
-      tunnelConnection.cancel()
-      tunnelConnection.close()
-    }
-    progress?("Native tunnel relay started.")
-
-    let rsd = RSDClient(
-      host: handshake.serverAddress,
-      port: handshake.serverRSDPort,
-      timeoutSeconds: timeoutSeconds
-    )
-    progress?("Connecting RSD to \(handshake.serverAddress):\(handshake.serverRSDPort)...")
-    let session: RSDSession
-    do {
-      session = try rsd.open()
-    } catch {
-      throw Error.launch("RSD connect failed: \(error)")
-    }
-    guard session.peerInfo.udid == udid else {
-      throw Error.launch("the tunnel resolved a different device")
-    }
-    progress?("Resolved the remote service discovery peer.")
+    defer { tunnel.close() }
 
     let serviceConnection: RemoteXPCService
     do {
-      serviceConnection = try session.connect(service: AppServiceClient.serviceName)
+      serviceConnection = try tunnel.session.connect(service: AppServiceClient.serviceName)
     } catch {
       throw Error.launch("the appservice endpoint was unavailable: \(error)")
     }
@@ -136,40 +79,6 @@ public struct CoreDeviceUSBLauncher: Sendable {
     let pid = try appService.launchApplication(bundleID: bundleID)
     progress?("Launched the application (pid \(pid)).")
     return pid
-  }
-
-  private func pairRecordData(mux: USBMuxClient, udid: String) throws -> Data? {
-    if let pairingDirectory {
-      guard !udid.contains("/"), !udid.contains("..") else {
-        throw USBMuxClient.Error.invalidInput("device identifier is not a safe file name")
-      }
-      let local = pairingDirectory.appendingPathComponent("\(udid).plist")
-      if FileManager.default.fileExists(atPath: local.path) {
-        return try Data(contentsOf: local)
-      }
-    }
-    return try mux.readPairRecord(identifier: udid)
-  }
-
-  private func performTunnelHandshake(over connection: LockdownServiceConnection) throws
-    -> CoreDeviceTLSConnection.Handshake
-  {
-    let request = try CoreDeviceTLSConnection.frame([
-      "mtu": 16_000,
-      "type": "clientHandshakeRequest",
-    ])
-    try connection.write(request)
-    let header = try connection.read(count: 10)
-    let bodyLength: Int
-    do {
-      bodyLength = try Self.bodyLength(header: header)
-    } catch {
-      throw error
-    }
-    let body = try connection.read(count: bodyLength)
-    var response = header
-    response.append(body)
-    return try Self.handshakeResponse(from: response)
   }
 
   /// Validates the CDTunnel response header and returns the JSON body length.
@@ -196,17 +105,177 @@ public struct CoreDeviceUSBLauncher: Sendable {
       throw Error.handshakeFailed(String(describing: error))
     }
   }
+}
 
-  private func createTUN(handshake: CoreDeviceTLSConnection.Handshake) throws -> TUNDevice {
+/// An established native CoreDevice USB tunnel with its TUN interface, packet
+/// relay, and RSD session. Creating it owns the lockdown session, the
+/// CoreDevice proxy service tunnel, the CDTunnel handshake, the privileged TUN
+/// device, the relay thread, and the verified RSD session. `close()` tears the
+/// stack down in the reverse order so neither the relay nor the RSD control
+/// connection is cut before its dependents.
+public final class USBCoreDeviceTunnel: @unchecked Sendable {
+  private let lockdown: LockdownClient
+  private let tunnelConnection: LockdownServiceConnection
+  private let tun: TUNDevice
+  private let relay: TunnelRelay
+
+  public let session: RSDSession
+
+  public init(
+    usbmuxAddress: String?,
+    pairingDirectory: URL?,
+    timeoutSeconds: Double,
+    udid: String,
+    progress: (@Sendable (String) -> Void)?
+  ) throws {
+    let mux = USBMuxClient(address: usbmuxAddress, timeoutSeconds: timeoutSeconds)
+    guard
+      let device = try mux.devices().first(where: {
+        $0.connectionType == .usb && $0.serialNumber == udid
+      })
+    else {
+      throw CoreDeviceUSBLauncher.Error.deviceNotFound
+    }
+    guard
+      let pairData = try Self.pairRecordData(
+        mux: mux, pairingDirectory: pairingDirectory, udid: udid)
+    else {
+      throw CoreDeviceUSBLauncher.Error.pairRecordMissing
+    }
+    let pairRecord = try LockdownPairRecord(data: pairData)
+    let lockdown = try mux.connectLockdown(deviceID: device.deviceID)
+    _ = try lockdown.queryType()
+    try lockdown.startSession(using: pairRecord)
+    progress?("Established the native lockdown session.")
+
+    var tunnelConnection: LockdownServiceConnection?
+    var tun: TUNDevice?
+    var relay: TunnelRelay?
+    var completed = false
+    defer {
+      if !completed {
+        relay?.stop()
+        if let tunnelConnection {
+          tunnelConnection.cancel()
+          tunnelConnection.close()
+        }
+        tun?.close()
+        try? lockdown.stopSession()
+      }
+    }
+
+    let service = try lockdown.startService(
+      "com.apple.internal.devicecompute.CoreDeviceProxy",
+      pairRecord: pairRecord
+    )
+    let tunnel = try mux.connectService(
+      deviceID: device.deviceID,
+      service: service,
+      pairRecord: pairRecord
+    )
+    tunnelConnection = tunnel
+    progress?("Connected to the CoreDevice proxy service.")
+
+    let handshake = try Self.performTunnelHandshake(over: tunnel)
+    progress?(
+      "CoreDevice tunnel established (client \(handshake.clientAddress) server \(handshake.serverAddress):\(handshake.serverRSDPort))."
+    )
+
+    let tunDevice = try Self.createTUN(handshake: handshake)
+    tun = tunDevice
+    try tunDevice.addRoute(to: handshake.serverAddress)
+    progress?("Configured the native tunnel interface.")
+
+    let tunDescriptor = try tunDevice.descriptor()
+    let tunnelRelay = TunnelRelay(tunnel: tunnel, tunDescriptor: tunDescriptor)
+    tunnelRelay.start()
+    relay = tunnelRelay
+    progress?("Native tunnel relay started.")
+
+    let rsd = RSDClient(
+      host: handshake.serverAddress,
+      port: handshake.serverRSDPort,
+      timeoutSeconds: timeoutSeconds
+    )
+    progress?("Connecting RSD to \(handshake.serverAddress):\(handshake.serverRSDPort)...")
+    let openedSession: RSDSession
+    do {
+      openedSession = try rsd.open()
+    } catch {
+      throw CoreDeviceUSBLauncher.Error.launch("RSD connect failed: \(error)")
+    }
+    guard openedSession.peerInfo.udid == udid else {
+      throw CoreDeviceUSBLauncher.Error.launch("the tunnel resolved a different device")
+    }
+    progress?("Resolved the remote service discovery peer.")
+
+    completed = true
+    self.lockdown = lockdown
+    self.tunnelConnection = tunnel
+    self.tun = tunDevice
+    self.relay = tunnelRelay
+    self.session = openedSession
+  }
+
+  /// Tears the tunnel, relay, TUN, and lockdown session down in the reverse
+  /// order of creation. Idempotent once the stack is fully constructed.
+  public func close() {
+    relay.stop()
+    tunnelConnection.cancel()
+    tunnelConnection.close()
+    tun.close()
+    try? lockdown.stopSession()
+  }
+
+  private static func pairRecordData(
+    mux: USBMuxClient,
+    pairingDirectory: URL?,
+    udid: String
+  ) throws -> Data? {
+    if let pairingDirectory {
+      guard !udid.contains("/"), !udid.contains("..") else {
+        throw USBMuxClient.Error.invalidInput("device identifier is not a safe file name")
+      }
+      let local = pairingDirectory.appendingPathComponent("\(udid).plist")
+      if FileManager.default.fileExists(atPath: local.path) {
+        return try Data(contentsOf: local)
+      }
+    }
+    return try mux.readPairRecord(identifier: udid)
+  }
+
+  private static func performTunnelHandshake(over connection: LockdownServiceConnection) throws
+    -> CoreDeviceTLSConnection.Handshake
+  {
+    let request = try CoreDeviceTLSConnection.frame([
+      "mtu": 16_000,
+      "type": "clientHandshakeRequest",
+    ])
+    try connection.write(request)
+    let header = try connection.read(count: 10)
+    let bodyLength: Int
+    do {
+      bodyLength = try CoreDeviceUSBLauncher.bodyLength(header: header)
+    } catch {
+      throw error
+    }
+    let body = try connection.read(count: bodyLength)
+    var response = header
+    response.append(body)
+    return try CoreDeviceUSBLauncher.handshakeResponse(from: response)
+  }
+
+  private static func createTUN(handshake: CoreDeviceTLSConnection.Handshake) throws -> TUNDevice {
     var output: OpaquePointer?
     let result = handshake.clientAddress.withCString {
       stupid_app_tun_create("", $0, Int32(handshake.clientMTU), &output)
     }
     guard result == STUPID_APP_TUN_OK.rawValue, let output else {
       if result == STUPID_APP_TUN_UNSUPPORTED.rawValue {
-        throw Error.tunUnsupported
+        throw CoreDeviceUSBLauncher.Error.tunUnsupported
       }
-      throw Error.tunnelSetup("TUN creation failed with public error code \(result)")
+      throw CoreDeviceUSBLauncher.Error.tunnelSetup(
+        "TUN creation failed with public error code \(result)")
     }
     return TUNDevice(handle: output)
   }

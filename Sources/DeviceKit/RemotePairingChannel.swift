@@ -219,7 +219,7 @@ public struct RemotePairingTunnelClient: Sendable {
       ])
       let encryptedData = try Self.encrypt(
         key: derivedKey,
-        nonce: Data("PV-Msg03".utf8),
+        nonce: Data([0, 0, 0, 0]) + Data("PV-Msg03".utf8),
         plaintext: encryptedInner)
 
       let verifyFinish: [String: Any] = [
@@ -288,7 +288,7 @@ public struct RemotePairingTunnelClient: Sendable {
               "peerConnectionsInfo": [
                 [
                   "owningPID": Int(ProcessInfo.processInfo.processIdentifier),
-                  "owningProcessName": "stupid-app",
+                  "owningProcessName": "CoreDeviceService",
                 ]
               ],
               "transportProtocolType": "tcp",

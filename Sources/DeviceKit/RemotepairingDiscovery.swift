@@ -430,7 +430,12 @@ public struct RemotepairingDiscovery: Sendable {
 
   private static func openMulticastSocket(ipv6: Bool) throws -> Int32 {
     let family = ipv6 ? AF_INET6 : AF_INET
-    let socket = socket(family, SOCK_DGRAM, 0)
+    #if os(Linux)
+      let socketType = Int32(SOCK_DGRAM.rawValue)
+    #else
+      let socketType = SOCK_DGRAM
+    #endif
+    let socket = socket(family, socketType, 0)
     guard socket >= 0 else { throw DiscoveryError.transport("could not open a UDP socket") }
 
     var reuse: Int32 = 1
@@ -463,7 +468,8 @@ public struct RemotepairingDiscovery: Sendable {
       request.ipv6mr_interface = 0
       let result = withUnsafeBytes(of: &request) { bytes in
         setsockopt(
-          socket, IPPROTO_IPV6, IPV6_JOIN_GROUP, bytes.bindMemory(to: cmsghdr.self).baseAddress,
+          socket, Int32(IPPROTO_IPV6), IPV6_JOIN_GROUP,
+          bytes.bindMemory(to: cmsghdr.self).baseAddress,
           socklen_t(MemoryLayout<ipv6_mreq>.size))
       }
       if result != 0 {
@@ -493,7 +499,8 @@ public struct RemotepairingDiscovery: Sendable {
       request.imr_interface.s_addr = INADDR_ANY.bigEndian
       let result = withUnsafeBytes(of: &request) { bytes in
         setsockopt(
-          socket, IPPROTO_IP, IP_ADD_MEMBERSHIP, bytes.bindMemory(to: cmsghdr.self).baseAddress,
+          socket, Int32(IPPROTO_IP), IP_ADD_MEMBERSHIP,
+          bytes.bindMemory(to: cmsghdr.self).baseAddress,
           socklen_t(MemoryLayout<ip_mreq>.size))
       }
       if result != 0 {

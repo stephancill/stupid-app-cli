@@ -20,14 +20,8 @@ struct DoctorCommand: AsyncParsableCommand {
   @Option(name: .customLong("swift"), help: "Path to the host `swift` executable.")
   var swiftPath: String = "swift"
 
-  @Option(name: .customLong("python"), help: "Python 3.13 executable from the frozen environment.")
-  var pythonPath: String = "python3"
-
   @Option(name: .customLong("sudo"), help: "Explicit path to sudo used by the CoreDevice helper.")
   var sudoPath: String?
-
-  @Option(name: .customLong("coredevice-helper"), help: "Installed CoreDevice helper path.")
-  var coreDeviceHelperPath: String?
 
   mutating func run() async throws {
     let credentialHome =
@@ -40,9 +34,7 @@ struct DoctorCommand: AsyncParsableCommand {
         credentialHome: credentialHome.standardizedFileURL,
         sdkID: sdkID,
         swiftPath: swiftPath,
-        pythonPath: pythonPath,
-        sudoPath: sudoPath,
-        coreDeviceHelperPath: coreDeviceHelperPath
+        sudoPath: sudoPath
       ))
 
     for result in results {

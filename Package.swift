@@ -109,8 +109,7 @@ let package = Package(
         "SDKCore",
         .product(name: "Crypto", package: "swift-crypto"),
         .product(name: "_CryptoExtras", package: "swift-crypto"),
-      ],
-      resources: [.copy("Resources")]
+      ]
     ),
     .target(
       name: "ProductCore",
