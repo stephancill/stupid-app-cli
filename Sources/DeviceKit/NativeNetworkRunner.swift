@@ -120,7 +120,7 @@ public struct NativeNetworkRunner: Sendable {
     let rsd = RSDClient(
       host: tunnel.handshake.serverAddress,
       port: tunnel.handshake.serverRSDPort,
-      timeoutSeconds: discoveryTimeoutSeconds)
+      timeoutSeconds: max(discoveryTimeoutSeconds, launchTimeoutSeconds))
     let session = try rsd.open()
     guard session.peerInfo.udid == udid else {
       throw RemotePairing.Error.pairing("the tunnel resolved a different device")

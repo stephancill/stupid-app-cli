@@ -28,10 +28,12 @@ public enum SDKVersion {
         }
     }
 
-    /// Resolves the SDK version. An explicit `--sdk-version` override always wins;
-    /// otherwise the installed bundle's `sdk-manifest.json` is read. On macOS with no
-    /// installed `stupid-app` SDK, `xcrun` reports the Xcode SDK version as a fallback
-    /// for local comparison builds only.
+    /// Resolves the SDK version. An explicit `--sdk-version` override always wins.
+    /// Branches by host mode: when a usable Xcode with an iPhoneOS SDK is present
+    /// (Xcode SDK in place), reads its SDK version directly; otherwise reads the
+    /// installed bundle's `sdk-manifest.json`. On macOS the former `xcrun` fallback is
+    /// replaced by a direct read of Xcode's own `SDKSettings.json`; with no Xcode
+    /// present the missing-bundle case fails loudly.
     public static func resolve(
         sdkID: String = "stupid-app-ios",
         targetTriple: String = "arm64-apple-ios",
@@ -45,28 +47,17 @@ public enum SDKVersion {
             return override
         }
 
-        do {
-            let manifest = try installedManifest(
-                sdkID: sdkID,
-                targetTriple: targetTriple,
-                swiftPath: swiftPath
-            )
-            return manifest.iphoneosSDKVersion
-        } catch {
-            // fall through to macOS fallback only for real errors; sdkNotInstalled is
-            // expected when no SDK is installed.
-            if case Error.sdkNotInstalled = error {
-                // continue below
-            } else {
-                throw error
-            }
-        }
-
         #if os(macOS)
-        return try macOSSDKVersion()
-        #else
-        throw Error.sdkNotInstalled(sdkID)
+        if let installation = XcodeLocator.detect() {
+            return installation.iphoneosSDKVersion
+        }
         #endif
+
+        return try installedManifest(
+            sdkID: sdkID,
+            targetTriple: targetTriple,
+            swiftPath: swiftPath
+        ).iphoneosSDKVersion
     }
 
     /// Lists installed Swift SDK artifact IDs by parsing `swift sdk list`.
@@ -155,19 +146,6 @@ public enum SDKVersion {
         }
         return url
     }
-
-    #if os(macOS)
-    private static func macOSSDKVersion() throws -> String {
-        let result = try ProcessRunner.run(
-            executable: "/usr/bin/xcrun",
-            arguments: ["--sdk", "iphoneos", "--show-sdk-version"]
-        )
-        guard result.succeeded, !result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw Error.sdkNotInstalled("ipaoneos (Xcode)")
-        }
-        return result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-    #endif
 }
 
 private enum JSONObject {

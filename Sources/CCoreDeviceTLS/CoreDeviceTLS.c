@@ -1,4 +1,5 @@
 #include "CCoreDeviceTLS.h"
+#include "CTUN.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -898,8 +899,8 @@ int stupid_app_coredevice_tls_tunnel_relay(
           if (packet_length > inbound_length - offset) {
             break;
           }
-          ssize_t packet_written = write(tun_fd, inbound + offset, packet_length);
-          if (packet_written != (ssize_t)packet_length) {
+          int packet_written = stupid_app_tun_relay_write(tun_fd, inbound + offset, packet_length);
+          if (packet_written != 0) {
             result = STUPID_APP_COREDEVICE_TLS_TUNNEL_WRITE_FAILED;
             offset = inbound_length;
             break;
@@ -936,7 +937,7 @@ int stupid_app_coredevice_tls_tunnel_relay(
 
     // Host -> device.
     if (descriptors[1].revents & (POLLIN | POLLHUP | POLLERR)) {
-      ssize_t packet_length = read(tun_fd, outbound, 65536);
+      ssize_t packet_length = stupid_app_tun_relay_read(tun_fd, outbound, 65536);
       if (packet_length > 0) {
         if (debug) {
           fprintf(stderr, "[relay] host->device %zd bytes", packet_length);

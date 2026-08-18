@@ -10,7 +10,11 @@ struct CoreDeviceHelperCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "coredevice-helper",
     abstract: "Privileged native CoreDevice operations (run via sudo).",
-    subcommands: [CoreDevicePairCommand.self, CoreDeviceLaunchCommand.self]
+    subcommands: [
+      CoreDevicePairCommand.self,
+      CoreDeviceLaunchCommand.self,
+      CoreDeviceNetworkRunCommand.self,
+    ]
   )
 }
 
@@ -79,6 +83,54 @@ struct CoreDeviceLaunchCommand: ParsableCommand {
     let pid = try launcher.launch(bundleID: bundleID, udid: udid)
     let output = """
       {"status":"ok","operation":"launch-usb","pid":\(pid)}
+      """
+    print(output)
+  }
+}
+
+struct CoreDeviceNetworkRunCommand: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "run-network",
+    abstract: "Install and launch over a native CoreDevice network tunnel."
+  )
+
+  @Option(name: .customLong("udid"), help: "Target device UDID.")
+  var udid: String
+
+  @Option(name: .customLong("bundle-id"), help: "Installed bundle identifier.")
+  var bundleID: String
+
+  @Option(name: .customLong("ipa"), help: "Development IPA to install.")
+  var ipaPath: String
+
+  @Option(name: .customLong("pairing-dir"), help: "Pairing record directory.")
+  var pairingDirectory: String
+
+  @Option(name: .customLong("discovery-timeout"), help: "Maximum seconds for discovery.")
+  var discoveryTimeout: Double = 15
+
+  @Option(name: .customLong("install-timeout"), help: "Maximum seconds for installation.")
+  var installTimeout: Double = 300
+
+  @Option(name: .customLong("launch-timeout"), help: "Maximum seconds for app launch.")
+  var launchTimeout: Double = 60
+
+  func run() throws {
+    let runner = NativeNetworkRunner(
+      pairingDirectory: URL(fileURLWithPath: pairingDirectory, isDirectory: true),
+      udid: udid,
+      ipa: URL(fileURLWithPath: ipaPath),
+      bundleID: bundleID,
+      discoveryTimeoutSeconds: discoveryTimeout,
+      installTimeoutSeconds: installTimeout,
+      launchTimeoutSeconds: launchTimeout,
+      progress: { message in
+        FileHandle.standardError.write(Data("\(message)\n".utf8))
+      }
+    )
+    let pid = try runner.installAndLaunch()
+    let output = """
+      {"status":"ok","operation":"run-network","pid":\(pid)}
       """
     print(output)
   }

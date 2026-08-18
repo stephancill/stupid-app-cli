@@ -10,12 +10,20 @@ public struct Planner: Sendable {
     public var config: AppConfig
     public var swiftPath: String
     public var targetTriple: String
+    public var platform: TargetPlatform
 
-    public init(projectRoot: URL, config: AppConfig, swiftPath: String = "swift", targetTriple: String = "arm64-apple-ios") {
+    public init(
+        projectRoot: URL,
+        config: AppConfig,
+        swiftPath: String = "swift",
+        targetTriple: String = "arm64-apple-ios",
+        platform: TargetPlatform = .device
+    ) {
         self.projectRoot = projectRoot
         self.config = config
         self.swiftPath = swiftPath
         self.targetTriple = targetTriple
+        self.platform = platform
     }
 
     /// Builds the plan: selects the library product, walks its dependency graph for
@@ -44,7 +52,8 @@ public struct Planner: Sendable {
         let infoPlist = try synthesizeInfoPlist(
             product: library.name,
             bundleID: config.bundleID,
-            deploymentTarget: deploymentTarget
+            deploymentTarget: deploymentTarget,
+            platform: platform
         )
 
         return BuildPlan(
@@ -54,7 +63,8 @@ public struct Planner: Sendable {
             infoPlist: infoPlist,
             resources: resources,
             iconPath: config.iconPath,
-            entitlementsPath: config.entitlementsPath
+            entitlementsPath: config.entitlementsPath,
+            platform: platform
         )
     }
 
@@ -139,7 +149,7 @@ public struct Planner: Sendable {
         }
     }
 
-    private func synthesizeInfoPlist(product: String, bundleID: String, deploymentTarget: String) throws -> [String: Sendable] {
+    private func synthesizeInfoPlist(product: String, bundleID: String, deploymentTarget: String, platform: TargetPlatform) throws -> [String: Sendable] {
         var info: [String: Sendable] = [
             "CFBundleInfoDictionaryVersion": "6.0",
             "CFBundleDevelopmentRegion": "en",
@@ -153,7 +163,7 @@ public struct Planner: Sendable {
             "CFBundlePackageType": "APPL",
             "LSRequiresIPhoneOS": true,
             "UIRequiredDeviceCapabilities": ["arm64"],
-            "CFBundleSupportedPlatforms": ["iPhoneOS"],
+            "CFBundleSupportedPlatforms": [platform.supportedPlatformsKey],
             "UIDeviceFamily": [1, 2],
             "UISupportedInterfaceOrientations": ["UIInterfaceOrientationPortrait"],
             "UISupportedInterfaceOrientations~ipad": [
@@ -188,6 +198,7 @@ public struct BuildPlan: Sendable {
     public var resources: [Resource]
     public var iconPath: String?
     public var entitlementsPath: String?
+    public var platform: TargetPlatform
 
     public enum Resource: Sendable, Equatable, Hashable {
         case bundle(target: String)
@@ -285,6 +296,8 @@ public enum BuildError: Error, Equatable, Sendable, CustomStringConvertible {
     case infoPlistMissing(String)
     case infoPlistInvalid(String)
     case unsupportedResource(String)
+    case missingSimulatorSDK(String)
+    case simulatorRequiresXcode
 
     public var description: String {
         switch self {
@@ -308,6 +321,10 @@ public enum BuildError: Error, Equatable, Sendable, CustomStringConvertible {
             return "Configured Info.plist '\(path)' could not be parsed as a dictionary."
         case let .unsupportedResource(path):
             return "Unsupported resource '\(path)'. Only PNG icons and Planner-recognized SwiftPM resources are supported in version 1."
+        case let .missingSimulatorSDK(app):
+            return "Xcode at \(app) has no iPhoneSimulator SDK, but a simulator build requires one. Install a simulator runtime or add the iPhoneSimulator platform."
+        case .simulatorRequiresXcode:
+            return "Simulator builds require an Xcode-present host because simulators cannot exist without Xcode. Build for a physical device or install Xcode."
         }
     }
 }

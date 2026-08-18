@@ -63,4 +63,22 @@ int stupid_app_tun_fd(
 
 void stupid_app_tun_destroy(stupid_app_tun_device *device);
 
+/// Reads one complete IPv6 packet from a raw TUN descriptor, returning the
+/// number of packet bytes (without platform framing) or -1 on error. On macOS
+/// the utun protocol-family header is stripped before returning.
+int stupid_app_tun_relay_read(
+  int descriptor,
+  uint8_t *buffer,
+  size_t capacity
+);
+
+/// Writes one complete IPv6 packet to a raw TUN descriptor, adding any
+/// platform-specific framing. Returns 0 on success or -1 on error. On macOS the
+/// utun protocol-family header is prepended before writing.
+int stupid_app_tun_relay_write(
+  int descriptor,
+  const uint8_t *bytes,
+  size_t length
+);
+
 #endif

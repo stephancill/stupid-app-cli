@@ -9,7 +9,7 @@ import SDKCore
 struct BuildCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "build",
-        abstract: "Build an unsigned iOS .app from the project with the imported SDK."
+        abstract: "Build an unsigned iOS .app from the project (Xcode SDK in place or imported bundle)."
     )
 
     /// Build configuration; defaults to an internal macro so the `.build/...` output
@@ -22,7 +22,7 @@ struct BuildCommand: AsyncParsableCommand {
     @Option(name: .customLong("configuration"), help: "Build configuration (debug|release).")
     var configuration: Configuration = .debug
 
-    @Option(name: .customLong("sdk-id"), help: "Imported Swift SDK identifier (default stupid-app-ios).")
+    @Option(name: .customLong("sdk-id"), help: "Imported Swift SDK identifier (bundle hosts; default stupid-app-ios).")
     var sdkID: String = "stupid-app-ios"
 
     @Option(name: .customLong("sdk-version"), help: "Override the SDK version reported in LC_BUILD_VERSION.")
@@ -38,32 +38,38 @@ struct BuildCommand: AsyncParsableCommand {
         }
         let config = try AppConfig.decode(data)
         let projectRoot = URL(fileURLWithPath: ".")
-        let planner = Planner(projectRoot: projectRoot, config: config, swiftPath: swiftPath)
+
+        // Resolve the active host SDK mode once: with a usable Xcode, build in place
+        // against Xcode's SDK without an artifact bundle; otherwise the imported
+        // `stupid-app` bundle is required.
+        let mode = HostSDKMode.detect()
+        let toolchain = BuildToolchain.resolve(
+            swiftPath: swiftPath,
+            sdkID: sdkID,
+            targetTriple: "arm64-apple-ios",
+            mode: mode,
+            sdkVersionOverride: sdkVersionOverride
+        )
+        let resolvedSwift = toolchain.swiftPath
+
+        let planner = Planner(projectRoot: projectRoot, config: config, swiftPath: resolvedSwift)
         let plan = try planner.makePlan()
 
         let buildConfiguration: BuildConfiguration = configuration == .release ? .release : .debug
-        let resolvedSDKID = sdkID
-        let resolvedSwift = swiftPath
-        let resolvedOverride = sdkVersionOverride
-
-        guard SDKVersion.isInstalled(sdkID: resolvedSDKID, swiftPath: resolvedSwift) else {
-            throw SDKVersion.Error.sdkNotInstalled(resolvedSDKID)
+        if case .importedBundle = toolchain.sdkInput {
+            guard SDKVersion.isInstalled(sdkID: sdkID, swiftPath: resolvedSwift) else {
+                throw SDKVersion.Error.sdkNotInstalled(sdkID)
+            }
         }
 
         let packer = Packer(
             projectRoot: projectRoot,
             plan: plan,
             config: config,
-            swiftPath: swiftPath,
+            swiftPath: resolvedSwift,
             sdkID: sdkID,
-            sdkVersion: { @Sendable in
-                try SDKVersion.resolve(
-                    sdkID: resolvedSDKID,
-                    targetTriple: "arm64-apple-ios",
-                    swiftPath: resolvedSwift,
-                    override: resolvedOverride
-                )
-            },
+            sdkInput: toolchain.sdkInput,
+            sdkVersion: toolchain.hostSDKVersion,
             buildConfiguration: buildConfiguration
         )
 

@@ -52,12 +52,12 @@ let package = Package(
     ),
     .target(
       name: "CCoreDeviceTLS",
-      dependencies: ["COpenSSL"],
+      dependencies: ["COpenSSL", "CTUN"],
       publicHeadersPath: "include"
     ),
     .target(
       name: "CLockdownTLS",
-      dependencies: ["COpenSSL"],
+      dependencies: ["COpenSSL", "CTUN"],
       publicHeadersPath: "include"
     ),
     .target(
@@ -164,6 +164,7 @@ let package = Package(
       name: "DeviceKitTests",
       dependencies: [
         "DeviceKit",
+        "CTUN",
         .product(name: "_CryptoExtras", package: "swift-crypto"),
       ]
     ),

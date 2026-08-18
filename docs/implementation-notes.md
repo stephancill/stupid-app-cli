@@ -2534,3 +2534,330 @@ for the next debugging session and produces no output in normal operation.
   instead of the legacy `ios-dev` ID.
 - Broader compatibility/fixture coverage and the complete acceptance run through
   stable commands on clean supported hosts remain for Gate 5.
+
+## 2026-08-18 - macOS Host Support Scoped
+
+### Summary
+
+- Added `docs/macos-host-support-scope.md` defining macOS as an additive supported
+  deployment host: run the complete `stupid-app` workflow on a Mac without Xcode. The
+  one-time Xcode-based `sdk export` remains the only Xcode interaction; a macOS host
+  imports the same versioned, checksummed, device-only artifact bundle.
+- Updated `docs/engineering-handover.md` with the new status paragraph, a
+  `MacOS Host Support Gates` subsection (M0-M4), a macOS risk item, macOS open
+  decisions, and a recommended-next-work pointer.
+- This was scoping and documentation only. No source, command behavior, SDK bundle
+  format, dependency, or proof-gate status changed.
+
+### Current macOS State Assessed
+
+- The package builds and passes its suite on macOS; `Package.swift` declares
+  `.macOS(.v14)`, and the low-level socket code already has Darwin branches
+  (multicast sockets, `SO_REUSEPORT`/`SO_NOSIGPIPE`, `MSG_NOSIGNAL` avoidance,
+  `connect` shims).
+- `sdk import`, the native signer, ASC client, credential store, IPA packer, and
+  asset-catalog writer are host-agnostic. macOS has a built-in `launchd` `usbmuxd`
+  serving `/var/run/usbmuxd`, so no MTU patch is needed on macOS.
+- Linux-only or unvalidated on macOS: the `CTUN` TUN backend, `ProcessRunner`
+  process-group ownership on Darwin, `doctor`'s Linux-gated device checks,
+  macOS-hosted Darwin-tool sourcing in `sdk export`, OpenSSL 3 runtime wiring
+  (Homebrew), and the `SDKVersion` `xcrun` fallback.
+
+### Key Decisions Recorded
+
+- macOS must pass its own clean-host proof gates; the Linux qualification is not
+  evidence of macOS support (and vice versa).
+- The initial draft proposed proving the Xcode-absent path first; the confirmed design
+  decisions below superseded that ordering with the Xcode-present path first.
+- Recommended macOS Darwin-tool source (Mode B) is a pinned open-source LLVM build
+  (`ld64.lld`, `llvm-libtool-darwin`, `dsymutil`) mirroring the Linux
+  `darwin-tools` pin, with the Xcode toolchain copy as the fallback validation
+  option; the toolset schema already supports naming these tools.
+- macOS TUN uses `utun` interfaces with the existing explicit `--sudo` privileged
+  `coredevice-helper` boundary; build and signing remain unprivileged.
+
+### Design Decisions Confirmed (question tool, 2026-08-18)
+
+The project owner confirmed four design decisions that restructure the macOS scope:
+
+1. **Two host modes with no space duplication.** Xcode-present mode builds against
+   Xcode's iPhoneOS SDK, linker tooling, and bundled `swift` in place and never
+   materializes an SDK copy; Xcode-absent mode imports the existing device-only
+   artifact bundle and uses a swift.org host toolchain. No case keeps both Xcode's
+   SDK and a duplicate.
+2. **Simulator support via `xcrun simctl`.** `stupid-app run --simulator` builds for
+   the simulator SDK, lists, installs, launches, and reports status on local
+   simulators. This is an Xcode-present, macOS-only feature and the single scoped
+   use of Apple runtime tooling outside the signing/device/release pipeline.
+   Simulator apps are ad-hoc signed as Xcode does; that is a recorded scoped
+   exception, not an intermediate pass in any device/release path.
+3. **Host Swift from Xcode when present.** Mode A uses Xcode's bundled `swift` as the
+   host compiler; swiftly/swift.org is used only in Mode B, avoiding a duplicate
+   toolchain.
+4. **Xcode-present path proven first.** Gates reordered to M0 (Mode A build proof),
+   M1 (simulator run loop), M2 (macOS-produced release), M3 (Mode A device
+   deployment; proves the shared macOS utun/ProcessRunner/usbmuxd stack once), M4
+   (Mode B Xcode-absent path with macOS-host Darwin tools), M5 (productization).
+
+A follow-up question-tool clarification confirmed five more decisions:
+
+5. **Mode B Darwin tools: pinned open-source LLVM build.** The Xcode-absent bundle
+   carries pinned macOS builds of `ld64.lld` (`swift-llvm`), `llvm-libtool-darwin`,
+   and `dsymutil` (`swift-tools`), mirroring the Linux `darwin-tools` pin. No Xcode
+   toolchain copy or CLT linker. The first reference build is project-produced because
+   no upstream publishes these binaries.
+6. **CLT accepted in Mode B if empirically required.** If the swift.org macOS toolchain
+   cannot run without Command Line Tools, CLT becomes a documented Mode B prerequisite;
+   the no-Xcode goal still holds.
+7. **Homebrew `openssl@3` is the accepted macOS runtime dependency** for the device TLS
+   stack (rpath + doctor check); static-linking remains a later option, not a
+   requirement.
+8. **Apple Silicon only for the first supported host:** `arm64-apple-macosx` on macOS
+   14+, simulator target `arm64-apple-ios-simulator`. Intel/x86_64 deferred.
+9. **Clean-host requirement for the macOS proof gates is deferred** (decide later
+   whether a disposable clean Mac is required or a developer machine with documented
+   state suffices).
+
+The scope document was rewritten around these decisions; the engineering handover's
+status, macOS gates, risks, open decisions, and next-work sections were updated to
+match.
+
+### Verification
+
+- Reviewed the exporter, importer, packer, `ProcessRunner`, `CTUN`, `Doctor`, and
+  DeviceKit socket code to enumerate the macOS gaps recorded above.
+- No test or build was changed. `git status` shows only documentation changes.
+
+### Follow-Up
+
+- Execute Gate M0 before any macOS device work; see
+  `docs/macos-host-support-scope.md` for the ordered gates and acceptance criteria.
+
+## 2026-08-18 - macOS Gate M0: Xcode-Present In-Place Build Path
+
+### Summary
+
+- Implemented work area 1 of `docs/macos-host-support-scope.md` (Gate M0): Xcode
+  detection and the in-place SDK-resolution build path. With a usable Xcode installed,
+  `stupid-app build`, `run --usb`, `run --network`, and `release archive` now build the
+  unsigned `.app` against Xcode's iPhoneOS SDK, Xcode's toolchain `swift`, and Xcode's
+  own linker **in place** — no artifact bundle is registered or materialized, and no
+  SDK content is copied.
+- The `doctor` command now reports the active host SDK mode and validates the in-place
+  SDK/toolchain in the Xcode-present mode.
+- Code uses descriptive names (`xcodeInPlace` vs `importedBundle`) rather than "Mode
+  A/B" shorthand at the owner's request; the planning docs retain the Mode A/B terms.
+
+### Design
+
+- `Sources/SDKCore/XcodeLocator.swift` resolves the selected developer directory the
+  way `xcode-select` does, without `xcrun`: `DEVELOPER_DIR`, the
+  `/var/db/xcode_select_link` symlink, `/usr/share/xcode-select/xcode_dir_path`, then
+  `/Applications/Xcode.app` and any `Xcode*.app` under `/Applications` (newest version
+  first). Command Line Tools is deliberately not considered Xcode (no iPhoneOS SDK).
+  A usable installation requires the `iPhoneOS.sdk` plus an executable toolchain
+  `swift`/`swiftc`.
+- `XcodeInstallation` carries the in-place SDK URLs, toolchain URLs, Xcode version/build
+  (from `Contents/version.plist`), and the iPhoneOS SDK version (from
+  `SDKSettings.json`), so no external tool reads any of it.
+- `HostSDKMode.detect()` selects `xcodeInPlace` or `importedBundle` by Xcode presence.
+- `Packer` gained an `SDKInput` (`xcodeInPlace` / `importedBundle`). The build invocation
+  branches: Xcode in place runs Xcode's `swift build --sdk <iPhoneOS.sdk> --triple
+  arm64-apple-ios`; the imported bundle keeps the existing `--swift-sdk` invocation.
+  Build-system Info.plist provenance keys (`DTPlatformName`, `DTPlatformVersion`,
+  `DTSDKName`, `DTXcode`, `DTXcodeBuild`, `DTCompiler`) are injected from Xcode metadata
+  in place, via a new `BuildSystemMetadata` value; `BuildMachineOSBuild` remains never
+  invented.
+- `BuildToolchain.resolve(...)` centralizes the mode-aware swift path + SDK input + SDK
+  version chosen by the build/run/release commands, replacing the per-command guards.
+- `SDKVersion.resolve` now branches by mode: Xcode in place reads Xcode's
+  `SDKSettings.json` directly; otherwise the imported bundle manifest is required. The
+  former macOS `xcrun --sdk iphoneos --show-sdk-version` fallback was removed.
+
+### Verification (macOS, Xcode 26.1.1 build 17B100, iPhoneOS SDK 26.1)
+
+- `swift build` and the full `swift test` suite pass: 160 tests in 30 suites.
+- `stupid-app doctor` reports `Host SDK mode: Xcode SDK in place (Xcode 26.1.1, iPhoneOS
+  SDK 26.1)` and `iOS Swift SDK: Xcode SDK in place provides iPhoneOS SDK 26.1 without
+  an artifact bundle`, with zero failures.
+- `stupid-app new AcceptanceApp` then `stupid-app build` (debug and release) produce an
+  ARM64 iOS Mach-O with `LC_BUILD_VERSION` `platform IOS min 17.0.0 sdk 26.1.0`; the
+  merged `Info.plist` carries `DTPlatformVersion` 26.1, `DTSDKName` iphoneos26.1,
+  `DTXcode` 2611, `DTXcodeBuild` 17B100 and no `BuildMachineOSBuild`.
+- No Swift SDK is registered (`swift sdk list` reports none) — the build used Xcode's
+  SDK in place with no duplication.
+- `--sdk-version 26.2` overrides `LC_BUILD_VERSION` to 26.2.0; an explicit `--swift
+  /path/to/swift` is honored over the Xcode toolchain default.
+- New hermetic tests: `XcodeLocatorTests` (developer-dir resolution order, symlink/file
+  selection, metadata reading, nil when no iPhoneOS SDK), `BuildToolchainTests`
+  (mode-aware swift/SDK resolution, override wins), `DoctorTests` Xcode-in-place case,
+  and `PackerModeATests` (real Mode 0 build gated on Xcode presence).
+
+### Notes
+
+- SwiftPM's `swift build --sdk <path>` is an accepted Swift 6.2 flag and drives Xcode's
+  linker (no `-use-ld=lld` in this mode), matching the scope's in-place design.
+- The developer-directory fallback algorithm was confirmed empirically against this
+  machine's `/var/db/xcode_select_link` selection.
+- Remaining macOS gates: M1 simulator run loop (`arm64-apple-ios-simulator` target +
+  `simctl`), M2 macOS-produced release re-qualification, M3 macOS device stack (`utun`,
+  `ProcessRunner` Darwin process-group cleanup, built-in usbmuxd), M4 Xcode-absent macOS
+  Darwin tools + Mode-B export/import, M5 productization docs.
+
+## 2026-08-18 - macOS Gate M1: Simulator Run Loop via simctl
+
+### Summary
+
+- Implemented work area 2 of `docs/macos-host-support-scope.md` (Gate M1): the
+  `arm64-apple-ios-simulator` target and an Xcode-present-only simulator run loop.
+  `stupid-app simulators` lists runtimes/devices, and `stupid-app run --simulator
+  [--udid <sim-udid>]` builds in place against Xcode's `iPhoneSimulator.sdk`, ad-hoc
+  signs the app, and boots/installs/launches through `xcrun simctl`.
+- Simulator apps are ad-hoc signed (`codesign --force --sign -`), exactly as Xcode's
+  "Sign to Run Locally" does. This is the recorded scoped exception: simulator `.app`
+  output is never an intermediate pass in a device or release pipeline and is never a
+  distributed artifact.
+
+### Design
+
+- `TargetPlatform` (`Sources/BuildCore/TargetPlatform.swift`) models `device` vs
+  `simulator` with the target triple, linker `-platform_version` identifier (`ios` vs
+  `ios-simulator`), SDK platform name (`iphoneos` vs `iphonesimulator`), and
+  `CFBundleSupportedPlatforms` value. The planner and packer thread the platform
+  through Info.plist synthesis, the linker settings, the SDK selection, and the
+  build-system Info.plist keys (`DTPlatformName`/`DTSDKName` use the simulator SDK
+  identity).
+- `XcodeInstallation` gained `iphoneSimulatorSDKVersion` (read from the simulator
+  SDK's `SDKSettings.json`), so simulator builds report the real simulator SDK version
+  in `LC_BUILD_VERSION`.
+- `BuildToolchain.resolve` accepts a `platform`; the simulator path reads the in-place
+  simulator SDK version and the imported-bundle + simulator combination fails loudly
+  (`BuildError.simulatorRequiresXcode`) because simulators cannot exist without Xcode.
+- `Simctl` (`Sources/BuildCore/Simctl.swift`) wraps `xcrun simctl list/boot/bootstatus/
+  install/launch`; listing output uses a raised (2 MB) `ProcessRunner` bound because
+  the default 20 KB bound truncated the JSON. Parsers are internal for hermetic tests.
+- `stupid-app simulators` lists runtimes and devices; `run --simulator` selects `--udid`
+  or auto-picks a booted/first device, boots shutdown devices on demand, and reports
+  the launched pid.
+
+### Verification (macOS, Xcode 26.1.1, iPhoneSimulator SDK 26.1, iOS 26.3 runtime)
+
+- `simulators` lists three runtimes and two devices; `run --simulator` built, ad-hoc
+  signed (flags=0x2 adhoc), installed, and launched the app (pid returned) on a booted
+  simulator and, with `--udid`, on a shutdown simulator booted on demand. A repeat run
+  left no residual processes (`simctl` launch loop is transient).
+- The produced simulator app has `LC_BUILD_VERSION platform IOSSIMULATOR min 17.0`, and
+  Info.plist carries `CFBundleSupportedPlatforms` iPhoneSimulator, `DTPlatformName`
+  iphonesimulator, `DTSDKName` iphonesimulator26.1, `DTXcodeBuild` 17B100.
+- Hermetic tests added for platform mappings, simulator build-system keys, the `simctl`
+  JSON parsers, and the Mode-B + simulator fail-loud path.
+- Simulator platform build is covered by `PackerModeATests.xcodeInPlaceSimulatorBuild()`
+  (real build, gated on an installed simulator SDK).
+
+### Notes
+
+- `swift build --sdk <iPhoneSimulator.sdk> --triple arm64-apple-ios-simulator` requires
+  the linker `-platform_version ios-simulator` identifier; `ios` conflicts with the
+  simulator platform (`ld: incompatible platforms`).
+- Gate M1 exit conditions are met on this host; a clean Mac with only an installed
+  runtime still needs a full gate run before claiming the gate.
+- The pre-existing `CoreDeviceTLSConnectionTests` cancellation test occasionally flaps
+  under full-suite load (cancellation vs total-deadline race); it is unrelated to this
+  work and passes in isolation.
+
+## 2026-08-18 - macOS Gate M3: Native Device Stack Port
+
+### Summary
+
+- Ported the shared device stack to macOS (Gate M3 work areas 5-7, 9): a native
+  `utun` backend in `CTUN`, macOS-aware framing in both C tunnel relays,
+  process-group ownership in `ProcessRunner` on Darwin, and macOS `doctor` checks.
+- Physically qualified the USB path on this Mac: fresh lockdown pairing,
+  CoreDevice remote-pair bootstrap, development build/sign/package, native USB
+  installation, and CoreDevice tunnel launch all succeeded against a connected
+  iPhone.
+- Fixed a macOS-only signing bug: `NativeCodeResources` treated `/tmp` (a symlink
+  to `/private/tmp`) as a different prefix from the enumerator's `/private/tmp`
+  paths, so every build under `/tmp` failed with "enumerated resource escaped the
+  bundle". `canonicalTemporaryPath` now canonicalizes both `/tmp` and `/var`.
+
+### macOS utun backend (CTUN)
+
+- Modern macOS has no static `/dev/utunN` nodes. The backend now connects the
+  `com.apple.net.utun_control` kernel-control socket (the same mechanism the
+  pymobiledevice3 `pytun` reference uses), iterating units until one is free,
+  then reads the assigned interface name back through `UTUN_OPT_IFNAME`.
+- Address assignment uses `SIOCAIFADDR_IN6` with a `/64` prefix mask (matching the
+  Linux path's on-link `/64`), MTU via `SIOCSIFMTU`, link state via
+  `SIOCSIFFLAGS`, and the `/128` server route via the `AF_ROUTE` routing socket
+  (`RTM_ADD`, `EEXIST` treated as success because the on-link `/64` covers it).
+- macOS `utun` carries a 4-byte big-endian protocol-family header on every packet
+  (`AF_INET6` = `00 00 00 1e`), unlike Linux `IFF_NO_PI` TUN. Both C relays
+  (`CCoreDeviceTLS`, `CLockdownTLS`) now read/write packets through new
+  `stupid_app_tun_relay_read`/`write` helpers in `CTUN` that strip/prepend that
+  header on macOS and are raw passthrough on Linux.
+
+### Process-group cleanup on Darwin
+
+- `ProcessRunner` now spawns children on Darwin via `posix_spawn` with
+  `POSIX_SPAWN_SETPGROUP` (pgroup 0: the child becomes its own process-group
+  leader), replacing Foundation `Process` which cannot make a group leader. Timeout
+  and cancellation signal the group (`kill(-pid)`) so descendants cannot survive,
+  and exit status is decoded from `waitpid`. The Linux path is unchanged.
+- The process-group descendant test now runs on both platforms.
+
+### macOS doctor checks
+
+- Added `usbmuxd socket` (built-in `/var/run/usbmuxd`) and `CoreDevice tunnel
+  device` (utun + the `--sudo` boundary note) checks under `#if os(macOS)`,
+  mirroring the Linux TUN/usbmuxd checks. OpenSSL and mode checks were already
+  platform-neutral.
+
+### Physical USB qualification (macOS, Xcode 26.1.1, iPhone on USB)
+
+- `stupid-app device pair --usb` completed lockdown pairing, wireless enablement,
+  the CoreDevice USB tunnel over the new utun backend, and the SRP-3072 remote-pair
+  bootstrap, storing 0600 records in the 0700 pairing directory.
+- `stupid-app run --usb` built in place (Xcode SDK), signed once with the existing
+  development identity, packaged, installed through the native USB stack, and
+  launched the app (pid returned) with no residual processes or interfaces.
+- A fresh development certificate minted for this host was rejected by the device
+  (`ApplicationVerificationFailed`) because the reused development profile was
+  created for the existing identity; importing the existing identity/key from the
+  WSL host (via the same team) made the signature match the profile and the run
+  succeeded. New host provisioning should reuse an existing identity or recreate
+  the profile for a new certificate.
+
+### macOS network path (in progress)
+
+- `run --network` on macOS now routes through a new privileged
+  `coredevice-helper run-network` subcommand because utun creation requires root
+  (verified: the kernel-control connect returns `EPERM` unprivileged for both this
+  implementation and pymobiledevice3's `pytun`; Linux's setcap has no macOS
+  equivalent). Discovery, Pair-Verify, the tunnel, and native install all succeed
+  under root; the AppService launch over the tunnel intermittently times out and
+  needs the same kind of iterative relay debugging the Linux path received.
+- Also fixed `NativeNetworkRunner` to use the max of discovery and launch timeouts
+  for the RSD connection instead of only the discovery timeout.
+
+### Verification
+
+- `swift format lint --strict` passes for all changed Swift/package files.
+- `swift test` passes the full suite (173 cases; the pre-existing documented
+  `CoreDeviceTLSConnectionTests` cancellation test flaps only under full-suite
+  parallel load and passes in isolation).
+- New hermetic tests: `TUNRelayFramingTests` (relay packet round-trip through a
+  socket pair, non-IPv6 family rejection on macOS), `ProcessRunnerTests`
+  process-group descendant kill on Darwin, and `DoctorTests` macOS device checks.
+- `device pair --usb`, `run --usb`, and (under root) the network tunnel/install path
+  were qualified on the physical iPhone. Temporary sudoers grants and diagnostic
+  files were removed afterward.
+
+### Follow-Up
+
+- Resolve the intermittent network-run AppService launch timeout on macOS
+  (mirrors the Linux relay `WANT_READ` fix) and complete the three consecutive
+  unplugged `run --network` runs for Gate M3 step 3.
+- Re-export/re-import the SDK bundle so hosts register `stupid-app-ios` instead of
+  the legacy `ios-dev` ID.
+- Run the M2 (macOS-produced release) and remaining M4/M5 gates on clean hosts.

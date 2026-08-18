@@ -166,13 +166,24 @@ public enum NativeCodeResources {
     }
     let resolved = url.deletingLastPathComponent().appendingPathComponent(target)
       .standardizedFileURL
-    guard resolved.path == root.path || resolved.path.hasPrefix(root.path + "/") else {
+    let resolvedPath = canonicalTemporaryPath(resolved.path)
+    let rootPath = canonicalTemporaryPath(root.path)
+    guard resolvedPath == rootPath || resolvedPath.hasPrefix(rootPath + "/") else {
       throw Error.unsupported("bundle contains an escaping symlink")
     }
   }
 
   private static func canonicalTemporaryPath(_ path: String) -> String {
-    path.hasPrefix("/var/") ? "/private" + path : path
+    // macOS redirects /var and /tmp to /private; Foundation's directory
+    // enumerator yields the /private form while resolvingSymlinksInPath()
+    // leaves the input form, so canonicalize both sides before comparing.
+    if path.hasPrefix("/var/") || path == "/var" {
+      return "/private" + path
+    }
+    if path.hasPrefix("/tmp/") || path == "/tmp" {
+      return "/private" + path
+    }
+    return path
   }
 
   private static func legacyRules(hasResourcesDirectory: Bool) -> [String: Any] {

@@ -387,7 +387,235 @@ static int set_link_up(const char *name, bool up) {
   return 0;
 }
 
-#endif  // __linux__
+#elif defined(__APPLE__)
+
+#include <arpa/inet.h>
+#include <net/if.h>
+#include <net/route.h>
+#include <netinet/in.h>
+#include <netinet6/in6_var.h>
+#include <sys/ioctl.h>
+#include <sys/kern_control.h>
+#include <sys/socket.h>
+#include <sys/sysctl.h>
+#include <sys/types.h>
+
+// macOS utun interfaces are point-to-point IPv6 packet devices. Each read
+// returns one packet prefixed by a 4-byte big-endian protocol family header;
+// each write requires that header. The family for IPv6 is AF_INET6.
+#define STUPID_APP_UTUN_HEADER_BYTES 4
+#define STUPID_APP_UTUN_MAX_UNITS 256
+
+// com.apple.net.utun_control kernel control: unit N on the wire is utun(N-1),
+// and the interface name is read back through the control option after connect.
+#define STUPID_APP_UTUN_CONTROL_NAME "com.apple.net.utun_control"
+#define STUPID_APP_UTUN_OPT_IFNAME 2
+
+struct stupid_app_tun_device {
+  int descriptor;
+  char name[IFNAMSIZ];
+  struct in6_addr address;
+};
+
+static int mac_control_socket(void) {
+  return socket(AF_INET6, SOCK_DGRAM, 0);
+}
+
+static int mac_set_mtu(const char *name, int mtu) {
+  int sock = mac_control_socket();
+  if (sock < 0) {
+    return -1;
+  }
+  struct ifreq request;
+  memset(&request, 0, sizeof(request));
+  strncpy(request.ifr_name, name, IFNAMSIZ - 1);
+  request.ifr_mtu = mtu;
+  int result = ioctl(sock, SIOCSIFMTU, &request);
+  int saved = errno;
+  close(sock);
+  if (result != 0) {
+    errno = saved;
+    return -1;
+  }
+  return 0;
+}
+
+static int mac_assign_address(const char *name, const struct in6_addr *address) {
+  int sock = mac_control_socket();
+  if (sock < 0) {
+    return -1;
+  }
+  struct in6_aliasreq request;
+  memset(&request, 0, sizeof(request));
+  strncpy(request.ifra_name, name, IFNAMSIZ - 1);
+  request.ifra_addr.sin6_family = AF_INET6;
+  request.ifra_addr.sin6_len = sizeof(request.ifra_addr);
+  request.ifra_addr.sin6_addr = *address;
+  // Match the Linux path's /64 prefix so the server address is on-link. The
+  // prefix mask is 0xffff:ffff:ffff:ffff::
+  request.ifra_prefixmask.sin6_family = AF_INET6;
+  request.ifra_prefixmask.sin6_len = sizeof(request.ifra_prefixmask);
+  for (int i = 0; i < 8; i++) {
+    request.ifra_prefixmask.sin6_addr.s6_addr[i] = 0xff;
+  }
+  request.ifra_flags = 0;
+  int result = ioctl(sock, SIOCAIFADDR_IN6, &request);
+  int saved = errno;
+  close(sock);
+  if (result != 0) {
+    errno = saved;
+    return -1;
+  }
+  return 0;
+}
+
+static int mac_set_link(const char *name, bool up) {
+  int sock = mac_control_socket();
+  if (sock < 0) {
+    return -1;
+  }
+  struct ifreq request;
+  memset(&request, 0, sizeof(request));
+  strncpy(request.ifr_name, name, IFNAMSIZ - 1);
+  if (ioctl(sock, SIOCGIFFLAGS, &request) != 0) {
+    int saved = errno;
+    close(sock);
+    errno = saved;
+    return -1;
+  }
+  if (up) {
+    request.ifr_flags |= (short)IFF_UP;
+  } else {
+    request.ifr_flags &= (short)~IFF_UP;
+  }
+  int result = ioctl(sock, SIOCSIFFLAGS, &request);
+  int saved = errno;
+  close(sock);
+  if (result != 0) {
+    errno = saved;
+    return -1;
+  }
+  return 0;
+}
+
+// Opens the utun control socket and connects to the first free unit,
+// returning the packet descriptor and the assigned interface name. Iterates
+// the unit range the way the reference (pytun/pymobiledevice3) does.
+static int mac_open_utun(char *interface_name, size_t interface_capacity) {
+  int sock = socket(PF_SYSTEM, SOCK_DGRAM, SYSPROTO_CONTROL);
+  if (sock < 0) {
+    return -1;
+  }
+  struct ctl_info info;
+  memset(&info, 0, sizeof(info));
+  strncpy(info.ctl_name, STUPID_APP_UTUN_CONTROL_NAME, sizeof(info.ctl_name) - 1);
+  if (ioctl(sock, CTLIOCGINFO, &info) != 0) {
+    int saved = errno;
+    close(sock);
+    errno = saved;
+    return -1;
+  }
+  for (unsigned int unit = 0; unit < STUPID_APP_UTUN_MAX_UNITS; unit++) {
+    struct sockaddr_ctl address;
+    memset(&address, 0, sizeof(address));
+    address.sc_len = (unsigned char)sizeof(address);
+    address.sc_family = AF_SYSTEM;
+    address.ss_sysaddr = AF_SYS_CONTROL;
+    address.sc_id = info.ctl_id;
+    address.sc_unit = unit + 1;  // utunN where N = sc_unit - 1
+    if (connect(sock, (struct sockaddr *)&address, sizeof(address)) == 0) {
+      char name[IFNAMSIZ];
+      socklen_t name_length = (socklen_t)sizeof(name);
+      if (getsockopt(sock, SYSPROTO_CONTROL, STUPID_APP_UTUN_OPT_IFNAME, name, &name_length) != 0) {
+        int saved = errno;
+        close(sock);
+        errno = saved;
+        return -1;
+      }
+      size_t length = strnlen(name, name_length);
+      if (length == 0 || length >= interface_capacity) {
+        close(sock);
+        errno = EINVAL;
+        return -1;
+      }
+      memcpy(interface_name, name, length);
+      interface_name[length] = '\0';
+      return sock;
+    }
+    if (errno != EBUSY && errno != EADDRINUSE) {
+      int saved = errno;
+      close(sock);
+      errno = saved;
+      return -1;
+    }
+  }
+  close(sock);
+  errno = EAGAIN;
+  return -1;
+}
+
+// Adds a /128 host route to the destination through the interface, using the
+// routing socket. A route that already exists (EEXIST, e.g. the on-link /64
+// already covers it) is treated as success.
+static int mac_add_host_route(
+  const char *name,
+  const struct in6_addr *gateway,
+  const struct in6_addr *destination
+) {
+  unsigned int ifindex = if_nametoindex(name);
+  if (ifindex == 0) {
+    errno = ENXIO;
+    return -1;
+  }
+  int sock = socket(AF_ROUTE, SOCK_RAW, AF_INET6);
+  if (sock < 0) {
+    return -1;
+  }
+  struct {
+    struct rt_msghdr header;
+    struct sockaddr_in6 destination;
+    struct sockaddr_in6 gateway_address;
+  } message;
+  memset(&message, 0, sizeof(message));
+  message.header.rtm_version = RTM_VERSION;
+  message.header.rtm_type = RTM_ADD;
+  message.header.rtm_index = ifindex;
+  message.header.rtm_flags = RTF_UP | RTF_HOST | RTF_STATIC | RTF_GATEWAY;
+  message.header.rtm_addrs = RTA_DST | RTA_GATEWAY;
+  message.header.rtm_msglen = (unsigned short)sizeof(message);
+  message.header.rtm_pid = (int)getpid();
+  message.header.rtm_seq = 1;
+  message.destination.sin6_family = AF_INET6;
+  message.destination.sin6_len = sizeof(message.destination);
+  message.destination.sin6_addr = *destination;
+  message.gateway_address.sin6_family = AF_INET6;
+  message.gateway_address.sin6_len = sizeof(message.gateway_address);
+  message.gateway_address.sin6_addr = *gateway;
+  ssize_t sent = send(sock, &message, sizeof(message), 0);
+  if (sent < 0) {
+    int saved = errno;
+    close(sock);
+    errno = saved;
+    return -1;
+  }
+  // The routing socket echoes the request with rtm_errno set; an EEXIST means
+  // the route (or a covering route) already exists, which satisfies the goal.
+  struct rt_msghdr acknowledgement;
+  ssize_t received = recv(sock, &acknowledgement, sizeof(acknowledgement), 0);
+  int saved = errno;
+  close(sock);
+  if (received < 0) {
+    errno = saved;
+    return -1;
+  }
+  if (acknowledgement.rtm_errno != 0 && acknowledgement.rtm_errno != EEXIST) {
+    errno = acknowledgement.rtm_errno;
+    return -1;
+  }
+  return 0;
+}
+
+#endif  // __APPLE__
 
 int stupid_app_tun_create(
   const char *name,
@@ -449,6 +677,50 @@ int stupid_app_tun_create(
   }
   *output = device;
   return STUPID_APP_TUN_OK;
+#elif defined(__APPLE__)
+  if (name == NULL || ipv6_address == NULL || mtu <= 0 || mtu > 65535 ||
+      output == NULL) {
+    return STUPID_APP_TUN_INVALID_INPUT;
+  }
+  struct in6_addr packed;
+  if (inet_pton(AF_INET6, ipv6_address, &packed) != 1) {
+    return STUPID_APP_TUN_INVALID_INPUT;
+  }
+  // A utun interface is created by connecting the com.apple.net.utun_control
+  // kernel control socket; the assigned interface name is read back through
+  // the control option. Modern macOS has no static /dev/utunN nodes.
+  char interface_name[IFNAMSIZ];
+  int descriptor = mac_open_utun(interface_name, sizeof(interface_name));
+  if (descriptor < 0) {
+    return STUPID_APP_TUN_OPEN_FAILED;
+  }
+
+  stupid_app_tun_device *device = calloc(1, sizeof(*device));
+  if (device == NULL) {
+    close(descriptor);
+    return STUPID_APP_TUN_CONFIGURATION_FAILED;
+  }
+  device->descriptor = descriptor;
+  strncpy(device->name, interface_name, IFNAMSIZ - 1);
+  device->address = packed;
+
+  int mtu_result = mac_set_mtu(device->name, mtu);
+  int address_result = mac_assign_address(device->name, &packed);
+  int up_result = mac_set_link(device->name, true);
+  if (getenv("STUPID_APP_TUN_DEBUG") != NULL) {
+    fprintf(stderr,
+            "tun create: name=%s addr=%s mtu=%d mtu_result=%d address_result=%d up_result=%d errno=%d (%s)\n",
+            device->name, ipv6_address, mtu, mtu_result, address_result, up_result, errno,
+            strerror(errno));
+  }
+  if (mtu_result != 0 || address_result != 0 || up_result != 0) {
+    int saved = errno;
+    stupid_app_tun_destroy(device);
+    errno = saved;
+    return STUPID_APP_TUN_CONFIGURATION_FAILED;
+  }
+  *output = device;
+  return STUPID_APP_TUN_OK;
 #else
   (void)name;
   (void)ipv6_address;
@@ -470,6 +742,18 @@ int stupid_app_tun_add_route(
     return STUPID_APP_TUN_CONFIGURATION_FAILED;
   }
   return STUPID_APP_TUN_OK;
+#elif defined(__APPLE__)
+  if (device == NULL || destination == NULL || destination[0] == '\0') {
+    return STUPID_APP_TUN_INVALID_INPUT;
+  }
+  struct in6_addr packed;
+  if (inet_pton(AF_INET6, destination, &packed) != 1) {
+    return STUPID_APP_TUN_INVALID_INPUT;
+  }
+  if (mac_add_host_route(device->name, &device->address, &packed) != 0) {
+    return STUPID_APP_TUN_CONFIGURATION_FAILED;
+  }
+  return STUPID_APP_TUN_OK;
 #else
   (void)device;
   (void)destination;
@@ -482,7 +766,7 @@ int stupid_app_tun_name(
   char *buffer,
   size_t capacity
 ) {
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
   if (device == NULL || buffer == NULL || capacity == 0) {
     return STUPID_APP_TUN_INVALID_INPUT;
   }
@@ -515,6 +799,25 @@ int stupid_app_tun_read(
     return STUPID_APP_TUN_READ_FAILED;
   }
   return (int)result;
+#elif defined(__APPLE__)
+  if (device == NULL || buffer == NULL || capacity < STUPID_APP_UTUN_HEADER_BYTES) {
+    return STUPID_APP_TUN_INVALID_INPUT;
+  }
+  ssize_t result = read(device->descriptor, buffer, capacity);
+  if (result < 0) {
+    return STUPID_APP_TUN_READ_FAILED;
+  }
+  if (result < STUPID_APP_UTUN_HEADER_BYTES) {
+    return STUPID_APP_TUN_READ_FAILED;
+  }
+  uint32_t family;
+  memcpy(&family, buffer, sizeof(family));
+  family = ntohl(family);
+  if (family != AF_INET6) {
+    return STUPID_APP_TUN_READ_FAILED;
+  }
+  memmove(buffer, buffer + STUPID_APP_UTUN_HEADER_BYTES, (size_t)result - STUPID_APP_UTUN_HEADER_BYTES);
+  return (int)(result - STUPID_APP_UTUN_HEADER_BYTES);
 #else
   (void)device;
   (void)buffer;
@@ -527,7 +830,7 @@ int stupid_app_tun_fd(
   const stupid_app_tun_device *device,
   int *descriptor
 ) {
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
   if (device == NULL || descriptor == NULL) {
     return STUPID_APP_TUN_INVALID_INPUT;
   }
@@ -561,6 +864,30 @@ int stupid_app_tun_write(
     offset += (size_t)written;
   }
   return STUPID_APP_TUN_OK;
+#elif defined(__APPLE__)
+  if (device == NULL || bytes == NULL || length == 0) {
+    return STUPID_APP_TUN_INVALID_INPUT;
+  }
+  uint8_t framed[STUPID_APP_UTUN_HEADER_BYTES + 65536];
+  if (length > sizeof(framed) - STUPID_APP_UTUN_HEADER_BYTES) {
+    return STUPID_APP_TUN_INVALID_INPUT;
+  }
+  uint32_t family = htonl((uint32_t)AF_INET6);
+  memcpy(framed, &family, STUPID_APP_UTUN_HEADER_BYTES);
+  memcpy(framed + STUPID_APP_UTUN_HEADER_BYTES, bytes, length);
+  size_t total = length + STUPID_APP_UTUN_HEADER_BYTES;
+  size_t offset = 0;
+  while (offset < total) {
+    ssize_t written = write(device->descriptor, framed + offset, total - offset);
+    if (written < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      return STUPID_APP_TUN_WRITE_FAILED;
+    }
+    offset += (size_t)written;
+  }
+  return STUPID_APP_TUN_OK;
 #else
   (void)device;
   (void)bytes;
@@ -579,7 +906,105 @@ void stupid_app_tun_destroy(stupid_app_tun_device *device) {
     close(device->descriptor);
   }
   free(device);
+#elif defined(__APPLE__)
+  if (device == NULL) {
+    return;
+  }
+  if (device->descriptor >= 0) {
+    mac_set_link(device->name, false);
+    close(device->descriptor);
+  }
+  free(device);
 #else
   (void)device;
+#endif
+}
+
+int stupid_app_tun_relay_read(
+  int descriptor,
+  uint8_t *buffer,
+  size_t capacity
+) {
+#if defined(__linux__)
+  if (descriptor < 0 || buffer == NULL || capacity == 0) {
+    errno = EINVAL;
+    return -1;
+  }
+  ssize_t result = read(descriptor, buffer, capacity);
+  if (result < 0) {
+    return -1;
+  }
+  return (int)result;
+#elif defined(__APPLE__)
+  if (descriptor < 0 || buffer == NULL || capacity < STUPID_APP_UTUN_HEADER_BYTES) {
+    errno = EINVAL;
+    return -1;
+  }
+  ssize_t result = read(descriptor, buffer, capacity);
+  if (result < 0) {
+    return -1;
+  }
+  if (result < STUPID_APP_UTUN_HEADER_BYTES) {
+    errno = EINVAL;
+    return -1;
+  }
+  uint32_t family;
+  memcpy(&family, buffer, sizeof(family));
+  family = ntohl(family);
+  if (family != AF_INET6) {
+    errno = EAFNOSUPPORT;
+    return -1;
+  }
+  memmove(
+    buffer,
+    buffer + STUPID_APP_UTUN_HEADER_BYTES,
+    (size_t)result - STUPID_APP_UTUN_HEADER_BYTES);
+  return (int)(result - STUPID_APP_UTUN_HEADER_BYTES);
+#else
+  (void)descriptor;
+  (void)buffer;
+  (void)capacity;
+  return STUPID_APP_TUN_UNSUPPORTED;
+#endif
+}
+
+int stupid_app_tun_relay_write(
+  int descriptor,
+  const uint8_t *bytes,
+  size_t length
+) {
+#if defined(__linux__)
+  if (descriptor < 0 || bytes == NULL || length == 0) {
+    errno = EINVAL;
+    return -1;
+  }
+  ssize_t written = write(descriptor, bytes, length);
+  if (written != (ssize_t)length) {
+    return -1;
+  }
+  return 0;
+#elif defined(__APPLE__)
+  if (descriptor < 0 || bytes == NULL || length == 0) {
+    errno = EINVAL;
+    return -1;
+  }
+  uint8_t framed[STUPID_APP_UTUN_HEADER_BYTES + 65536];
+  if (length > sizeof(framed) - STUPID_APP_UTUN_HEADER_BYTES) {
+    errno = EINVAL;
+    return -1;
+  }
+  uint32_t family = htonl((uint32_t)AF_INET6);
+  memcpy(framed, &family, STUPID_APP_UTUN_HEADER_BYTES);
+  memcpy(framed + STUPID_APP_UTUN_HEADER_BYTES, bytes, length);
+  ssize_t written = write(descriptor, framed, length + STUPID_APP_UTUN_HEADER_BYTES);
+  if (written != (ssize_t)(length + STUPID_APP_UTUN_HEADER_BYTES)) {
+    return -1;
+  }
+  return 0;
+#else
+  (void)descriptor;
+  (void)bytes;
+  (void)length;
+  return STUPID_APP_TUN_UNSUPPORTED;
 #endif
 }

@@ -28,7 +28,7 @@ public struct CoreDeviceUSBLauncher: Sendable {
       case .handshakeFailed(let detail):
         return "The CoreDevice tunnel handshake failed: \(detail)."
       case .tunUnsupported:
-        return "Native CoreDevice tunneling requires a Linux TUN device."
+        return "Native CoreDevice tunneling requires a TUN (Linux) or utun (macOS) device."
       case .tunnelClosed:
         return "The CoreDevice tunnel closed before the launch completed."
       case .launch(let detail):

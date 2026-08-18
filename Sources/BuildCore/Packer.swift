@@ -2,15 +2,38 @@ import Foundation
 import ProjectCore
 import SDKCore
 
-/// Builds the configured application with the imported Swift SDK and assembles an
-/// unsigned `.app` bundle. Adapted from the reference packer design with the known
-/// weaknesses corrected:
+/// Builds the configured application and assembles an unsigned `.app` bundle. Adapted
+/// from the reference packer design with the known weaknesses corrected:
 ///
 /// - The real SDK version (not the deployment target) is injected as the linker
 ///   `-platform_version` SDK field.
 /// - Tools resolve through injected configuration rather than hard-coded paths.
 /// - Unsupported resources are rejected during planning, never silently copied.
 /// - Ephemeral build output and persistent bundle output are separate roots.
+///
+/// The SDK input is host-mode-selected: when a usable Xcode with an iPhoneOS SDK is
+/// present, build in place through Xcode's `swift`, its iPhoneOS SDK, and its own
+/// linker; otherwise build through the imported `stupid-app` artifact bundle.
+public enum SDKInput: Sendable, Equatable {
+  case importedBundle(sdkID: String)
+  case xcodeInPlace(XcodeInstallation)
+}
+
+/// Build-system Info.plist provenance keys injected from either the SDK export
+/// manifest (imported bundle) or Xcode's own metadata (Xcode in place).
+/// `BuildMachineOSBuild` is never emitted.
+public struct BuildSystemMetadata: Sendable, Equatable {
+  public var iphoneosSDKVersion: String
+  public var xcodeVersion: String
+  public var xcodeBuild: String
+
+  public init(iphoneosSDKVersion: String, xcodeVersion: String, xcodeBuild: String) {
+    self.iphoneosSDKVersion = iphoneosSDKVersion
+    self.xcodeVersion = xcodeVersion
+    self.xcodeBuild = xcodeBuild
+  }
+}
+
 public struct Packer: Sendable {
   public var projectRoot: URL
   public var plan: BuildPlan
@@ -18,6 +41,7 @@ public struct Packer: Sendable {
   public var swiftPath: String
   public var targetTriple: String
   public var sdkID: String
+  public var sdkInput: SDKInput
   public var sdkVersion: @Sendable () throws -> String
   public var buildConfiguration: BuildConfiguration
   public var scratchRoot: URL
@@ -29,6 +53,7 @@ public struct Packer: Sendable {
     swiftPath: String = "swift",
     targetTriple: String = "arm64-apple-ios",
     sdkID: String = "stupid-app-ios",
+    sdkInput: SDKInput? = nil,
     sdkVersion: (@Sendable () throws -> String)? = nil,
     buildConfiguration: BuildConfiguration = .debug,
     scratchRoot: URL? = nil
@@ -39,15 +64,33 @@ public struct Packer: Sendable {
     self.swiftPath = swiftPath
     self.targetTriple = targetTriple
     self.sdkID = sdkID
+    let input = sdkInput ?? .importedBundle(sdkID: sdkID)
+    self.sdkInput = input
     if let sdkVersion {
       self.sdkVersion = sdkVersion
     } else {
-      let resolvedSDKID = sdkID
-      let resolvedTriple = targetTriple
-      let resolvedSwift = swiftPath
-      self.sdkVersion = { @Sendable in
-        try SDKVersion.resolve(
-          sdkID: resolvedSDKID, targetTriple: resolvedTriple, swiftPath: resolvedSwift)
+      switch input {
+      case let .xcodeInPlace(installation):
+        switch plan.platform {
+        case .device:
+          self.sdkVersion = { @Sendable in installation.iphoneosSDKVersion }
+        case .simulator:
+          let simulatorVersion = installation.iphoneSimulatorSDKVersion
+          self.sdkVersion = { @Sendable in
+            guard let simulatorVersion else {
+              throw BuildError.missingSimulatorSDK(installation.appURL.path)
+            }
+            return simulatorVersion
+          }
+        }
+      case let .importedBundle(sdkID):
+        let resolvedSDKID = sdkID
+        let resolvedTriple = targetTriple
+        let resolvedSwift = swiftPath
+        self.sdkVersion = { @Sendable in
+          try SDKVersion.resolve(
+            sdkID: resolvedSDKID, targetTriple: resolvedTriple, swiftPath: resolvedSwift)
+        }
       }
     }
     self.buildConfiguration = buildConfiguration
@@ -106,7 +149,7 @@ public struct Packer: Sendable {
     let linkerFlags = Self.linkerSettings(
       deploymentTarget: plan.deploymentTarget,
       sdkVersion: sdkVersion,
-      platformName: "ios"
+      platformName: plan.platform.linkerPlatformName
     )
     let package = """
       // swift-tools-version: 6.0
@@ -144,20 +187,54 @@ public struct Packer: Sendable {
     let builderDir = sessionRoot.appendingPathComponent("builder-package", isDirectory: true)
     let scratch = sessionRoot.appendingPathComponent(".build", isDirectory: true)
 
-    let swift = HostInfo.resolveExecutable(swiftPath)
-    var environment = ProcessInfo.processInfo.environment
-    environment["SDKROOT"] = nil
-
-    let result = try ProcessRunner.run(
-      executable: swift,
-      arguments: [
+    let swift: String
+    var arguments: [String]
+    switch sdkInput {
+    case let .xcodeInPlace(installation):
+      // Xcode in place: build against Xcode's SDK with Xcode's toolchain `swift` and
+      // Xcode's own linker. The explicit `--sdk`/`--triple` replace the `--swift-sdk`
+      // bundle so no artifact SDK is registered or materialized.
+      let sdkURL: URL
+      switch plan.platform {
+      case .device:
+        sdkURL = installation.iphoneOSSDKURL
+      case .simulator:
+        guard let simulatorSDK = installation.iphoneSimulatorSDKURL else {
+          throw BuildError.missingSimulatorSDK(installation.appURL.path)
+        }
+        sdkURL = simulatorSDK
+      }
+      swift = installation.toolchainSwiftURL.path
+      arguments = [
+        "build",
+        "--package-path", builderDir.path,
+        "--scratch-path", scratch.path,
+        "--configuration", buildConfiguration.rawValue,
+        "--sdk", sdkURL.path,
+        "--triple", targetTriple,
+        "--disable-automatic-resolution",
+      ]
+    case let .importedBundle(sdkID):
+      guard plan.platform == .device else {
+        throw BuildError.simulatorRequiresXcode
+      }
+      swift = HostInfo.resolveExecutable(swiftPath)
+      arguments = [
         "build",
         "--package-path", builderDir.path,
         "--scratch-path", scratch.path,
         "--configuration", buildConfiguration.rawValue,
         "--swift-sdk", sdkID,
         "--disable-automatic-resolution",
-      ],
+      ]
+    }
+
+    var environment = ProcessInfo.processInfo.environment
+    environment["SDKROOT"] = nil
+
+    let result = try ProcessRunner.run(
+      executable: swift,
+      arguments: arguments,
       environment: environment
     )
     guard result.succeeded else {
@@ -233,7 +310,8 @@ public struct Packer: Sendable {
     if config.iconPath != nil {
       Self.injectIconKeys(into: &info)
     }
-    try Self.injectBuildSystemKeys(into: &info, manifest: try resolveSDKManifest())
+    try Self.injectBuildSystemKeys(
+      into: &info, metadata: try resolveBuildSystemMetadata(), platform: plan.platform)
     let infoData = try PropertyListSerialization.data(
       fromPropertyList: info, format: .xml, options: 0)
     try infoData.write(to: appDir.appendingPathComponent("Info.plist"))
@@ -253,39 +331,71 @@ public struct Packer: Sendable {
     info["CFBundleIcons~ipad"] = ["CFBundlePrimaryIcon": padPrimaryIcon]
   }
 
-  /// Reads the installed SDK bundle's `sdk-manifest.json` for provenance keys that
-  /// App Store Connect requires in the merged Info.plist. A manifest- or
-  /// bundle-resolution failure is fatal because the resulting IPA would otherwise be
-  /// rejected during processing.
-  private func resolveSDKManifest() throws -> SDKManifest {
-    guard
-      let bundle = try SDKVersion.installedBundle(
-        sdkID: sdkID,
-        targetTriple: targetTriple,
-        swiftPath: swiftPath
+  /// Resolves the build-system provenance used by App Store Connect. The imported
+  /// bundle reads the installed SDK bundle's `sdk-manifest.json`; Xcode in place reads
+  /// Xcode's metadata directly. A resolution failure is fatal because the resulting
+  /// IPA would otherwise be rejected during processing.
+  private func resolveBuildSystemMetadata() throws -> BuildSystemMetadata {
+    switch sdkInput {
+    case let .xcodeInPlace(installation):
+      switch plan.platform {
+      case .device:
+        return BuildSystemMetadata(
+          iphoneosSDKVersion: installation.iphoneosSDKVersion,
+          xcodeVersion: installation.version,
+          xcodeBuild: installation.build
+        )
+      case .simulator:
+        guard let simulatorVersion = installation.iphoneSimulatorSDKVersion else {
+          throw BuildError.missingSimulatorSDK(installation.appURL.path)
+        }
+        return BuildSystemMetadata(
+          iphoneosSDKVersion: simulatorVersion,
+          xcodeVersion: installation.version,
+          xcodeBuild: installation.build
+        )
+      }
+    case let .importedBundle(sdkID):
+      guard plan.platform == .device else {
+        throw BuildError.simulatorRequiresXcode
+      }
+      guard
+        let bundle = try SDKVersion.installedBundle(
+          sdkID: sdkID,
+          targetTriple: targetTriple,
+          swiftPath: swiftPath
+        )
+      else {
+        throw BuildError.processingFailed(
+          "sdk manifest", "The installed Swift SDK bundle could not be located.")
+      }
+      let manifestURL = bundle.appendingPathComponent("sdk-manifest.json")
+      guard let data = try? Data(contentsOf: manifestURL) else {
+        throw BuildError.processingFailed(
+          "sdk manifest", "The installed SDK bundle has no sdk-manifest.json.")
+      }
+      let manifest = try SDKManifest.decode(data)
+      return BuildSystemMetadata(
+        iphoneosSDKVersion: manifest.iphoneosSDKVersion,
+        xcodeVersion: manifest.sourceXcode.version,
+        xcodeBuild: manifest.sourceXcode.build
       )
-    else {
-      throw BuildError.processingFailed(
-        "sdk manifest", "The installed Swift SDK bundle could not be located.")
     }
-    let manifestURL = bundle.appendingPathComponent("sdk-manifest.json")
-    guard let data = try? Data(contentsOf: manifestURL) else {
-      throw BuildError.processingFailed(
-        "sdk manifest", "The installed SDK bundle has no sdk-manifest.json.")
-    }
-    return try SDKManifest.decode(data)
   }
 
   /// Injects the build-system keys App Store Connect requires: `DTPlatformName`,
   /// `DTSDKName`, `DTXcode`, `DTXcodeBuild`, `DTCompiler`, and platform/SDK versions.
-  /// Values come from the SDK export manifest so the IPA records the real toolchain.
-  static func injectBuildSystemKeys(into info: inout [String: Sendable], manifest: SDKManifest) {
-    let sdkVersion = manifest.iphoneosSDKVersion
-    info["DTPlatformName"] = "iphoneos"
-    info["DTPlatformVersion"] = sdkVersion
-    info["DTSDKName"] = "iphoneos\(sdkVersion)"
-    info["DTXcode"] = Self.numericXcodeVersion(manifest.sourceXcode.version)
-    info["DTXcodeBuild"] = manifest.sourceXcode.build
+  /// Values come from the source toolchain so the IPA records the real build.
+  static func injectBuildSystemKeys(
+    into info: inout [String: Sendable],
+    metadata: BuildSystemMetadata,
+    platform: TargetPlatform = .device
+  ) {
+    info["DTPlatformName"] = platform.sdkPlatformName
+    info["DTPlatformVersion"] = metadata.iphoneosSDKVersion
+    info["DTSDKName"] = "\(platform.sdkPlatformName)\(metadata.iphoneosSDKVersion)"
+    info["DTXcode"] = Self.numericXcodeVersion(metadata.xcodeVersion)
+    info["DTXcodeBuild"] = metadata.xcodeBuild
     info["DTCompiler"] = "com.apple.compilers.llvm.clang.1_0"
     info["BuildMachineOSBuild"] = nil
   }

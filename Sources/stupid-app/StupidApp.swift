@@ -16,6 +16,7 @@ struct StupidApp: AsyncParsableCommand {
       DevicesCommand.self,
       DeviceCommand.self,
       RunCommand.self,
+      SimulatorsCommand.self,
       ReleaseCommand.self,
       CoreDeviceHelperCommand.self,
     ]

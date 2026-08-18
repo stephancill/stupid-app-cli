@@ -22,13 +22,18 @@ struct RunCommand: AsyncParsableCommand {
     name: .customLong("network"), help: "Install and launch through a CoreDevice network tunnel.")
   var network = false
 
+  @Flag(
+    name: .customLong("simulator"), help: "Build, install, and launch on a local simulator.")
+  var simulator = false
+
   @Option(
     name: .customLong("udid"),
-    help: "Target device UDID (auto-detected when omitted with one USB device).")
+    help: "Target device or simulator UDID (auto-selected when omitted).")
   var udid: String?
 
   @Option(
-    name: .customLong("sdk-id"), help: "Imported Swift SDK identifier (default stupid-app-ios).")
+    name: .customLong("sdk-id"),
+    help: "Imported Swift SDK identifier (bundle hosts; default stupid-app-ios).")
   var sdkID: String = "stupid-app-ios"
 
   @Option(name: .customLong("swift"), help: "Path to the host `swift` executable.")
@@ -59,11 +64,23 @@ struct RunCommand: AsyncParsableCommand {
   var home: String?
 
   mutating func run() async throws {
-    guard usb != network else {
+    let transports = [usb, network, simulator].filter { $0 }.count
+    guard transports == 1 else {
       throw RunError.unsupportedTransport
     }
     if network, udid == nil {
       throw RunError.networkDeviceRequired
+    }
+
+    let configURL = URL(fileURLWithPath: "stupid-app.yml")
+    guard let data = try? Data(contentsOf: configURL) else {
+      throw ProjectError.unreadableConfig(configURL.path)
+    }
+    let config = try AppConfig.decode(data)
+    let projectRoot = URL(fileURLWithPath: ".")
+
+    if simulator {
+      return try runSimulator(projectRoot: projectRoot, config: config)
     }
 
     let credentialHome = credentialHomeURL()
@@ -78,25 +95,30 @@ struct RunCommand: AsyncParsableCommand {
 
     let context = try ASCContext.resolve(home: home, purpose: "run")
 
-    let configURL = URL(fileURLWithPath: "stupid-app.yml")
-    guard let data = try? Data(contentsOf: configURL) else {
-      throw ProjectError.unreadableConfig(configURL.path)
-    }
-    let config = try AppConfig.decode(data)
-    let projectRoot = URL(fileURLWithPath: ".")
-
     // 1. Build the unsigned app (debug configuration).
-    let planner = Planner(projectRoot: projectRoot, config: config, swiftPath: swiftPath)
+    let mode = HostSDKMode.detect()
+    let toolchain = BuildToolchain.resolve(
+      swiftPath: swiftPath,
+      sdkID: sdkID,
+      targetTriple: TargetPlatform.device.targetTriple,
+      mode: mode
+    )
+    let resolvedSwift = toolchain.swiftPath
+    let planner = Planner(projectRoot: projectRoot, config: config, swiftPath: resolvedSwift)
     let plan = try planner.makePlan()
-    guard SDKVersion.isInstalled(sdkID: sdkID, swiftPath: swiftPath) else {
-      throw SDKVersion.Error.sdkNotInstalled(sdkID)
+    if case .importedBundle = toolchain.sdkInput {
+      guard SDKVersion.isInstalled(sdkID: sdkID, swiftPath: resolvedSwift) else {
+        throw SDKVersion.Error.sdkNotInstalled(sdkID)
+      }
     }
     let packer = Packer(
       projectRoot: projectRoot,
       plan: plan,
       config: config,
-      swiftPath: swiftPath,
+      swiftPath: resolvedSwift,
       sdkID: sdkID,
+      sdkInput: toolchain.sdkInput,
+      sdkVersion: toolchain.hostSDKVersion,
       buildConfiguration: .debug
     )
     let unsignedApp = try packer.pack()
@@ -154,19 +176,34 @@ struct RunCommand: AsyncParsableCommand {
       let pid = try nativeRunner.launchUSB(bundleID: config.bundleID, udid: targetUDID)
       print("Launched \(config.bundleID) (pid \(pid)).")
     } else if let udid {
-      let networkRunner = NativeNetworkRunner(
-        pairingDirectory: credentialHome.appendingPathComponent("pairing", isDirectory: true),
-        udid: udid,
-        ipa: output.ipaURL,
-        bundleID: config.bundleID,
-        discoveryTimeoutSeconds: discoveryTimeout,
-        installTimeoutSeconds: installTimeout,
-        launchTimeoutSeconds: launchTimeout,
-        progress: { print($0) }
-      )
-      print("Installing and launching on the selected device over the network...")
-      let pid = try networkRunner.installAndLaunch()
-      print("Installed and launched \(config.bundleID) (pid \(pid)).")
+      #if os(macOS)
+        // macOS utun creation requires root; the network path owns the TUN
+        // inside the privileged helper through the same explicit --sudo boundary
+        // as the USB launch.
+        print("Installing and launching on the selected device over the network...")
+        let pid = try nativeRunner.runNetwork(
+          bundleID: config.bundleID,
+          udid: udid,
+          ipa: output.ipaURL,
+          discoveryTimeoutSeconds: discoveryTimeout,
+          installTimeoutSeconds: installTimeout
+        )
+        print("Installed and launched \(config.bundleID) (pid \(pid)).")
+      #else
+        let networkRunner = NativeNetworkRunner(
+          pairingDirectory: credentialHome.appendingPathComponent("pairing", isDirectory: true),
+          udid: udid,
+          ipa: output.ipaURL,
+          bundleID: config.bundleID,
+          discoveryTimeoutSeconds: discoveryTimeout,
+          installTimeoutSeconds: installTimeout,
+          launchTimeoutSeconds: launchTimeout,
+          progress: { print($0) }
+        )
+        print("Installing and launching on the selected device over the network...")
+        let pid = try networkRunner.installAndLaunch()
+        print("Installed and launched \(config.bundleID) (pid \(pid)).")
+      #endif
     }
   }
 
@@ -180,6 +217,95 @@ struct RunCommand: AsyncParsableCommand {
     }
     print("Using the sole USB-connected device.")
     return devices[0]
+  }
+
+  private func runSimulator(projectRoot: URL, config: AppConfig) throws {
+    let mode = HostSDKMode.detect()
+    guard case .xcodeInPlace = mode else {
+      throw BuildError.simulatorRequiresXcode
+    }
+    let toolchain = BuildToolchain.resolve(
+      swiftPath: swiftPath,
+      sdkID: sdkID,
+      targetTriple: TargetPlatform.simulator.targetTriple,
+      mode: mode,
+      platform: .simulator
+    )
+    let resolvedSwift = toolchain.swiftPath
+    let planner = Planner(
+      projectRoot: projectRoot,
+      config: config,
+      swiftPath: resolvedSwift,
+      targetTriple: TargetPlatform.simulator.targetTriple,
+      platform: .simulator
+    )
+    let plan = try planner.makePlan()
+    let packer = Packer(
+      projectRoot: projectRoot,
+      plan: plan,
+      config: config,
+      swiftPath: resolvedSwift,
+      targetTriple: TargetPlatform.simulator.targetTriple,
+      sdkID: sdkID,
+      sdkInput: toolchain.sdkInput,
+      sdkVersion: toolchain.hostSDKVersion,
+      buildConfiguration: .debug
+    )
+    let unsignedApp = try packer.pack()
+    print("Assembled unsigned \(unsignedApp.path)")
+
+    // Ad-hoc signing is the scoped simulator exception: it is the normal, required
+    // mode for simulator execution and is never an intermediate pass in a device or
+    // release pipeline. Simulator .app output is never a device or release artifact.
+    print("Ad-hoc signing for the simulator (scoped exception: never a device/release artifact)...")
+    try adHocSign(appURL: unsignedApp)
+
+    let device = try selectSimulatorDevice(udid: udid)
+    print("Using simulator \(device.name) (\(device.udid))")
+
+    let state = device.state.lowercased()
+    if state.contains("shutdown") || state.contains("created") {
+      print("Booting simulator \(device.udid)...")
+      try Simctl.boot(udid: device.udid)
+      try Simctl.bootStatus(udid: device.udid)
+    }
+
+    print("Installing \(config.bundleID) on \(device.udid)...")
+    try Simctl.install(udid: device.udid, appURL: unsignedApp)
+    let pid = try Simctl.launch(udid: device.udid, bundleID: config.bundleID)
+    print("Launched \(config.bundleID) on simulator \(device.name) (pid \(pid)).")
+  }
+
+  private func adHocSign(appURL: URL) throws {
+    // `codesign -s -` performs the ad-hoc signing that Xcode's "Sign to Run Locally"
+    // uses for simulator builds. The scoped exception is documented in
+    // docs/macos-host-support-scope.md.
+    let result = try ProcessRunner.run(
+      executable: "/usr/bin/codesign",
+      arguments: ["--force", "--sign", "-", appURL.path]
+    )
+    guard result.succeeded else {
+      let detail = result.stderr.isEmpty ? result.stdout : result.stderr
+      throw RunError.simulatorSigningFailed(detail)
+    }
+  }
+
+  private func selectSimulatorDevice(udid: String?) throws -> Simctl.Device {
+    let devices = try Simctl.listDevices()
+    if let udid {
+      guard let device = devices.first(where: { $0.udid == udid }) else {
+        throw RunError.simulatorNotFound(udid)
+      }
+      return device
+    }
+    // Prefer a booted device; otherwise the first device of the newest runtime.
+    if let booted = devices.first(where: { $0.state.lowercased() == "booted" }) {
+      return booted
+    }
+    guard let first = devices.first else {
+      throw RunError.noSimulatorDevice
+    }
+    return first
   }
 
   private func credentialHomeURL() -> URL {
@@ -208,11 +334,14 @@ enum RunError: Error, CustomStringConvertible {
   case profileMissing(String)
   case deviceSelection(Int)
   case networkDeviceRequired
+  case simulatorSigningFailed(String)
+  case simulatorNotFound(String)
+  case noSimulatorDevice
 
   var description: String {
     switch self {
     case .unsupportedTransport:
-      return "Select exactly one deployment transport: --usb or --network."
+      return "Select exactly one deployment transport: --usb, --network, or --simulator."
     case .identityMissingTeam:
       return
         "The stored development identity has no team ID. Re-run `stupid-app signing setup --kind development`."
@@ -225,6 +354,14 @@ enum RunError: Error, CustomStringConvertible {
     case .networkDeviceRequired:
       return
         "Network deployment requires --udid because remote pairing identifiers are not device UDIDs."
+    case .simulatorSigningFailed(let detail):
+      return "Ad-hoc simulator signing failed. \(detail)"
+    case .simulatorNotFound(let udid):
+      return
+        "No simulator device exists with UDID '\(udid)'. Run `stupid-app simulators` to list them."
+    case .noSimulatorDevice:
+      return
+        "No simulator device is available. Install a runtime or run `stupid-app simulators` to list them."
     }
   }
 }

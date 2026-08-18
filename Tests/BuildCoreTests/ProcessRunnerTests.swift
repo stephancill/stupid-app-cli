@@ -65,22 +65,20 @@ struct ProcessRunnerTests {
     }
   }
 
-  #if os(Linux)
-    @Test("timeout kills Linux process-group descendants")
-    func timeoutKillsProcessGroup() {
-      do {
-        _ = try ProcessRunner.run(
-          executable: "/bin/sh",
-          arguments: [
-            "-c", "trap '' INT TERM; (trap '' INT TERM; while :; do :; done) & wait",
-          ],
-          configuration: .init(timeoutSeconds: 0.2, terminationGraceSeconds: 0.1)
-        )
-        Issue.record("Expected the process group to time out")
-      } catch is ProcessError {
-      } catch {
-        Issue.record("Unexpected error: \(error)")
-      }
+  @Test("timeout kills process-group descendants")
+  func timeoutKillsProcessGroup() {
+    do {
+      _ = try ProcessRunner.run(
+        executable: "/bin/sh",
+        arguments: [
+          "-c", "trap '' INT TERM; (trap '' INT TERM; while :; do :; done) & wait",
+        ],
+        configuration: .init(timeoutSeconds: 0.2, terminationGraceSeconds: 0.1)
+      )
+      Issue.record("Expected the process group to time out")
+    } catch is ProcessError {
+    } catch {
+      Issue.record("Unexpected error: \(error)")
     }
-  #endif
+  }
 }

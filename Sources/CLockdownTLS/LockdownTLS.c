@@ -1,4 +1,5 @@
 #include "CLockdownTLS.h"
+#include "CTUN.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -540,8 +541,8 @@ int stupid_app_lockdown_tls_relay_tun(
           if (packet_length > inbound_length - offset) {
             break;
           }
-          ssize_t written = write(tun_fd, inbound + offset, packet_length);
-          if (written != (ssize_t)packet_length) {
+          ssize_t written = stupid_app_tun_relay_write(tun_fd, inbound + offset, packet_length);
+          if (written != 0) {
             result = STUPID_APP_LOCKDOWN_TLS_WRITE_FAILED;
             offset = inbound_length;
             break;
@@ -575,7 +576,7 @@ int stupid_app_lockdown_tls_relay_tun(
 
     // Host -> device: read a packet from the TUN and write it into the tunnel.
     if (descriptors[1].revents & (POLLIN | POLLHUP | POLLERR)) {
-      ssize_t packet_length = read(tun_fd, outbound, 65536);
+      ssize_t packet_length = stupid_app_tun_relay_read(tun_fd, outbound, 65536);
       if (packet_length > 0) {
         size_t offset = 0;
         while (offset < (size_t)packet_length) {

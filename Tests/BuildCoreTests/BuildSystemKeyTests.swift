@@ -8,20 +8,14 @@ import Testing
 struct BuildSystemKeyTests {
   @Test("injects platform and Xcode provenance keys")
   func injectsBuildSystemKeys() {
-    let manifest = SDKManifest(
-      formatVersion: 1,
-      generator: "stupid-app",
-      generatorVersion: "test",
-      sourceXcode: .init(version: "26.1.1", build: "17B100"),
-      iphoneosSDKVersion: "26.1",
-      swiftCompiler: .init(version: "Swift version 6.2.1", major: 6, minor: 2),
-      hostTriple: "x86_64-unknown-linux-gnu",
-      targetTriple: "arm64-apple-ios",
-      darwinTools: .init(source: "pinned", version: "v1", sha256: "abc"),
-      files: [:]
-    )
     var info: [String: Sendable] = ["CFBundleIdentifier": "net.example.app"]
-    Packer.injectBuildSystemKeys(into: &info, manifest: manifest)
+    Packer.injectBuildSystemKeys(
+      into: &info,
+      metadata: BuildSystemMetadata(
+        iphoneosSDKVersion: "26.1",
+        xcodeVersion: "26.1.1",
+        xcodeBuild: "17B100"
+      ))
 
     #expect(info["DTPlatformName"] as? String == "iphoneos")
     #expect(info["DTPlatformVersion"] as? String == "26.1")
@@ -30,6 +24,25 @@ struct BuildSystemKeyTests {
     #expect(info["DTXcodeBuild"] as? String == "17B100")
     #expect(info["DTCompiler"] as? String == "com.apple.compilers.llvm.clang.1_0")
     // The build machine is macOS-specific; it must never be invented on Linux.
+    #expect(info["BuildMachineOSBuild"] == nil)
+  }
+
+  @Test("injects the same keys from in-place Xcode metadata")
+  func injectsFromInPlaceMetadata() {
+    let metadata = BuildSystemMetadata(
+      iphoneosSDKVersion: "26.1",
+      xcodeVersion: "26.1.1",
+      xcodeBuild: "17B100"
+    )
+    var info: [String: Sendable] = ["CFBundleIdentifier": "net.example.app"]
+    Packer.injectBuildSystemKeys(into: &info, metadata: metadata)
+
+    #expect(info["DTPlatformName"] as? String == "iphoneos")
+    #expect(info["DTPlatformVersion"] as? String == "26.1")
+    #expect(info["DTSDKName"] as? String == "iphoneos26.1")
+    #expect(info["DTXcode"] as? String == "2611")
+    #expect(info["DTXcodeBuild"] as? String == "17B100")
+    #expect(info["DTCompiler"] as? String == "com.apple.compilers.llvm.clang.1_0")
     #expect(info["BuildMachineOSBuild"] == nil)
   }
 

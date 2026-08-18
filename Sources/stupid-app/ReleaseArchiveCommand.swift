@@ -27,7 +27,7 @@ struct ReleaseArchiveCommand: AsyncParsableCommand {
   )
 
   @Option(
-    name: .customLong("sdk-id"), help: "Imported Swift SDK identifier (default stupid-app-ios).")
+    name: .customLong("sdk-id"), help: "Imported Swift SDK identifier (bundle hosts; default stupid-app-ios).")
   var sdkID: String = "stupid-app-ios"
 
   @Option(name: .customLong("swift"), help: "Path to the host `swift` executable.")
@@ -55,25 +55,30 @@ struct ReleaseArchiveCommand: AsyncParsableCommand {
     let projectRoot = URL(fileURLWithPath: ".")
 
     // 1. Build the unsigned app (release configuration).
-    let planner = Planner(projectRoot: projectRoot, config: config, swiftPath: swiftPath)
+    let mode = HostSDKMode.detect()
+    let toolchain = BuildToolchain.resolve(
+      swiftPath: swiftPath,
+      sdkID: sdkID,
+      targetTriple: "arm64-apple-ios",
+      mode: mode,
+      sdkVersionOverride: sdkVersionOverride
+    )
+    let resolvedSwift = toolchain.swiftPath
+    let planner = Planner(projectRoot: projectRoot, config: config, swiftPath: resolvedSwift)
     let plan = try planner.makePlan()
-    let resolvedSDKID = sdkID
-    let resolvedSwift = swiftPath
-    let resolvedOverride = sdkVersionOverride
-    guard SDKVersion.isInstalled(sdkID: resolvedSDKID, swiftPath: resolvedSwift) else {
-      throw SDKVersion.Error.sdkNotInstalled(resolvedSDKID)
+    if case .importedBundle = toolchain.sdkInput {
+      guard SDKVersion.isInstalled(sdkID: sdkID, swiftPath: resolvedSwift) else {
+        throw SDKVersion.Error.sdkNotInstalled(sdkID)
+      }
     }
     let packer = Packer(
       projectRoot: projectRoot,
       plan: plan,
       config: config,
-      swiftPath: swiftPath,
+      swiftPath: resolvedSwift,
       sdkID: sdkID,
-      sdkVersion: { @Sendable in
-        try SDKVersion.resolve(
-          sdkID: resolvedSDKID, targetTriple: "arm64-apple-ios", swiftPath: resolvedSwift,
-          override: resolvedOverride)
-      },
+      sdkInput: toolchain.sdkInput,
+      sdkVersion: toolchain.hostSDKVersion,
       buildConfiguration: .release
     )
     let unsignedApp = try packer.pack()
