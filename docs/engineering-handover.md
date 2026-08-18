@@ -31,12 +31,17 @@ runtimes/devices and `stupid-app run --simulator [--udid <id>]` builds for
  IPv6 neighbor-discovery problem (macOS performed NDP on the on-link `/64` and the device
  never answered, so the host returned "address unreachable" once the neighbor entry aged
  out); the network tunnel now installs a point-to-point host route for the server address
- on macOS, and the native mDNS browser re-issues its PTR query periodically to avoid the
- intermittent discovery miss. The Xcode-absent
- macOS path (M4) remains. Linux remains the validated reference host and macOS must pass
- its own clean-host proof gates (Gate M0: Xcode-present build; M1: simulator run loop; M2:
- macOS-produced release; M3: Xcode-present device deployment; M4: Xcode-absent path; M5:
- productization).
+on macOS, and the native mDNS browser re-issues its PTR query periodically to avoid the
+  intermittent discovery miss. The Xcode-present release path (Gate M2) is now
+  qualified: a macOS-produced distribution IPA passed `codesign --verify --strict`,
+  processed to `VALID`/internal `IN_BETA_TESTING`, and installed and launched through
+  TestFlight on the physical device (it had to reuse the WSL-provisioned distribution
+  identity and App Store profile because Apple's distribution-certificate limit blocks
+  minting a new one). The Xcode-absent
+  macOS path (M4) remains. Linux remains the validated reference host and macOS must pass
+  its own clean-host proof gates (Gate M0: Xcode-present build; M1: simulator run loop; M2:
+  macOS-produced release; M3: Xcode-present device deployment; M4: Xcode-absent path; M5:
+  productization).
 
 The project is in technical validation. Gate 0 (SDK and compiler proof) is complete: a
 device-only, checksummed iPhoneOS Swift SDK bundle is exported on macOS by
@@ -1420,8 +1425,9 @@ Exit condition: all acceptance criteria run through stable CLI commands on clean
 
 ### macOS Host Support Gates
 
-Status: **Gates M0 and M1 implemented**; release, device, and Xcode-absent paths
-pending. See `docs/macos-host-support-scope.md` for the full scope, work areas,
+Status: **Gates M0, M1, and M2 implemented**; device (M3), Xcode-absent, and
+productization paths as noted below. See `docs/macos-host-support-scope.md` for the
+full scope, work areas,
 acceptance criteria, and open decisions. Confirmed design decisions: Xcode-present mode
 builds against Xcode's SDK/linker/`swift` in place (no space duplication); Xcode-absent
 mode imports the device-only bundle carrying a pinned open-source LLVM Darwin toolset;
@@ -1454,7 +1460,15 @@ requirement is still open. Summary:
   shutdown device that was booted on demand, with no residual processes.
 - **Gate M2: macOS-produced release.** A distribution IPA built on macOS passes
   `codesign --verify --strict`, processes to `VALID`/TestFlight readiness, and installs
-  through TestFlight. Not started.
+  through TestFlight. Qualified on this Mac (2026-08-18): `release archive` produced a
+  distribution IPA (SHA-256 `723b4724231726d54004cf906cfe5b5c710d58cf0b1562eaa5f414108a0282d1`)
+  that passed `codesign --verify --strict` ("valid on disk" / "satisfies its Designated
+  Requirement") with the embedded App Store profile byte-identical to the stored
+  profile; `release upload --wait` processed to `VALID` and internal `IN_BETA_TESTING`;
+  and the build installed and launched through TestFlight on the physical device. The
+  distribution identity and App Store profile provisioned on the WSL host were imported
+  onto the Mac rather than minted anew (Apple's distribution-certificate limit). A
+  clean-host macOS run is still required per the clean-host gate policy.
 - **Gate M3: Xcode-present device deployment.** `device pair --usb`, `run --usb`, and
   three consecutive unplugged `run --network` runs pass on a physical iPhone with zero
   residual state, using the built-in usbmuxd and a new macOS `utun` backend. The `utun`

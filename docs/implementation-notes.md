@@ -2926,3 +2926,59 @@ match.
   the legacy `ios-dev` ID.
 - Run the remaining M2 (macOS-produced release), M4 (Xcode-absent), and M5
   (productization) gates on clean hosts.
+
+## 2026-08-18 - macOS Gate M2: Xcode-Present Release Qualified
+
+### Summary
+
+- Qualified Gate M2 (Xcode-present release) from `docs/macos-host-support-scope.md` on
+  this Mac: a macOS-produced distribution IPA passed independent `codesign --verify
+  --strict`, processed to `VALID`/internal TestFlight readiness through the native
+  Build Upload client, and installed and launched on the physical device through
+  TestFlight.
+- The App Store record, distribution identity, and App Store profile already existed as
+  team resources from the Linux Gate 1/2 proofs. Apple's distribution-certificate limit
+  blocks minting a new one, so the existing identity (`<distribution-identity-id>`, active to
+  2027-08-12) and the `<signing-proof-bundle-id> AppStore` profile were imported
+  onto this Mac through the CLI's standard `signing setup --import-*` path rather than
+  any non-product shortcut.
+
+### Execution
+
+- Replicated the WSL `AcceptanceApp` project on this Mac from the qualified source
+  (`stupid-app.yml`, package, single-file SwiftUI sources, AppIcon, bare entitlements),
+  bumped `CFBundleVersion` from 9 (the last WSL upload) to 10.
+- `signing setup --kind distribution --bundle-id <signing-proof-bundle-id>
+  --import-key --import-cert --cert-id` reused the ASC profile
+  `<app-store-connect-certificate-id>` (keyed to the imported certificate) and stored it owner-only.
+- `release archive` built in place against Xcode's SDK (no artifact bundle), signed once
+  with the native engine (timestamps disabled), and packaged
+  `AcceptanceApp.ipa` (SHA-256 `723b4724231726d54004cf906cfe5b5c710d58cf0b1562eaa5f414108a0282d1`).
+
+### Verification
+
+- `codesign --verify --strict --verbose=4` on the exact packaged app reported "valid on
+  disk" and "satisfies its Designated Requirement"; identifier
+  `<signing-proof-bundle-id>`, TeamIdentifier `<team-identifier>`, get-task-allow false.
+- The embedded `embedded.mobileprovision` is byte-identical (md5
+  `<profile-checksum>`) to the stored App Store profile.
+- The main Mach-O reports `LC_BUILD_VERSION` platform IOS sdk 26.1; merged Info.plist
+  carries the Xcode-derived build keys (`DTXcode` 2611, `DTXcodeBuild` 17B100,
+  `DTPlatformVersion` 26.1, `DTSDKName` iphoneos26.1) and no `BuildMachineOSBuild`.
+- `release upload --wait` completed the Build Upload, resolved build 1.0 (10), and
+  reported `processing=VALID`, internal `IN_BETA_TESTING`, external
+  `READY_FOR_BETA_SUBMISSION`; `release status --live` confirms the same from the API.
+- The build installed and remained open on the physical device through the TestFlight
+  app, satisfying Gate M2's exit condition ("this re-qualifies the native signer for a
+  new producing host").
+
+### Notes And Follow-Up
+
+- The existing distribution identity was reused across Linux and macOS hosts exactly as
+  the codebase's re-signing discipline intends; no new certificate was minted.
+- A clean-host macOS run is still required per the handover's clean-host gate policy
+  (decision 9 remains open).
+- Remaining: M4 (Xcode-absent path) and M5 (productization: macOS clean-host docs,
+  README/handover/help reflecting two host modes).
+- Temporary secret copies used to move the identity from the WSL host to this Mac were
+  removed from both hosts after import.

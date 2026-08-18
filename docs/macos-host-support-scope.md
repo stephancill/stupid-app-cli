@@ -31,8 +31,12 @@ the built-in usbmuxd), and work area 9 (macOS `doctor` checks) are implemented.
  intermittency was an IPv6 NDP failure on the on-link `/64` route; the macOS network
  tunnel now installs a point-to-point host route for the server address, and the native
  mDNS browser re-issues its PTR query periodically to avoid the intermittent discovery
- miss. The remaining gates (M2 release, M4 Xcode-absent,
- M5 productization) are unchanged and still require clean-host proof.
+miss. Gate M2 (the Xcode-present release) is now qualified on this Mac: the native
+  distribution pipeline produced an IPA that passed macOS `codesign --verify --strict`,
+  processed to `VALID`/internal `IN_BETA_TESTING` on App Store Connect, and installed
+  and launched through TestFlight on the physical device. The remaining gates
+  (M4 Xcode-absent, M5 productization) are unchanged and still require clean-host
+  proof.
 
 
 ## Design Decisions (confirmed)
@@ -386,6 +390,16 @@ TestFlight.
 
 Exit condition: App Store Connect reports the macOS-produced build valid and TestFlight
 installs it. This re-qualifies the native signer for a new producing host.
+
+**Qualified on this Mac (2026-08-18).** `stupid-app release archive` produced a
+distribution-signed IPA (SHA-256 `723b4724231726d54004cf906cfe5b5c710d58cf0b1562eaa5f414108a0282d1`)
+using the existing distribution identity and App Store profile (imported onto the Mac
+from the WSL host; Apple's distribution-certificate limit blocks minting a new one).
+The exact IPA passed macOS `codesign --verify --strict` ("valid on disk" / "satisfies
+its Designated Requirement") with the embedded App Store profile byte-identical to the
+stored profile. `release upload --wait` processed to `VALID` and internal
+`IN_BETA_TESTING`; the build installed and launched through TestFlight on the physical
+device. A clean-host macOS run is still required per the clean-host gate policy.
 
 ### Gate M3: Xcode-present device deployment
 
