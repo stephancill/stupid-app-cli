@@ -54,6 +54,8 @@ manages on macOS (`--from-xcode`).
 - `docs/engineering-handover.md` — the maintained engineering source of truth.
 - `docs/implementation-notes.md` — the chronological engineering log.
 - `docs/clean-host-setup.md` — clean-host setup and recovery procedures.
+- `docs/macos-clean-host-setup.md` — macOS Mode A / Mode B setup and recovery.
+- `docs/mode-b-darwin-tools.md` — Gate M4 plan for macOS-hosted Darwin tools.
 
 ## Commands
 

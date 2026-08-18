@@ -65,10 +65,14 @@ The following decisions were confirmed with the project owner on 2026-08-18:
 A follow-up clarification on 2026-08-18 confirmed five more decisions:
 
 5. **Mode B Darwin tools: pinned LLVM build.** The Xcode-absent bundle carries a pinned
-   macOS build of `lld`'s `ld64.lld`, `llvm-libtool-darwin`, and `dsymutil`, mirroring
-   the Linux `darwin-tools` pin (checksummed, auditable, Apache-2.0-with-LLVM-exceptions).
-   No Xcode toolchain copy or CLT linker is used. The first reference build is produced by
-   this project because no upstream publishes these binaries.
+   macOS build of `lld`'s `ld64.lld`, `llvm-libtool-darwin`, and `dsymutil`, mirroring the
+   Linux `darwin-tools` pin (checksummed, auditable, Apache-2.0-with-LLVM-exceptions).
+   **Updated (Gate M4 scouting):** Homebrew already publishes these three binaries as
+   prebuilt, open-source LLVM 20.1.8 tools (`lld` and `llvm` formulae), and they
+   demonstrably link an arm64 iOS Mach-O. The recommended approach is therefore to pin,
+   package, and relocate those prebuilt binaries into the bundle rather than build LLVM
+   from source; the from-source build remains the fallback if relocation proves fragile.
+   See `docs/mode-b-darwin-tools.md`.
 6. **Command Line Tools are acceptable in Mode B if empirically required.** If the
    swift.org macOS toolchain cannot run without CLT, CLT becomes a documented Mode B
    prerequisite. The no-Xcode goal still holds; CLT is not Xcode and is a much smaller
@@ -267,7 +271,10 @@ The Xcode-absent bundle requires macOS-run binaries of the Mach-O linker, `libto
 The toolset schema already supports naming `linker`, `libtool`, and `dsymutil` paths.
 `DarwinTools` gains a macOS-hosted source set selected by `*-apple-macosx` host triples;
 unsupported archs continue to fail loudly. The `--host` option help text is updated.
-This work is Mode-B-only and ordered after the Mode A path (decision 4).
+This work is Mode-B-only and ordered after the Mode A path (decision 4). Scouting
+(`docs/mode-b-darwin-tools.md`) confirmed Homebrew publishes the three tools and that
+they link arm64 iOS Mach-O; the plan is to pin, relocate, and bundle those prebuilt
+binaries, with a from-source LLVM build as the fallback.
 
 ### 4. Host Swift and Mode B toolchain
 
@@ -424,6 +431,11 @@ This proves the shared macOS device stack once.
 
 ### Gate M4: Xcode-absent path (Mode B)
 
+Scouting complete (2026-08-18): Homebrew publishes the three Mode B Darwin tools, and a
+smoke test confirmed Homebrew `ld64.lld` links an arm64 iOS Mach-O with the correct
+`LC_BUILD_VERSION`. See `docs/mode-b-darwin-tools.md` for the full plan and validation
+steps. Not yet implemented.
+
 On a clean Mac with no Xcode (CLT absent initially; add only if proven necessary):
 
 1. Export a macOS-host SDK bundle on an Xcode-equipped Mac; import it here with
@@ -455,10 +467,11 @@ hosts in both modes.
 - **Host Swift toolchain in Mode B.** The swift.org macOS toolchain may require CLT for
   its own bootstrapping; this is accepted if empirically required (decision 6) and Mode B
   then means "no Xcode", not "no Apple tooling". Confirmed empirically at Gate M4.
-- **macOS Darwin-tool distribution.** The pinned LLVM `ld64.lld`/`libtool`/`dsymutil`
-  build (decision 5) has no published upstream binaries, so this project produces and
-  distributes the first pinned reference; licensing (Apache-2.0 with LLVM exceptions) and
-  provenance must be recorded. (M4)
+- **macOS Darwin-tool distribution.** Homebrew's `lld` and `llvm` formulae publish the
+  three required tools (Apache-2.0 with LLVM exceptions); the plan is to pin, relocate,
+  and bundle those prebuilt binaries, recording revision and per-binary SHA-256. If
+  `install_name_tool` relocation proves fragile, build self-contained static binaries
+  from the pinned LLVM source as a fallback. (M4; see `docs/mode-b-darwin-tools.md`.)
 - **Simulator signing.** Ad-hoc simulator signing is a deliberate, scoped exception to
   the real-certificate invariants; it must never leak into a device or release path.
 - **Simulator runtime availability.** `run --simulator` depends on an installed runtime

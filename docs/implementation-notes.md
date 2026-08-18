@@ -3090,3 +3090,84 @@ is omitted.
 ### Follow-Up
 
 - `signing setup` end-to-end fresh-host acceptance with a real API key is still pending.
+
+## 2026-08-18 - macOS Host Support M5: Clean-Host Doc And M5 Closure
+
+### Summary
+
+Advanced macOS host-support productization (Gate M5). Audited the remaining M5 items:
+the `doctor` both-mode checks and the mode-aware `SDKVersion.resolve` fallback were
+already complete, so the outstanding concrete deliverable was the macOS clean-host setup
+document.
+
+### Changes
+
+- Added `docs/macos-clean-host-setup.md`, mirroring the Linux clean-host doc, covering
+  both supported macOS modes: Mode A (Xcode-present, in-place SDK, built-in usbmuxd,
+  simulator run loop, utun `--sudo` boundary) and the intended (not yet validated) Mode B
+  (Xcode-absent) procedure pending Gate M4's macOS-hosted Darwin toolset. Uses only
+  generic placeholders.
+- Updated `docs/engineering-handover.md` Gate M5 to record that the code items are
+  complete and the remaining M5 work is the clean-host acceptance run and Mode B's
+  executable path (which depends on M4).
+- Added the new document to the README package-layout list.
+
+### Verification
+
+- Documentation-only change; no source affected. The M5 code items (doctor both-mode
+  checks and the Mode-aware SDK fallback) were confirmed present by inspection:
+  `SDKVersion.resolve` reads Xcode's `SDKSettings.json` in Mode A and the imported
+  bundle manifest (failing loudly when absent) in Mode B.
+
+### Follow-Up
+
+- Mode B remains gated on Gate M4: producing and pinning the macOS-hosted LLVM
+  `ld64.lld`/`llvm-libtool-darwin`/`dsymutil` toolset, then validating `sdk export
+  --host <mac-arm64-triple>` and the full Xcode-absent workflow on a clean Mac without
+  Xcode.
+- Clean-host macOS acceptance runs (M0-M3, and M5) remain open under decision 9.
+
+## 2026-08-18 - Gate M4 Scouting: macOS-Hosted Darwin Tools
+
+### Summary
+
+Scouted Gate M4 (Mac, Xcode-absent / Mode B) and produced a scoping/plan document. The
+key finding changes the prior assumption that the Mode B macOS-hosted Darwin toolset must
+be built from LLVM source.
+
+### Finding
+
+Homebrew's `lld` and `llvm` formulae already publish all three required tools as prebuilt,
+open-source LLVM 20.1.8 binaries:
+
+- `lld` → `ld64.lld` (symlink; Homebrew LLD 20.1.8)
+- `llvm` → `dsymutil` and `llvm-libtool-darwin` (LLVM 20.1.8)
+
+A smoke test on this Mac confirmed Homebrew `ld64.lld` accepts
+`-arch arm64 -platform_version ios 17.0 26.1` and links a minimal object to a valid
+`EXECUTE` ARM64 Mach-O whose `LC_BUILD_VERSION` reports `platform IOS minos 17.0`;
+`dsymutil` ran and `llvm-libtool-darwin -static` produced a working archive.
+
+The binaries are not static: `ld64.lld` depends on six `@rpath/liblld*.dylib` and on an
+absolute Homebrew `libLLVM.dylib`; `dsymutil`/`llvm-libtool-darwin` depend on
+`@rpath/libLLVM.dylib`. So the plan is to pin, bundle, and relocate (via
+`install_name_tool -change`) the three binaries plus `libLLVM.dylib` and the lld dylibs
+into the SDK bundle's `toolset/`, with a from-source static LLVM build as the fallback if
+relocation proves fragile. Recorded in `docs/mode-b-darwin-tools.md`.
+
+### Decisions
+
+- Prefer bundling Homebrew's published prebuilt LLVM 20.1.8 Darwin tools over a
+  from-source build, because they are open source (Apache-2.0 with LLVM exceptions),
+  satisfy the licensing constraint, and demonstrably link iOS Mach-O. This updates design
+  decision 5 in `docs/macos-host-support-scope.md`.
+- Keep the from-source static build as the fallback and gate relocation correctness as
+  the primary validation step.
+
+### Follow-Up
+
+- Implement the `DarwinTools` macOS-hosted source set and `sdk export --host
+  <arm64-apple-macosx>` staging/relocation/checksum path.
+- Validate relocation and the toolset-in-place iOS link, then resolve `-use-ld=lld`
+  discovery against a swiftly-installed swift.org toolchain.
+- Clean-host Mode B acceptance (the M4 exit condition) remains.

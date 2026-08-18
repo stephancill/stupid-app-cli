@@ -1623,13 +1623,23 @@ requirement is still open. Summary:
   unreachable"); the macOS network tunnel now installs a point-to-point host route for
   the server address, and the native mDNS browser re-issues its PTR query periodically.
   A clean-host macOS run is still required per the clean-host gate policy.
-- **Gate M4: Xcode-absent path.** `sdk export --host <mac-triple>` with macOS-hosted
-  Darwin tools, import, build, release, and device runs without Xcode (swift.org host
-  Swift; CLT only if empirically unavoidable). Not started.
+- **Gate M4: Xcode-absent path.** Scouting complete: Homebrew's `lld`/`llvm` formulae
+  publish the three Mode B Darwin tools (LLVM 20.1.8), and a smoke test confirmed
+  Homebrew `ld64.lld` links an arm64 iOS Mach-O with the correct `LC_BUILD_VERSION`. The
+  plan is to pin, relocate, and bundle those prebuilt binaries into the SDK export rather
+  than build LLVM from source (see `docs/mode-b-darwin-tools.md`). Implementation still
+  pending: `sdk export --host <mac-triple>` with the macOS-hosted toolset, import, build,
+  release, and device runs without Xcode (swift.org host Swift; CLT only if empirically
+  unavoidable).
 - **Gate M5: productization.** `doctor` macOS checks for both modes, the mode-aware SDK
-  fallback, macOS clean-host setup docs, and the acceptance run. Partially started:
-  the `doctor` host-SDK-mode and in-place SDK checks landed with M0; the macOS usbmuxd
-  and utun/`--sudo` checks landed with M3.
+  fallback, macOS clean-host setup docs, and the acceptance run. The remaining
+  code items are complete: the `doctor` host-SDK-mode and in-place SDK checks landed with
+  M0, the macOS usbmuxd and utun/`--sudo` checks landed with M3, and the mode-aware
+  `SDKVersion.resolve` fallback (Mode A reads Xcode's `SDKSettings.json` in place; Mode B
+  reads the imported bundle manifest and fails loudly when absent) landed with M0. A
+  macOS clean-host setup/recovery document was added (`docs/macos-clean-host-setup.md`)
+  covering both modes. Open M5 work is the clean-host acceptance run (deferred with
+  decision 9) and Mode B's executable path, which depends on Gate M4.
 
 Linux-only gaps that must be made portable for macOS: the `CTUN` TUN backend and
 `ProcessRunner` process-group cleanup are now ported (Gate M3); `doctor`'s Linux-gated
@@ -1679,8 +1689,9 @@ Required recurring integration coverage:
 8. Apple Developer and App Store Connect API behavior, roles, certificate limits, and profile rules can change.
 9. Signing keys inside WSL, virtual-disk exports, or a future VPS materially increase the credential-security burden.
 10. macOS host support depends on a host Swift toolchain that may require Apple Command
-    Line Tools in Xcode-absent mode, project-produced pinned macOS `ld64.lld` binaries
-    with no upstream distribution, Homebrew OpenSSL 3 as a runtime dependency, Apple
+    Line Tools in Xcode-absent mode, bundled/relocated pinned macOS `ld64.lld`/
+    `dsymutil`/`llvm-libtool-darwin` binaries (from Homebrew's LLVM 20.1.8; see
+    `docs/mode-b-darwin-tools.md`), Homebrew OpenSSL 3 as a runtime dependency, Apple
     Silicon-only qualification initially, Xcode-version coupling in Xcode-present mode,
     and scoped ad-hoc simulator signing; see `docs/macos-host-support-scope.md`.
 
