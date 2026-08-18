@@ -269,12 +269,14 @@ The Xcode-absent bundle requires macOS-run binaries of the Mach-O linker, `libto
   the pinned binaries.
 
 The toolset schema already supports naming `linker`, `libtool`, and `dsymutil` paths.
-`DarwinTools` gains a macOS-hosted source set selected by `*-apple-macosx` host triples;
-unsupported archs continue to fail loudly. The `--host` option help text is updated.
-This work is Mode-B-only and ordered after the Mode A path (decision 4). Scouting
-(`docs/mode-b-darwin-tools.md`) confirmed Homebrew publishes the three tools and that
-they link arm64 iOS Mach-O; the plan is to pin, relocate, and bundle those prebuilt
-binaries, with a from-source LLVM build as the fallback.
+`DarwinTools` gained a macOS-hosted source set (`macOSHosted*`) selected by
+`*-apple-macosx` host triples, and the exporter (`Exporter.installMacOSToolset`) stages,
+relocates (via `install_name_tool -change`/`-id`), and bundles the pinned Homebrew LLVM
+20.1.8 binaries and their dylibs under `toolset/bin` and `toolset/lib`. Unsupported archs
+(e.g. Intel `x86_64-apple-macosx`) continue to fail loudly. This work is Mode-B-only and
+ordered after the Mode A path (decision 4) as planned; relocation and toolset-in-place
+iOS linking are validated on this Mac. The remaining M4 work is the swift.org driver's
+`-use-ld=lld` discovery and a No-Xcode acceptance run.
 
 ### 4. Host Swift and Mode B toolchain
 
@@ -431,10 +433,13 @@ This proves the shared macOS device stack once.
 
 ### Gate M4: Xcode-absent path (Mode B)
 
-Scouting complete (2026-08-18): Homebrew publishes the three Mode B Darwin tools, and a
-smoke test confirmed Homebrew `ld64.lld` links an arm64 iOS Mach-O with the correct
-`LC_BUILD_VERSION`. See `docs/mode-b-darwin-tools.md` for the full plan and validation
-steps. Not yet implemented.
+Scouting complete and partial implementation landed (2026-08-18): Homebrew publishes the
+three Mode B Darwin tools (LLVM 20.1.8), and `sdk export --host arm64-apple-macosx` now
+stages, relocates, and bundles those prebuilt binaries under `toolset/bin` and
+`toolset/lib` (`DarwinTools.macOSHosted*`, `Exporter.installMacOSToolset`). M4
+validation 1 (relocation: no residual Homebrew load dependencies) and validation 2 (the
+bundled `ld64.lld` links an arm64 iOS Mach-O with the correct `LC_BUILD_VERSION`) pass on
+this Mac. See `docs/mode-b-darwin-tools.md`.
 
 On a clean Mac with no Xcode (CLT absent initially; add only if proven necessary):
 

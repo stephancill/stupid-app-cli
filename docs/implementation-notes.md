@@ -3171,3 +3171,53 @@ relocation proves fragile. Recorded in `docs/mode-b-darwin-tools.md`.
 - Validate relocation and the toolset-in-place iOS link, then resolve `-use-ld=lld`
   discovery against a swiftly-installed swift.org toolchain.
 - Clean-host Mode B acceptance (the M4 exit condition) remains.
+
+## 2026-08-18 - Gate M4: macOS Hosted Darwin Toolset Implementation (Validations 1-2)
+
+### Summary
+
+Implemented the Mode B (Xcode-absent) macOS-hosted Darwin toolset in the exporter, per
+the Gate M4 plan in `docs/mode-b-darwin-tools.md`, and validated relocation plus a
+toolset-in-place iOS link on this Mac.
+
+### Changes
+
+- `Sources/SDKCore/DarwinTools.swift`: added `MacOSBinary`/`MacOSDylib`/`MacOSHosted`
+  value types and the pinned ARM64 Homebrew toolset (`macOSHostedArm64`, LLVM 20.1.8,
+  kegs `lld@20`, `llvm@20`, `zstd`), plus `isMacOSHost(triple:)` and
+  `macOSHosted(forHostTriple:)` (Intel `x86_64-apple-macosx` deferred).
+- `Sources/SDKCore/ExportError.swift`: added `homebrewToolMissing`,
+  `toolRelocationFailed`, and `toolRelocationUnverified` errors.
+- `Sources/stupid-app/Exporter.swift`: `installToolset` now branches to
+  `installMacOSToolset(into:)` for macOS host triples. It stages the three binaries
+  (`ld64.lld`, `libtool`/`llvm-libtool-darwin`, `dsymutil`) and their dylibs
+  (`liblld{MachO,Common,ELF,COFF,Wasm,MinGW}`, `libLLVM`, `libzstd`) into
+  `toolset/bin`/`toolset/lib`, rewrites the absolute Homebrew load paths to `@rpath` via
+  `install_name_tool -change`, fixes dylib install names (`-id`), and verifies no load
+  dependency still references `/opt/homebrew`. The `sdk-manifest.json` `darwinTools`
+  provenance record and the `--host`/export help text were updated for macOS hosts.
+- `Sources/stupid-app/SDKExportCommand.swift`: updated the abstract/discussion and
+  `--host` help to describe both the Linux and macOS host paths.
+- `Tests/SDKCoreTests/DarwinToolsTests.swift`: 5 unit tests for host-mode detection,
+  ARM64 toolset resolution, Intel deferral, and the binary/dylib sets.
+
+### Verification
+
+- `swift build` clean; full suite passes (178/178 with the pre-existing flaky
+  `CoreDeviceTLSConnectionTests` excluded), including the 5 new DarwinTools tests.
+- A real `sdk export --host arm64-apple-macosx --target arm64-apple-ios` produced the
+  artifact bundle (SHA-256 recorded). Extracting it confirmed `toolset/bin` and
+  `toolset/lib` are populated, `toolset.json`/`sdk-manifest.json` are correct, and no
+  load dependency (excluding self install-names) references `/opt/homebrew`.
+- The bundled, relocated `ld64.lld` linked a minimal arm64 object to a valid `EXECUTE`
+  Mach-O (`LC_BUILD_VERSION platform IOS minos 17.0`); the bundled `dsymutil` and
+  `llvm-libtool-darwin` ran successfully. This satisfies M4 validation 1 (relocation) and
+  validation 2 (toolset-in-place link).
+
+### Follow-Up
+
+- Validation 3-4/open: resolve the swift.org host driver's `-use-ld=lld` discovery of
+  the bundled `ld64.lld`, which requires a swiftly-installed swift.org toolchain and a
+  No-Xcode Mac; document CLT as a Mode B prerequisite only if empirically required
+  (decision 6).
+- The M4 exit condition (full No-Xcode `build`/`release`/device acceptance) remains.

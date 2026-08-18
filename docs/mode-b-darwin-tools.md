@@ -101,13 +101,21 @@ triples:
 ## Order of work
 
 1. Extend `DarwinTools` with the macOS-hosted source set and make `sdk export --host
-   <arm64-apple-macosx>` stage, relocate, checksum, and embed the tools.
+   <arm64-apple-macosx>` stage, relocate, checksum, and embed the tools. **Done
+   (2026-08-18):** `DarwinTools.macOSHosted*`; `Exporter.installMacOSToolset` stages the
+   binaries and dylibs into `toolset/bin`/`toolset/lib`, rewrites the absolute Homebrew
+   load paths to `@rpath`, fixes dylib install names, and verifies no residual Homebrew
+   dependency remains; the Linux/`--host` help text and manifest provenance record were
+   updated.
 2. Validate relocation (validation 1) and the toolset-in-place link (validation 2) on
-   this Mac using the existing Homebrew install.
+   this Mac using the existing Homebrew install. **Done (2026-08-18):** a real
+   `sdk export --host arm64-apple-macosx` produced a bundle with zero residual Homebrew
+   load dependencies, and the bundled (relocated) `ld64.lld` linked an arm64 iOS Mach-O
+   with `platform IOS minos 17.0`; bundled `dsymutil` and `llvm-libtool-darwin` both ran.
 3. Resolve `-use-ld=lld` discovery against a swiftly-installed swift.org toolchain
    (validation 3-4); document CLT as a Mode B prerequisite only if empirically required
-   (decision 6).
-4. Clean-host Mode B acceptance (the M4 exit condition).
+   (decision 6). **Open: requires a swiftly toolchain / a No-Xcode Mac.**
+4. Clean-host Mode B acceptance (the M4 exit condition). **Open.**
 
 ## Risks And Decisions
 

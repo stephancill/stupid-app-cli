@@ -157,6 +157,13 @@ struct Exporter {
     // MARK: - Toolset
 
     private func installToolset(into bundle: URL) throws {
+        // Mode B (macOS-host) stages the Darwin tools from the pinned Homebrew LLVM
+        // prebuilt kegs; the Linux path downloads the pinned darwin-tools archive.
+        if DarwinTools.isMacOSHost(options.hostTriple) {
+            try installMacOSToolset(into: bundle)
+            return
+        }
+
         let arch = hostArchComponent(options.hostTriple).contains("aarch64") || options.hostTriple.hasPrefix("aarch64")
             ? "aarch64"
             : "x86_64"
@@ -196,6 +203,118 @@ struct Exporter {
                 throw ExportError.toolsetChecksumMismatch("missing \(tool)")
             }
         }
+    }
+
+    /// Stages the macOS-hosted Mode B toolset from the pinned Homebrew `lld`/`llvm`
+    /// kegs into the bundle, then rewrites absolute Homebrew load paths to `@rpath` so
+    /// the bundle is relocatable (Gate M4 validation 1).
+    private func installMacOSToolset(into bundle: URL) throws {
+        guard let hosted = DarwinTools.macOSHosted(forHostTriple: options.hostTriple) else {
+            throw ExportError.hostArchUnsupported(options.hostTriple)
+        }
+        let toolsetDir = bundle.appendingPathComponent("toolset")
+        let binDir = toolsetDir.appendingPathComponent("bin")
+        let libDir = toolsetDir.appendingPathComponent("lib")
+        try fileManager.createDirectory(at: binDir, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: libDir, withIntermediateDirectories: true)
+
+        // Group binaries by keg bin dir so a source file can be resolved to its path.
+        let kegBins: [(keg: String, dir: URL)] = [
+            ("lld", URL(fileURLWithPath: hosted.lldBinDir)),
+            ("llvm", URL(fileURLWithPath: hosted.llvmBinDir)),
+        ]
+
+        // Binaries.
+        for binary in hosted.binaries {
+            guard let entry = kegBins.first(where: { binary.keg == $0.keg }) else { continue }
+            let source = entry.dir.appendingPathComponent(binary.source)
+            guard fileManager.isExecutableFile(atPath: source.path) else {
+                throw ExportError.homebrewToolMissing(source.path)
+            }
+            try fileManager.copyItem(at: source, to: binDir.appendingPathComponent(binary.bundleName))
+        }
+        for tool in DarwinTools.binaries {
+            guard fileManager.isExecutableFile(atPath: binDir.appendingPathComponent(tool).path) else {
+                throw ExportError.homebrewToolMissing(binDir.appendingPathComponent(tool).path)
+            }
+        }
+
+        // Dylibs.
+        for dylib in hosted.dylibs {
+            let lib: URL
+            if dylib.keg == "lld" {
+                lib = URL(fileURLWithPath: hosted.lldLibDir)
+            } else if dylib.keg == "llvm" {
+                lib = URL(fileURLWithPath: hosted.llvmLibDir)
+            } else {
+                lib = URL(fileURLWithPath: hosted.zstdLibDir)
+            }
+            let source = lib.appendingPathComponent(dylib.source)
+            guard fileManager.fileExists(atPath: source.path) else {
+                throw ExportError.homebrewToolMissing(source.path)
+            }
+            try fileManager.copyItem(at: source, to: libDir.appendingPathComponent(dylib.bundleName))
+        }
+
+        // Relocate: rewrite absolute Homebrew load paths to @rpath, then fix install names.
+        let allFiles = (try fileManager.contentsOfDirectory(at: binDir, includingPropertiesForKeys: nil))
+            + (try fileManager.contentsOfDirectory(at: libDir, includingPropertiesForKeys: nil))
+        for file in allFiles {
+            try rewriteLoadPath(file, old: hosted.llvmLoadPath, new: "@rpath/libLLVM.dylib")
+            try rewriteLoadPath(file, old: hosted.zstdLoadPath, new: "@rpath/libzstd.1.dylib")
+        }
+        for dylib in hosted.dylibs {
+            if let installName = dylib.installName {
+                try runTool([URL(fileURLWithPath: "/usr/bin/install_name_tool").path, "-id", installName,
+                             libDir.appendingPathComponent(dylib.bundleName).path])
+            }
+        }
+
+        // Verify no load dependency still references the Homebrew prefix.
+        for file in allFiles {
+            let deps = try otoolDependencies(at: file)
+            if deps.contains(where: { $0.contains("/opt/homebrew") }) {
+                throw ExportError.toolRelocationUnverified(file.path)
+            }
+        }
+    }
+
+    /// Runs `/usr/bin/install_name_tool -change <old> <new> <file>`, tolerating the
+    /// (exit 0) no-op when the load command is absent.
+    private func rewriteLoadPath(_ file: URL, old: String, new: String) throws {
+        try runTool([
+            "/usr/bin/install_name_tool", "-change", old, new, file.path,
+        ])
+    }
+
+    /// Returns the load-command dependencies (excluding install names) of a Mach-O.
+    private func otoolDependencies(at url: URL) throws -> [String] {
+        let output = try runToolCapture(["/usr/bin/otool", "-L", url.path])
+        // First line (after the "file:" header) is the install name; only dependencies follow.
+        return output.split(separator: "\n").dropFirst(2).map(String.init)
+    }
+
+    private func runTool(_ arguments: [String]) throws {
+        _ = try runToolCapture(arguments)
+    }
+
+    /// Runs a tool and returns captured stdout, throwing on a non-zero exit.
+    private func runToolCapture(_ arguments: [String]) throws -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: arguments[0])
+        process.arguments = Array(arguments.dropFirst())
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+        try process.run()
+        process.waitUntilExit()
+        let out = String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        let err = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        guard process.terminationStatus == 0 else {
+            throw ExportError.toolRelocationFailed(arguments[0], err.isEmpty ? out : err)
+        }
+        return out
     }
 
     private func downloadToolset(_ source: DarwinTools.Source) throws -> URL {
@@ -288,11 +407,31 @@ struct Exporter {
 
         let xcode = try xcodeVersion()
         let swift = try swiftToolchainVersion()
-        let hostArch = hostArchComponent(options.hostTriple).contains("aarch64") || options.hostTriple.hasPrefix("aarch64")
-            ? "aarch64"
-            : "x86_64"
-        guard let darwinTools = DarwinTools.source(for: hostArch) else {
-            throw ExportError.hostArchUnsupported(hostArch)
+
+        let darwinTools: SDKManifest.DarwinToolsSource
+        if DarwinTools.isMacOSHost(options.hostTriple) {
+            guard let hosted = DarwinTools.macOSHosted(forHostTriple: options.hostTriple) else {
+                throw ExportError.hostArchUnsupported(options.hostTriple)
+            }
+            // Provenance only: integrity is enforced by the per-file `files` checksums.
+            let ld64 = try SHA256.file(at: bundleURL.appendingPathComponent("toolset/bin/ld64.lld"))
+            darwinTools = SDKManifest.DarwinToolsSource(
+                source: "homebrew:lld@20,llvm@20,zstd",
+                version: hosted.version,
+                sha256: ld64
+            )
+        } else {
+            let hostArch = hostArchComponent(options.hostTriple).contains("aarch64") || options.hostTriple.hasPrefix("aarch64")
+                ? "aarch64"
+                : "x86_64"
+            guard let source = DarwinTools.source(for: hostArch) else {
+                throw ExportError.hostArchUnsupported(hostArch)
+            }
+            darwinTools = SDKManifest.DarwinToolsSource(
+                source: source.url.absoluteString,
+                version: source.version,
+                sha256: source.sha256
+            )
         }
         return SDKManifest(
             formatVersion: SDKManifest.currentFormatVersion,
@@ -303,11 +442,7 @@ struct Exporter {
             swiftCompiler: swift,
             hostTriple: options.hostTriple,
             targetTriple: options.targetTriple,
-            darwinTools: SDKManifest.DarwinToolsSource(
-                source: darwinTools.url.absoluteString,
-                version: darwinTools.version,
-                sha256: darwinTools.sha256
-            ),
+            darwinTools: darwinTools,
             files: files
         )
     }

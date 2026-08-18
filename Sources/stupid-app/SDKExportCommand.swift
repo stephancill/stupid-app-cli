@@ -11,15 +11,19 @@ struct SDKExportCommand: AsyncParsableCommand {
         abstract: "Export a device-only, checksummed Swift SDK bundle from an installed Xcode.",
         discussion: """
         Produces a tar.zst archive containing a SwiftPM artifact bundle for cross-compiling
-        arm64-apple-ios on a Linux host. Requires an installed Xcode on this Mac. The archive
-        is imported on a supported Linux host with `stupid-app sdk import`.
+        arm64-apple-ios on a host. Requires an installed Xcode on this Mac. The archive is
+        imported on a supported host with `stupid-app sdk import`.
+
+        A Linux host triple (e.g. x86_64-unknown-linux-gnu) downloads the pinned Linux
+        darwin-tools archive. A macOS host triple (e.g. arm64-apple-macosx) stages the
+        pinned Homebrew LLVM tools (`lld`, `llvm`, `zstd`) for the Xcode-absent path.
         """
     )
 
     @Option(name: .customLong("xcode"), help: "Path to an installed Xcode.app.")
     var xcodeApp: String = "/Applications/Xcode.app"
 
-    @Option(name: .customLong("host"), help: "Linux host triple, e.g. x86_64-unknown-linux-gnu.")
+    @Option(name: .customLong("host"), help: "Host triple the bundle will run on, e.g. x86_64-unknown-linux-gnu or arm64-apple-macosx.")
     var hostTriple: String
 
     @Option(name: .customLong("target"), help: "Target triple (default arm64-apple-ios).")

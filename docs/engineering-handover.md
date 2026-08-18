@@ -226,7 +226,7 @@ stupid-app signing setup [--key-id --issuer-id --p8 --team-id] [--bundle-id ...]
      After generation, App Store Connect shows the **Key ID** and **Issuer ID** and
      offers a one-time download of the `.p8` file. Download and keep the `.p8` private;
      it cannot be downloaded again. Requires a paid Apple Developer Program membership.
-  2. **Developer Team ID (10-character, e.g. `<team-identifier>`)** — sign in to
+  2. **Developer Team ID (10-character, e.g. `AB12CD34EF`)** — sign in to
      <https://developer.apple.com/account> and open **Membership Details**; the Team ID
      is shown there. On macOS with Xcode configured, `signing setup --from-xcode`
      derives it automatically instead.
@@ -1623,14 +1623,16 @@ requirement is still open. Summary:
   unreachable"); the macOS network tunnel now installs a point-to-point host route for
   the server address, and the native mDNS browser re-issues its PTR query periodically.
   A clean-host macOS run is still required per the clean-host gate policy.
-- **Gate M4: Xcode-absent path.** Scouting complete: Homebrew's `lld`/`llvm` formulae
-  publish the three Mode B Darwin tools (LLVM 20.1.8), and a smoke test confirmed
-  Homebrew `ld64.lld` links an arm64 iOS Mach-O with the correct `LC_BUILD_VERSION`. The
-  plan is to pin, relocate, and bundle those prebuilt binaries into the SDK export rather
-  than build LLVM from source (see `docs/mode-b-darwin-tools.md`). Implementation still
-  pending: `sdk export --host <mac-triple>` with the macOS-hosted toolset, import, build,
-  release, and device runs without Xcode (swift.org host Swift; CLT only if empirically
-  unavoidable).
+- **Gate M4: Xcode-absent path.** Scouting complete and partial implementation landed:
+  Homebrew's `lld`/`llvm` formulae publish the three Mode B Darwin tools (LLVM 20.1.8),
+  and `sdk export --host arm64-apple-macosx` now stages those prebuilt binaries, rewrites
+  their absolute Homebrew load paths to `@rpath`, and bundles them under `toolset/bin`
+  and `toolset/lib` (`DarwinTools.macOSHosted*`, `Exporter.installMacOSToolset`). M4
+  validation 1 (relocation: no residual Homebrew load dependencies) and validation 2 (the
+  bundled `ld64.lld` links an arm64 iOS Mach-O with the correct `LC_BUILD_VERSION`) pass
+  on this Mac. Remaining: resolve `-use-ld=lld` discovery through the swift.org host
+  driver, then a full No-Xcode `build`/`release`/device acceptance on a clean Mac (some of
+  which requires actually removing Xcode). See `docs/mode-b-darwin-tools.md`.
 - **Gate M5: productization.** `doctor` macOS checks for both modes, the mode-aware SDK
   fallback, macOS clean-host setup docs, and the acceptance run. The remaining
   code items are complete: the `doctor` host-SDK-mode and in-place SDK checks landed with

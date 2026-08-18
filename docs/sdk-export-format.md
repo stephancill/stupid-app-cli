@@ -155,12 +155,21 @@ file in the bundle.
   pair does not match this value, because the prebuilt modules and resource directory are
   compiler-version-specific.
 
+For a macOS Mode B host (`sdk export --host arm64-apple-macosx`) the `darwinTools`
+record is provenance only: `source` is the pinned Homebrew keg set (e.g.
+`homebrew:lld@20,llvm@20,zstd`), `version` is the LLVM version, and `sha256` is the
+checksum of the bundled `toolset/bin/ld64.lld`. Integrity is enforced by the per-file
+checksums in `files` (which cover the relocated binaries and dylibs under `toolset/bin`
+and `toolset/lib`). See `docs/mode-b-darwin-tools.md` and
+`docs/macos-host-support-scope.md`.
+
 ## Compatibility
 
 The exporter must reject:
 
-- A host triple whose architecture is not present in the Xcode installation's available
-  Linux Darwin tools.
+- A host triple whose architecture is not present in the pinned Darwin tools for that
+  host (Linux `x86_64`/`aarch64` archives, or the macOS `arm64` Homebrew toolset under
+  `*-apple-macosx`; Intel macOS is deferred).
 - Multiple numeric iPhoneOS SDK versions in the Xcode installation.
 - A missing or unreadable Xcode `Contents/Developer` directory.
 - Unsupported paths that would require a resource compiler not present on Linux

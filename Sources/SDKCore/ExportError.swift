@@ -12,6 +12,9 @@ public enum ExportError: Error, Equatable, Sendable, CustomStringConvertible {
     case unexpectedSymlink(String)
     case copyFailed(source: String, destination: String, reason: String)
     case swiftVersionUnparseable(String)
+    case homebrewToolMissing(String)
+    case toolRelocationFailed(String, String)
+    case toolRelocationUnverified(String)
 
     public var description: String {
         switch self {
@@ -35,6 +38,12 @@ public enum ExportError: Error, Equatable, Sendable, CustomStringConvertible {
             return "Failed to copy '\(source)' to '\(destination)': \(reason)"
         case let .swiftVersionUnparseable(output):
             return "Could not parse the Xcode toolchain Swift version from output: \(output)"
+        case let .homebrewToolMissing(path):
+            return "Could not find a required Homebrew tool at '\(path)'. Install it (e.g. `brew install lld@20 llvm@20`) and rerun the export."
+        case let .toolRelocationFailed(path, reason):
+            return "Failed to relocate the macOS tool at '\(path)': \(reason)"
+        case let .toolRelocationUnverified(path):
+            return "The relocated macOS tool at '\(path)' still references an absolute Homebrew path; the bundle would not be relocatable. Re-run the export or update the pinned toolset."
         }
     }
 }
