@@ -3263,3 +3263,42 @@ toolset-in-place iOS link on this Mac.
   `Info.plist` `UIDeviceFamily` contained the unsupported value `[6]` (the archived
   Xcode-produced build 97 had been delivered with `[1]`). Correcting the source plist to
   `[1]` cleared the rejection; the same build number 98 then processed successfully.
+
+## 2026-08-19 - Fix: App Icon Blue Tint (Assets.car Pixel Byte Order)
+
+### Symptom
+
+- The Stupid Social 1.0.0 (98) TestFlight build (the first `stupid-app`-produced release)
+  showed a blue tint on the app icon. Note: because the source icon is grayscale, pure
+  white stays white; the blue appears where the logo's black pixels get rendered with the
+  alpha channel substituted for blue.
+
+### Root Cause
+
+- `AssetCatalogWriter.makeCar` wrote each icon pixel's bytes in **ARGB** order
+  (`[a, r, g, b]`) while labeling the rendition's `pixelFormat` as **"BGRA"** in the
+  csiheader. iOS honors the BGRA label and reads the first stored byte as Blue. For an
+  opaque pixel the first byte is alpha `0xFF`, so blue was pinned to `0xFF` and the real
+  gray leaked into alpha, producing the blue tint and translucent logo.
+- Concretely, black source `RGBA(0,0,0,255)` was stored `[255,0,0,0]` and read as BGRA
+  -> Blue=255, A=0. A solid-red test icon would have rendered cyan under the bug.
+
+### Fix
+
+- Store the pixel bytes in **BGRA** order (`[b, g, r, a]`) to match the `"BGRA"` label,
+  and renamed the misleading `argb` variable/parameters to `bgra`. An explanatory
+  comment documents the invariant so the byte order is not "fixed" back.
+- Updated `testEveryLZFSEChunkDecodesToOriginalBGRARows` (was ARGB) to assert the BGRA
+  byte order `[b,g,r,a]`. The existing assetutil qualification test still passes.
+
+### Verification
+
+- `AssetCatalogWriterTests` pass (7 tests, 1 skipped, 0 failures).
+- Built a throwaway app with a solid red source icon using the fixed writer, installed
+  it on the booted simulator, and confirmed the home-screen tile rendered **red**
+  (measured avg RGB ~(161,29,45)), not cyan/blue. Gray icons now render gray.
+
+### Follow-Up
+
+- The currently shipped TestFlight build (98) carries the buggy icon; a new build number
+  must be released with the fixed CLI to correct the icon in TestFlight.

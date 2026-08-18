@@ -102,14 +102,17 @@ public enum AssetCatalogWriter {
     guard pixels.count == width * height else {
       throw Error.pixelBufferMismatch
     }
-    var argb = Data(capacity: pixels.count * 4)
+    var bgra = Data(capacity: pixels.count * 4)
+    // The rendition labels its pixel format "BGRA", so bytes must be blue, green, red,
+    // alpha in memory order. Writing [a,r,g,b] here while labeling BGRA caused the app
+    // icon to render with the alpha and blue channels swapped (a blue tint).
     for p in pixels {
-      argb.append(p.a)
-      argb.append(p.r)
-      argb.append(p.g)
-      argb.append(p.b)
+      bgra.append(p.b)
+      bgra.append(p.g)
+      bgra.append(p.r)
+      bgra.append(p.a)
     }
-    return try buildCar(argb: argb, width: width, height: height)
+    return try buildCar(bgra: bgra, width: width, height: height)
   }
 
   // MARK: - Byte helpers
@@ -342,7 +345,7 @@ public enum AssetCatalogWriter {
 
   /// CoreUI's chunked LZFSE bitmap payload. `actool` divides a 1024-row app
   /// icon into three 341-row chunks and one final row; preserve that layout.
-  private static func iconImagePayload(argb: Data, width: Int, height: Int) throws -> Data {
+  private static func iconImagePayload(bgra: Data, width: Int, height: Int) throws -> Data {
     let bytesPerRow = width * 4
     let rowsPerChunk = max(1, height / 3)
     var chunks: [(height: Int, stream: Data)] = []
@@ -351,7 +354,7 @@ public enum AssetCatalogWriter {
       let chunkHeight = min(rowsPerChunk, height - row)
       let start = row * bytesPerRow
       let end = start + chunkHeight * bytesPerRow
-      chunks.append((chunkHeight, try compressedLZFSEStream(argb.subdata(in: start..<end))))
+      chunks.append((chunkHeight, try compressedLZFSEStream(bgra.subdata(in: start..<end))))
       row += chunkHeight
     }
 
@@ -411,7 +414,7 @@ public enum AssetCatalogWriter {
   // MARK: - Container assembly
 
   private static func buildCar(
-    argb: Data, width: Int, height: Int,
+    bgra: Data, width: Int, height: Int,
     platform: String = "ios",
     platformVersion: String = "17.0",
     authoringTool: String =
@@ -419,13 +422,13 @@ public enum AssetCatalogWriter {
     timestamp: UInt32 = UInt32(Date().timeIntervalSince1970)
   ) throws -> Data {
     let iconPhone = csi(
-      payload: try iconImagePayload(argb: argb, width: width, height: height), width: width,
+      payload: try iconImagePayload(bgra: bgra, width: width, height: height), width: width,
       height: height,
       scaleFactor: 100, layout: 12, name: "icon-1024.png",
       tlvs: iconImageTLVs(width: width, height: height),
       pixelFormat: Data("BGRA".utf8), colorSpace: 1, renditionFlags: 0)
     let iconPad = csi(
-      payload: try iconImagePayload(argb: argb, width: width, height: height), width: width,
+      payload: try iconImagePayload(bgra: bgra, width: width, height: height), width: width,
       height: height,
       scaleFactor: 100, layout: 12, name: "icon-1024.png",
       tlvs: iconImageTLVs(width: width, height: height),

@@ -73,9 +73,10 @@ final class AssetCatalogWriterTests: XCTestCase {
     _ = renditions
   }
 
-  func testEveryLZFSEChunkDecodesToOriginalARGBRows() throws {
+  func testEveryLZFSEChunkDecodesToOriginalBGRARows() throws {
     let car = try makeCar()
-    let expectedPixel = Data([0xFF, 0x80, 0x40, 0x20])
+    // Pixels are stored in BGRA byte order: blue, green, red, alpha.
+    let expectedPixel = Data([0x20, 0x40, 0x80, 0xFF])
     var searchStart = car.startIndex
     var decodedChunkCount = 0
 
