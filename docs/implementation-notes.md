@@ -3221,3 +3221,45 @@ toolset-in-place iOS link on this Mac.
   No-Xcode Mac; document CLT as a Mode B prerequisite only if empirically required
   (decision 6).
 - The M4 exit condition (full No-Xcode `build`/`release`/device acceptance) remains.
+
+## 2026-08-19 - First Real-World `stupid-app` Release: Stupid Social 1.0.0 (98) To TestFlight
+
+### Summary
+
+- Used the `stupid-app` CLI (macOS Xcode-present mode, Gate M2-qualified) to build,
+  sign once, package, and upload a new version of the existing SwiftPM/SwiftUI app at
+  `../stupid-social` to App Store Connect, reaching internal TestFlight.
+- This is the first real product release (not a proof-gate disposable bundle) driven
+  end-to-end by the CLI and its project-owned native signer.
+
+### What Changed In The Target Project
+
+- Added a `stupid-app.yml` project configuration for the existing xtool-style package
+  (product `NoFeedSocial`, bundle `<production-bundle-id>`, deployment target 18.0,
+  icon and raw badge PNG resources). The CLI reads this file instead of `xtool.yml`.
+- Added an empty `App.entitlements` (the deriver adds `application-identifier`,
+  `com.apple.developer.team-identifier`, and `get-task-allow=false` for distribution,
+  all authorized by the App Store profile).
+- Fixed the source `Info.plist` `UIDeviceFamily` from `[1, 6]` to `[1]`.
+
+### Provisioning
+
+- `signing setup --kind distribution --bundle-id <production-bundle-id>` re-used the
+  stored distribution identity and created/installed the exact App Store profile for the
+  bundle in the hardened credential store. Stored team `<team-identifier>` matched the app.
+
+### Verification And Result
+
+- `release archive` produced `.release/NoFeedSocial.ipa`; the signed app passed
+  `codesign --verify --strict`, carried correct distribution entitlements
+  (`get-task-allow=false`) and the App Store build-system Info.plist keys.
+- `release upload --wait` completed the Build Upload, resolved build 1.0.0 (98), and
+  reported `processing=VALID`, `internal=IN_BETA_TESTING`,
+  `external=READY_FOR_BETA_SUBMISSION`. The release manifest was written.
+
+### Failure And Fix
+
+- The first upload was rejected with Build Upload error `90100`: the merged
+  `Info.plist` `UIDeviceFamily` contained the unsupported value `[6]` (the archived
+  Xcode-produced build 97 had been delivered with `[1]`). Correcting the source plist to
+  `[1]` cleared the rejection; the same build number 98 then processed successfully.
