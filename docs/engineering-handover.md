@@ -109,9 +109,11 @@ credential/signing/pairing presence and permissions, Linux tunnel/usbmux prerequ
 and project configuration. It exits unsuccessfully for required-environment failures
 without reading or printing secret contents. The proposed command surface is complete
 including `release status`. The temporary debug environment was removed and `doctor`
-passes on the isolated WSL host; qualified USB transport provisioning and the final
-clean-host acceptance run remain open. See `docs/clean-host-setup.md` for repeatable
-setup and recovery.
+passes on the isolated WSL host; the host now registers the SDK under the single
+`stupid-app-ios` artifact ID (the legacy `ios-dev` registration was removed), and the
+Linux-facing defect the re-sync surfaced was fixed so the full suite passes on Linux.
+The final clean-host acceptance run remains open. See `docs/clean-host-setup.md` for
+repeatable setup and recovery.
 
 The promoted SwiftNIO SSL CoreDevice connection spike produced a **no-go** result. A live
 Python 3.13 control proved that the iPhone listener requires TLS 1.2
@@ -865,7 +867,10 @@ Current WSL limitations and follow-up:
   CLI and its GPL-3.0 distribution implications must be handled explicitly.
 - Mirrored networking is configured; iPhone mDNS discovery, remote pairing, TUN setup,
   network installation, launch, and three-run cleanup are verified.
-- The iOS Swift SDK has been exported and imported; a minimal SwiftUI app builds and links for `arm64-apple-ios`.
+- The iOS Swift SDK has been exported and imported under the `stupid-app-ios` artifact
+  ID from Xcode 26.3 (build 17C529) with iPhoneOS SDK 26.2 and toolchain Swift 6.2.4;
+  the legacy `ios-dev` registration was removed and a minimal SwiftUI app builds and
+  links for `arm64-apple-ios` with the real `26.2` SDK version in `LC_BUILD_VERSION`.
 - The host Swift compiler is proven for both native Linux compilation and iOS cross-compilation.
 - WSL is x86_64, so the SDK bundle must include x86_64 Linux Darwin tools and declare only the actual host triple.
 - The WSL host requires the `zstd` package as a build prerequisite for `tar --zstd` archives.
@@ -1305,13 +1310,15 @@ are implemented in this repository (`stupid-app sdk export`, `docs/sdk-export-fo
 with a valid `LC_BUILD_VERSION`. Details, archive checksum, and fixture commands are in
 `docs/implementation-notes.md`.
 
-Validated pair: Xcode 26.1.1 (build 17B100), iPhoneOS SDK 26.1, toolchain Swift 6.2.1,
-host Swift 6.2.4 on x86_64 Ubuntu 24.04.
+Validated pair: Xcode 26.3 (build 17C529), iPhoneOS SDK 26.2, toolchain Swift 6.2.4,
+host Swift 6.2.4 on x86_64 Ubuntu 24.04. The bundle registers under the `stupid-app-ios`
+artifact ID; the preceding Xcode 26.1.1 (build 17B100) / iPhoneOS 26.1 / Swift 6.2.1
+bundle remains historical.
 
 Known link-time caveat: Linux clang defaults the SDK version in `LC_BUILD_VERSION` to the
 deployment target because it does not read `SDKSettings.json`. The planner/packer must
 inject the real SDK version via `-platform_version` linker flags (verified: explicit
-`-platform_version ios 17.0 26.1` yields `sdk=26.1.0`).
+`-platform_version ios 17.0 26.2` yields `sdk=26.2.0`).
 
 Exit condition: a clean Linux host reproducibly builds an unsigned minimal SwiftUI app.
 
@@ -1382,10 +1389,10 @@ App Store validation requires the Xcode build-system keys that the Linux packer 
 emitting. The merged `Info.plist` in the IPA must carry, at minimum:
 
 - `DTPlatformName` = `iphoneos`
-- `DTPlatformVersion` = the real iPhoneOS SDK version (e.g. `26.1`)
-- `DTSDKName` = `iphoneos26.1`
-- `DTXcode` = numeric Xcode version (e.g. `2611` for 26.1.1)
-- `DTXcodeBuild` = Xcode build (e.g. `17B100`)
+- `DTPlatformVersion` = the real iPhoneOS SDK version (e.g. `26.2`)
+- `DTSDKName` = `iphoneos26.2`
+- `DTXcode` = numeric Xcode version (e.g. `2630` for 26.3)
+- `DTXcodeBuild` = Xcode build (e.g. `17C529`)
 - `DTCompiler` = `com.apple.compilers.llvm.clang.1_0`
 - `BuildMachineOSBuild` must be absent (never invent a macOS build number on Linux)
 
@@ -1899,9 +1906,11 @@ Execute the remaining work in this order:
    as a persistent systemd service. `docs/clean-host-setup.md` documents repeatable
    setup and recovery.
 2. Resume the remaining Gate 5 productization work (broader compatibility/fixture
-   coverage, re-exporting the SDK under `stupid-app-ios`, `release new-build` added,
-   and the complete acceptance run through stable commands on clean supported hosts) in
-   parallel. Supported-host, release-layout, and v1-entitlement decisions were resolved
+   coverage, `release new-build` added, and the complete acceptance run through stable
+   commands on clean supported hosts) in parallel. The SDK is re-exported and the hosts
+   register it under `stupid-app-ios` (the legacy `ios-dev` ID is removed), and the
+   Linux-facing defects the re-sync surfaced are fixed so the full suite passes on
+   Linux. Supported-host, release-layout, and v1-entitlement decisions were resolved
    2026-08-19 (see Open Decisions and implementation notes).
 3. Continue the macOS host support gates in `docs/macos-host-support-scope.md`. M0
    (Xcode-present build), M1 (simulator run loop), and the Gate M3 device-stack port are
@@ -1909,3 +1918,27 @@ Execute the remaining work in this order:
    `run --network` runs are physically qualified on a Mac (the network-path NDP and
    mDNS intermittencies are resolved). Next: Gate M2 (macOS-produced release), M4
    (Xcode-absent path), and M5 (productization), plus a clean-host macOS run.
+4. Add support for app extensions and richer entitlements. Version 1 supports one
+   library product with the bare entitlement set (`application-identifier`,
+   `com.apple.developer.team-identifier`, `get-task-allow`); app extensions,
+   ExtensionKit products, and other capabilities must fail loudly at planning today.
+   Extend the project model to a signed app plus extension products (widgets, share
+   extensions, notification services, and similar), with per-bundle provisioning
+   profiles, capability association through the Developer portal API (app groups,
+   keychain sharing, push, and other entitlement groups), per-bundle entitlement
+   derivation and reconciliation, nested-bundle embedding, and one real signing pass per
+   bundle in dependency order. Validate each nested bundle's signature, profile, and
+   entitlements independently before IPA assembly. Use the
+   `~/environments/personal/pus/stupid-authenticator` (app/extension entitlements) and
+   `~/environments/personal/pus/stupid-widgets` (widget entitlements, extension
+   metadata) projects as fixture references.
+5. Add macOS (`arm64-apple-macosx`) as a build target. The CLI currently builds iOS
+   device (`arm64-apple-ios`) and simulator (`arm64-apple-ios-simulator`) targets only.
+   Add macOS app-bundle support end to end: SDK/toolchain export and import for the
+   macOS target, `TargetPlatform` handling in the planner/packer (Info.plist synthesis,
+   resource and bundle layout, `LC_BUILD_VERSION` and build-system keys), macOS signing
+   policy (Apple Development / App Store distribution for macOS, local ad-hoc runs,
+   timestamp handling, and `codesign --verify --strict` qualification), release
+   packaging, and a run/install/launch path. The M4 macOS-hosted Darwin-tool relocation
+   and the `sdk export --host arm64-apple-macosx` toolset staging are related building
+   blocks; decide whether macOS-target SDK export can reuse them or needs its own bundle.

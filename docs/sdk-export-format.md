@@ -120,12 +120,12 @@ file in the bundle.
   "generator": "stupid-app",
   "generatorVersion": "0.1.0",
   "sourceXcode": {
-    "version": "26.1.1",
-    "build": "17B100"
+    "version": "26.3",
+    "build": "17C529"
   },
   "iphoneosSDKVersion": "26.2",
   "swiftCompiler": {
-    "version": "6.2.1",
+    "version": "6.2.4",
     "major": 6,
     "minor": 2
   },

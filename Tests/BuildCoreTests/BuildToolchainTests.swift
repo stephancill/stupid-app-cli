@@ -13,20 +13,23 @@ struct BuildToolchainTests {
       fileURLWithPath: "/Applications/Xcode.app/Contents/Developer"),
     iphoneOSSDKURL: URL(
       fileURLWithPath:
-        "/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk"),
+        "/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk"
+    ),
     iphoneSimulatorSDKURL: nil,
     toolchainSwiftURL: URL(
       fileURLWithPath:
-        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift"),
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift"
+    ),
     toolchainSwiftcURL: URL(
       fileURLWithPath:
-        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"),
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    ),
     toolchainBinDirectory: URL(
       fileURLWithPath:
         "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin"),
-    version: "26.1.1",
-    build: "17B100",
-    iphoneosSDKVersion: "26.1"
+    version: "26.3",
+    build: "17C529",
+    iphoneosSDKVersion: "26.2"
   )
 
   @Test("xcode in place substitutes Xcode's toolchain swift for the default path")
@@ -39,7 +42,7 @@ struct BuildToolchainTests {
     )
     #expect(toolchain.swiftPath == installation.toolchainSwiftURL.path)
     #expect(toolchain.sdkInput == .xcodeInPlace(installation))
-    #expect((try? toolchain.hostSDKVersion()) == "26.1")
+    #expect((try? toolchain.hostSDKVersion()) == "26.2")
   }
 
   @Test("xcode in place honors an explicit swift path override")

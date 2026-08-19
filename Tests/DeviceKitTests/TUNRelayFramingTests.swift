@@ -70,7 +70,11 @@ struct TUNRelayFramingTests {
 
   private func socketPair() throws -> (Int32, Int32) {
     var descriptors: [Int32] = [0, 0]
-    let result = socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors)
+    #if os(Linux)
+      let result = socketpair(AF_UNIX, Int32(SOCK_STREAM.rawValue), 0, &descriptors)
+    #else
+      let result = socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors)
+    #endif
     guard result == 0 else {
       throw TUNTestError.socketPairFailed(errno)
     }

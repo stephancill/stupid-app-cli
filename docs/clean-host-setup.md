@@ -12,7 +12,7 @@ so a broken environment can be rebuilt without guessing at hidden state.
 ## Prerequisites
 
 - A fresh x86_64 Ubuntu 24.04 WSL 2 distribution (the validated pair is Swift 6.2.4,
-  Xcode 26.1.1 / iPhoneOS SDK 26.1, host `x86_64-unknown-linux-gnu`).
+  Xcode 26.3 / iPhoneOS SDK 26.2, host `x86_64-unknown-linux-gnu`).
 - The `stupid-app` source tree on the host.
 - One exported iOS Swift SDK bundle (see `docs/sdk-export-format.md`).
 - App Store Connect team API key, issuer ID, `.p8`, and team ID.
@@ -45,9 +45,8 @@ swift build
 swift sdk list
 ```
 
-Verification: `swift sdk list` shows the artifact ID (currently `ios-dev` for the
-proof bundle; re-exported bundles register as `stupid-app-ios`). The CLI commands below
-use `--sdk-id ios-dev` until the bundle is re-exported under the new name.
+Verification: `swift sdk list` shows the artifact ID `stupid-app-ios`. The CLI commands below
+use the default SDK ID and need no `--sdk-id` override.
 
 ### 3. Credentials and signing identities
 
@@ -57,7 +56,7 @@ stupid-app signing setup --kind distribution --bundle-id <bundle-id>
 stupid-app signing setup --kind development --bundle-id <bundle-id> --udid <udid> --device-name "<name>"
 ```
 
-Verification: `stupid-app doctor --sdk-id ios-dev` reports 0 failures. The credential
+Verification: `stupid-app doctor` reports 0 failures. The credential
 directory is `~/.stupid-app/credentials`, mode `0700`, secret files mode `0600`.
 
 ### 4. Pairing records
@@ -67,7 +66,7 @@ USBIP-compatible usbmuxd for large transfers. A host that already has an owner-o
 `remote_<id>.plist` record in `~/.stupid-app/credentials/pairing` can skip straight to
 network runs.
 
-Verification: `stupid-app doctor --sdk-id ios-dev` reports the pairing records check as
+Verification: `stupid-app doctor` reports the pairing records check as
 `PASS`.
 
 ### 5. Privilege boundary for TUN
@@ -128,7 +127,7 @@ installs.
 ### 7. Health check
 
 ```bash
-stupid-app doctor --sdk-id ios-dev
+stupid-app doctor
 ```
 
 A clean host exits 0. `[WARNING] Project configuration` is expected when run outside a
@@ -137,9 +136,9 @@ project directory.
 ## Daily Use
 
 ```bash
-stupid-app run --network --udid <udid> --sdk-id ios-dev --sudo /usr/bin/sudo
-stupid-app release archive --sdk-id ios-dev
-stupid-app release upload --wait --sdk-id ios-dev
+stupid-app run --network --udid <udid> --sudo /usr/bin/sudo
+stupid-app release archive
+stupid-app release upload --wait
 stupid-app release status
 ```
 
@@ -155,7 +154,7 @@ stupid-app release status
    `stupid-app device pair --usb` once (requires USB) then retry. A fresh pair shows
    an on-device Trust dialog; pass a generous `--timeout` (e.g. `--timeout 180`)
    because the default 30 seconds can expire before the dialog is answered.
-5. Re-run `stupid-app doctor --sdk-id ios-dev` and fix any failures.
+5. Re-run `stupid-app doctor` and fix any failures.
 
 ### The host was re-imported or restored from an image
 

@@ -3529,3 +3529,78 @@ generated-project golden fixtures. Remaining Gate 5 items are operational and re
 external environments: re-exporting the SDK under `stupid-app-ios`, `signing setup`
 fresh-host acceptance, and the complete acceptance run through stable commands on clean
 supported hosts (clean WSL host for the Linux gates; the iPhone on the deployment host).
+
+## 2026-08-19 - Gate 5 Close-Out: SDK Re-Export Under stupid-app-ios And Host Re-Import
+
+### Summary
+
+- Closed the long-standing follow-up of re-exporting the iOS Swift SDK bundle under
+  the `stupid-app-ios` artifact ID so the isolated `iosdev-ubuntu` WSL host no longer
+  registers the legacy `ios-dev` ID.
+- Exported on macOS with `stupid-app sdk export --host x86_64-unknown-linux-gnu
+  --target arm64-apple-ios` and imported it on the WSL host, then removed the legacy
+  `ios-dev` registration. `swift sdk list` now shows only `stupid-app-ios`.
+- The fresh bundle is an upgrade over the Gate 0 bundle: it was produced from
+  `/Applications/Xcode.app`, which is Xcode 26.3 (build 17C529) with iPhoneOS SDK 26.2
+  and toolchain Swift 6.2.4 - an exact Swift version match with the WSL host's Swift
+  6.2.4 (the Gate 0 bundle used Xcode 26.1.1 / SDK 26.1 / Swift 6.2.1).
+- Rebuilt the WSL source tree from the current repository (the WSL copy predated
+  several commits and had no git metadata), fixed two Linux-facing defects the rebuild
+  surfaced, and re-qualified the host.
+
+### SDK Export And Import
+
+- Archive: `stupid-app-ios-arm64-apple-ios-x86_64-unknown-linux-gnu.artifactbundle.tar.zst`,
+  ~104 MB compressed.
+- Archive SHA-256:
+  `b6f98ce676d307e393b45a22005f936749e4a74765d7a73f9501b9ea4b3ce34e`.
+- Manifest provenance: source Xcode 26.3 (build 17C529), iPhoneOS SDK 26.2, Swift 6.2.4,
+  host triple `x86_64-unknown-linux-gnu`, target triple `arm64-apple-ios`, pinned
+  darwin-tools v1.0.1 (archive SHA-256
+  `58f567cbea08afb89aaee5ca0c2200e6c9fe7c014022fe380f0188e940d8d071`).
+- `stupid-app sdk import --expected-sha256 b6f98ce6...` verified the archive checksum,
+  extracted safely, verified all declared file checksums and host/Swift compatibility,
+  and registered the bundle as `stupid-app-ios` (`swift sdk list` output:
+  `stupid-app-ios`).
+- `swift sdk remove ios-dev` removed the legacy registration; the imported bundle is
+  functionally equivalent for every supported command and the CLI's default `--sdk-id`
+  already matched the new ID, so no command-line changes were needed.
+
+### Linux-Facing Defects Found And Fixed
+
+1. **`TUNRelayFramingTests` failed to compile on Linux.** `socketpair(AF_UNIX,
+   SOCK_STREAM, ...)` does not type-check on Glibc, where `SOCK_STREAM` is imported as a
+   `__socket_type` enum rather than `Int32`. The helper now uses
+   `Int32(SOCK_STREAM.rawValue)` under `#if os(Linux)`, matching the existing
+   `USBMuxClient` socket-creation pattern.
+2. **`BuildToolchain` xcode-in-place SDK version was environment-dependent.** The
+   `hostSDKVersion` closure for Xcode-in-place device mode called `SDKVersion.resolve`,
+   which re-detects the active Xcode through `xcode-select`; with multiple Xcode
+   installations this can disagree with the `--xcode` argument the command was given.
+   It now uses the selected `XcodeInstallation`'s own `iphoneosSDKVersion`, matching the
+   packer's existing in-place closure. The `BuildToolchainTests` fixture was updated to
+   the currently validated Xcode 26.3 / iPhoneOS SDK 26.2.
+
+### Verification
+
+- macOS: `swift format lint --strict` passes for the changed Swift files;
+  `swift test` passes 213 tests across 38 suites.
+- WSL (rebuilt current tree): `swift test` passes 205 tests across 37 suites (the macOS
+  count is higher because of macOS-only simulator/Xcode-locator tests).
+- WSL: `stupid-app doctor` with the default SDK ID reports 0 failures (1 expected
+  project-config warning outside a project directory); the iOS SDK check reports
+  "stupid-app-ios is compatible (iPhoneOS SDK 26.2)".
+- WSL: `stupid-app build` in the AcceptanceApp fixture produces
+  `Mach-O arm64 ios min 17.0.0 sdk 26.2.0`, confirming the real SDK version is injected
+  and the new bundle compiles and links an ARM64 Mach-O end to end.
+
+### Follow-Up
+
+- The operational docs now reflect the single `stupid-app-ios` artifact ID
+  (`docs/clean-host-setup.md`, engineering handover); historical `ios-dev` references
+  in earlier implementation-note entries are intentionally preserved.
+- The Step PC skill reference to the legacy ID was updated in the local skills
+  repository.
+- Remaining Gate 5 work is the final clean-host acceptance run of the complete
+  workflow on clean supported hosts (Linux gates on a clean WSL host; macOS gates on a
+  clean Mac).

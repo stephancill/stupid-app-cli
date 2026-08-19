@@ -32,7 +32,7 @@ public struct BuildToolchain: Sendable {
     let resolvedSwift: String
     let sdkInput: SDKInput
     switch mode {
-    case let .xcodeInPlace(installation):
+    case .xcodeInPlace(let installation):
       resolvedSwift =
         swiftPath == "swift" ? installation.toolchainSwiftURL.path : swiftPath
       sdkInput = .xcodeInPlace(installation)
@@ -63,7 +63,19 @@ public struct BuildToolchain: Sendable {
       hostSDKVersion = { @Sendable in
         throw BuildError.simulatorRequiresXcode
       }
-    default:
+    case (.xcodeInPlace(let installation), .device):
+      // Use the SDK version of the selected Xcode installation rather than
+      // re-detecting via xcode-select, which can resolve a different Xcode than the
+      // one the command was given. This matches the packer's own xcode-in-place
+      // sdkVersion closure.
+      let installationSDKVersion = installation.iphoneosSDKVersion
+      hostSDKVersion = { @Sendable in
+        if let resolvedOverride {
+          return try Self.validatedOverride(resolvedOverride)
+        }
+        return installationSDKVersion
+      }
+    case (.importedBundle, .device):
       hostSDKVersion = { @Sendable in
         try SDKVersion.resolve(
           sdkID: resolvedSDKID,
