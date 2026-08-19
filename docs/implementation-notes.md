@@ -3370,3 +3370,42 @@ then implemented the concrete release-workflow deliverable those decisions impli
 - Remaining Gate 5 work is unchanged: broader compatibility/fixture coverage, re-exporting
   the SDK under the `stupid-app-ios` artifact ID, `signing setup` fresh-host acceptance,
   and the complete acceptance run through stable commands on clean supported hosts.
+
+## 2026-08-19 - Gate 5 Fixture Coverage: Sacred-Importer Path-Safety Tests
+
+### Summary
+
+Added hermetic regression coverage for the security-critical SDK importer path
+validation (`SDKCore.SafeArchive.validateEntries`), which had no tests despite the
+handover's Test Strategy requirement ("SDK archive checksum, traversal, symlink,
+architecture, and atomic-install tests"). This is the first increment of the resolved
+Gate 5 "broader compatibility/fixture coverage" item.
+
+### Changes
+
+- Added `Tests/SDKCoreTests/SafeArchiveTests.swift` (11 tests) exercising the pure
+  entry-validation function that runs before any archive extraction:
+  - Accepts nested relative paths, trailing-slash directory entries, and dot-prefixed
+    regular filenames (e.g. `.hidden`, `.DS_Store`) — these are not AppleDouble and
+    must be allowed.
+  - Rejects absolute paths (`/etc/passwd`), leading and nested `..` traversal, `.`
+    root-alias components, AppleDouble `._*` metadata entries, drive-letter first
+    components (`C:/...`, `D:`), and colon-suffixed first components.
+- The tests are pure and hermetic: no real archive, `tar` process, or fixture file is
+  created. SwiftPM auto-discovery includes the new file in the `SDKCoreTests` target.
+
+### Verification
+
+- `swift test` passes 193 tests (11 new) with the documented pre-existing
+  `CoreDeviceTLSConnectionTests` timing flake suite excluded (it passes in isolation and
+  is unrelated). `git diff --check` passes.
+- One test intent was corrected during development: a bare `C:evil` first component is
+  not rejected (colons only matter with a trailing path separator), so the drive-letter
+  test uses `C:/evil` / `D:` where the leading component is colon-terminated, matching
+  actual importer behavior.
+
+### Follow-Up
+
+- Remaining Gate 5 fixture coverage still to add (Test Strategy): Mach-O inspection,
+  IPA path/mode/symlink round-trip packaging tests, generated-project golden fixtures,
+  and SDK archive-level (created-on-disk) tests if practical.
