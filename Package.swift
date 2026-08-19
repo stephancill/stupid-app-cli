@@ -172,5 +172,9 @@ let package = Package(
       name: "ProductCoreTests",
       dependencies: ["ProductCore"]
     ),
+    .testTarget(
+      name: "StupidAppTests",
+      dependencies: ["stupid-app"]
+    ),
   ]
 )

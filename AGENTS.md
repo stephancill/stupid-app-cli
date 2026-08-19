@@ -25,6 +25,12 @@ If code and documentation disagree, investigate the discrepancy. Do not silently
 
 `docs/implementation-notes.md` is the chronological public engineering log. Append a dated entry after meaningful work describing changes, reasoning, decisions, verification, failures, and follow-ups.
 
+`README.md` and the bundled CLI skill (`skills/stupid-app-cli/`) document the
+user-facing command surface. Whenever a command, option, default, output path,
+or behavior the skill or README describes changes, update both in the same work.
+Do not commit a CLI surface change with the README or `references/commands.md`
+out of date; run the skill-creator validation after skill edits.
+
 Before committing changes, inspect both documents and update them where necessary. Never defer a required documentation update merely because the code is complete.
 
 Implementation notes must be safe for public publication. Never record personal information, credentials, tokens, private keys, certificate contents, account identifiers, device identifiers, private hostnames, or secret-bearing output.

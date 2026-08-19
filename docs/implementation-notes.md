@@ -3604,3 +3604,90 @@ supported hosts (clean WSL host for the Linux gates; the iPhone on the deploymen
 - Remaining Gate 5 work is the final clean-host acceptance run of the complete
   workflow on clean supported hosts (Linux gates on a clean WSL host; macOS gates on a
   clean Mac).
+
+## 2026-08-19 - CLI Usage Skill Bundled With The Product
+
+### Summary
+
+- Added a self-contained agent skill at `skills/stupid-app-cli/SKILL.md` to be
+  distributed alongside the `stupid-app` binary. It teaches an agent how to use the
+  CLI end to end: scaffold, SDK export/import, credential and signing setup, USB and
+  wireless development runs, simulator runs, and distribution release.
+- Added `skills/stupid-app-cli/references/commands.md` with the exact command and
+  option surface, captured from the current build's help output.
+
+### Decisions
+
+- The skill lives in the repository (`skills/`) rather than the user global skill
+  repository so it ships with the CLI binary and tracks the same release.
+- The SKILL.md is self-contained for CLI operation and cross-references the
+  repository `docs/` files (`clean-host-setup.md`, `macos-clean-host-setup.md`,
+  engineering handover) only as deeper detail when working from a source checkout.
+- It enforces the product invariants in agent-facing terms: one real Apple signing
+  pass, no pseudo-signing or Xcode/`altool`/Transporter fallbacks, fail-loud
+  behavior, owner-only credential storage, and the explicit `--sudo` privilege
+  boundary for CoreDevice TUN operations.
+
+### Verification
+
+- The skill passes the skill-creator validation script
+  (`quick_validate.py`): valid frontmatter, naming, directory structure, and
+  description.
+- Every enabled command and option in `references/commands.md` was checked against
+  `stupid-app --help`.
+
+### Follow-Up
+
+- Re-validate the command reference when the CLI surface changes; keep the skill in
+  sync with the release that bundles it.
+
+## 2026-08-19 - CLI --version Flag And First Agent Dogfood
+
+### Summary
+
+- Added a top-level `--version` / `-v` flag to the CLI. It prints the product
+  version and the host Swift compiler line, and bare `stupid-app` now prints the
+  top-level help through an explicit `CleanExit.helpRequest()` instead of relying
+  on ArgumentParser's default empty action.
+- Introduced `StupidApp.productVersion` (`0.0.1`) as the single source of truth
+  for the product version and a testable `versionInformation(compilerVersion:)`
+  builder. Added a `StupidAppTests` test target that imports the executable module
+  and verifies the version string format (three-part semantic version, product
+  prefix, toolchain line).
+- Ran a first real dogfood of the product: built the release binary, installed it
+  to `~/.local/bin/stupid-app`, and a sub-agent (given the bundled CLI skill) ran
+  `doctor` -> `new` -> `build` -> `run --simulator` against the booted iOS 26.3
+  simulator, then independently verified the installed bundle and running process.
+  The full simulator happy path works end to end on a clean macOS/Xcode-present
+  host (Xcode 26.1.1, Swift 6.2.1).
+
+### Feedback Evaluation
+
+- The dogfood surfaced real findings: missing `--version` (fixed in this entry),
+  the scaffold-icon docs mismatch (the skill/handover examples implied a default
+  `Resources/AppIcon.png` + `iconPath`, but `new` only writes them when `--icon`
+  is passed), and the undocumented exactly-one-mode contract on `run`. The agent
+  also judged `--sdk-id`/`--swift`/`--home`/`--sudo` as noisy on happy-path help.
+- Verified each finding against source before acting: the icon claim was accurate
+  and the skill was corrected to match the code (icon stays opt-in; decision
+  recorded); the `run` mode-validation claim was only half right, because
+  `RunCommand` already requires exactly one of `--usb|--network|--simulator` with a
+  clear error, but the help text does not document the contract.
+- Updates from this evaluation: SKILL.md and `references/commands.md` now describe
+  the real icon behavior, and README/SKILL/commands.md record the new `--version`
+  flag.
+
+### Verification
+
+- `swift format lint --strict` passes for the changed Swift files.
+- `swift test` passes 216 tests across 39 suites, including the new 3-test
+  `StupidAppVersionTests` suite.
+- The skill passes the skill-creator `quick_validate.py` validation.
+- Installed release binary: `stupid-app --version` and `-v` both print
+  `stupid-app 0.0.1` plus the host Swift compiler line with exit code 0; bare
+  `stupid-app` prints the top-level help.
+
+### Follow-Up
+
+- Re-run the dogfood after the next CLI surface change to keep the skill honest;
+  consider surfacing the `run` mode contract in `--help` copy.

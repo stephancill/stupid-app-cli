@@ -75,6 +75,7 @@ loudly if requested until the capability-association support in
 - `docs/sdk-export-format.md` — the SDK bundle archive and manifest specification.
 - `docs/engineering-handover.md` — the maintained engineering source of truth.
 - `docs/implementation-notes.md` — the chronological engineering log.
+- `skills/stupid-app-cli/` — agent-facing CLI usage skill distributed with the binary.
 - `docs/clean-host-setup.md` — clean-host setup and recovery procedures.
 - `docs/macos-clean-host-setup.md` — macOS Mode A / Mode B setup and recovery.
 - `docs/mode-b-darwin-tools.md` — Gate M4 plan for macOS-hosted Darwin tools.
@@ -82,6 +83,7 @@ loudly if requested until the capability-association support in
 ## Commands
 
 ```text
+stupid-app --version              Print the product and toolchain version
 stupid-app doctor                  Check toolchain, SDK, signer, credentials, and device dependencies
 stupid-app new <name>              Scaffold a SwiftPM/SwiftUI iOS project
 stupid-app sdk export ...          (macOS) export a device-only Swift SDK bundle
