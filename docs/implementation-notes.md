@@ -3938,3 +3938,45 @@ supported hosts (clean WSL host for the Linux gates; the iPhone on the deploymen
 - Keep the symlink step accurate if the opencode skills directory layout changes.
 - Keep the README informational for the released version; move engineering status into
   the handover and implementation notes only.
+
+## 2026-08-19 - Profile-Gated Entitlement/Capability Handling And AutoFill Deep Release
+
+### Summary
+
+- Generalized entitlement and capability handling so supported capabilities are no longer a
+  hardcoded list. `EntitlementDeriver.supportedKeys` and the `unsupportedEntitlement` rejection
+  were removed: `derive` now passes every source entitlement through, forces
+  `get-task-allow`, derives `application-identifier`/team identifier, and treats the selected
+  provisioning profile's authorized set as the authoritative gate. Any entitlement the profile
+  does not authorize fails loudly with an actionable message. Result: a new capability is
+  supported with no CLI code change — just a profile that authorizes it.
+- Replaced the App Groups-only capability enablement in `SigningSetupCommand` with a small
+  data-driven `SigningCapability` map (`APP_GROUPS`, `AUTOFILL_CREDENTIAL_PROVIDER`) driven by
+  the source entitlements across the app and every configured extension. Enablement is
+  best-effort; the profile-authorization gate is the real authority. Removed the now-unused
+  `enableAppGroups` helper from `ASCOperations`.
+- Bumped the product to `0.0.3` and installed it as the release binary.
+
+### Why
+
+Migrating the real `stupid-authenticator` project (app + AutoFill credential-provider
+extension) surfaced that its autoclient/extension uses the
+`com.apple.developer.authentication-services.autofill-credential-provider` entitlement, which
+the previous hard-coded supported key set rejected loudly. Rather than extend the list one
+capability at a time, the maintainer asked that the design not require manual per-capability
+support; the profile-gated pass-through is that generalization.
+
+### Verification
+
+- `swift test` passes (228 tests); the one flaky `RemoteXPCConnectionTests` network test
+  passed on an isolated rerun.
+- Coverage added for both the new pass-through behavior (an unlisted entitlement the profile
+  authorizes is preserved) and the autofill credential-provider authorized/denied cases.
+- Live deep migration: a real `stupid-authenticator` distribution release was built and
+  uploaded with `stupid-app` (app + AutoFill extension, per-bundle profiles, App Groups and
+  AutoFill capabilities enabled) and processed to `VALID` / internal `IN_BETA_TESTING`.
+
+### Follow-Up
+
+- The packaged `stupid-app` binary on PATH is `0.0.3` from a local release build; a future
+  GitHub release should publish `0.0.3`.

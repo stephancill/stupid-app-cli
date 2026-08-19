@@ -650,17 +650,20 @@ Before signing, validate at least:
 
 The public API can enable several capabilities but cannot associate every concrete resource, including App Group identifiers. Complex capabilities are therefore deferred from the initial application fixture. When added, any required Developer portal web step must be explicit and profile output must be verified afterward.
 
-**Entitlement scope (resolved, with App Groups enabled):** the supported set the pipeline
-derives and reconciles is `application-identifier`, `com.apple.developer.team-identifier`,
-`get-task-allow` (true for development, false for distribution), plus
-`com.apple.security.application-groups`. Other capabilities (keychain sharing, push, etc.)
-fail loudly at planning/derivation until the corresponding capability-association support is
-implemented. App Groups are supported: `signing setup` enables the `APP_GROUPS` capability
-on each project bundle and `EntitlementDeriver` reconciles the requested group against the
-profile (array-subset), failing loudly when the profile does not authorize it — because the
-public API cannot create the group or bind the concrete identifier, the one-time Developer
-Portal association remains a manual prerequisite that the profile-authorization gate
-enforces.
+**Entitlement scope (resolved: profile-gated pass-through):** entitlement derivation is
+generalized so supported capabilities are not a hardcoded list. `EntitlementDeriver` passes
+every source entitlement through and the selected provisioning profile's authorized set is
+the authoritative gate: `get-task-allow`, `application-identifier`, and
+`com.apple.developer.team-identifier` are derived, and any entitlement the profile does not
+authorize fails loudly with an actionable message. This keeps the supported-capability set
+open with no per-capability code. Capability *enablement* on bundle creation remains a small
+data-driven map (`SigningCapability`) in `SigningSetupCommand` — the profile is still the
+gate. App Groups are supported: the `APP_GROUPS` capability is enabled per bundle and the
+requested group is reconciled against the profile on array-subset semantics; the one-time
+Developer Portal association remains a manual prerequisite the profile-authorization gate
+enforces. AutoFill Credential Provider ships enabled for the app and its credential-provider
+extension via the `AUTOFILL_CREDENTIAL_PROVIDER` capability, driving the
+`com.apple.developer.authentication-services.autofill-credential-provider` entitlement.
 
 ### Signing Engine
 
@@ -1738,10 +1741,11 @@ Required recurring integration coverage:
   next build number is provided by `release new-build`.
 - Future local device gateway protocol and trust model.
 - Minimum entitlement and capability set included in version 1. **Resolved (2026-08-19):**
-  the bare set (`application-identifier`,
-  `com.apple.developer.team-identifier`, `get-task-allow`) is the supported v1 set; other
-  capabilities are out of scope and must fail loudly until capability-association support
-  lands.
+  entitlement derivation is profile-gated pass-through — the supported set is whatever the
+  selected provisioning profile authorizes, so capabilities are not a hardcoded list. Named
+  capability *enablement* (`APP_GROUPS`, `AUTOFILL_CREDENTIAL_PROVIDER`) is driven by a
+  small client-side map in `SigningSetupCommand`; the profile remains the gate. See the
+  "Entitlement scope" section above.
 - Whether the initial WSL x86_64 environment becomes a supported production host or remains a proof environment alongside a future native Linux host. **Resolved (2026-08-19):** proof/reference only.
 - Whether build and release environments are persistent or created ephemerally.
 - macOS host support is confirmed as additive work with decided modes: Xcode-present in
