@@ -33,13 +33,30 @@ struct DevicesListCommand: AsyncParsableCommand {
         let nameWidth = max(devices.map { $0.name?.count ?? 0 }.max() ?? 0, 4)
         let udidWidth = max(devices.map { $0.udid?.count ?? 0 }.max() ?? 0, 4)
         let statusWidth = max(devices.map { $0.status?.count ?? 0 }.max() ?? 0, 6)
-        print(String(format: "%-\(nameWidth)s  %-\(udidWidth)s  %-\(statusWidth)s", "Name", "UDID", "Status"))
+        print(Self.formattedRow(name: "Name", udid: "UDID", status: "Status",
+            nameWidth: nameWidth, udidWidth: udidWidth, statusWidth: statusWidth))
         for device in devices {
-            print(String(
-                format: "%-\(nameWidth)s  %-\(udidWidth)s  %-\(statusWidth)s",
-                device.name ?? "-", device.udid ?? "-", device.status ?? "-"
-            ))
+            print(Self.formattedRow(name: device.name ?? "-", udid: device.udid ?? "-",
+                status: device.status ?? "-",
+                nameWidth: nameWidth, udidWidth: udidWidth, statusWidth: statusWidth))
         }
+    }
+
+    /// Builds a single fixed-width row. Uses explicit Swift padding rather than
+    /// `String(format:)`: `%s` treats a `String` as a C pointer (crash), and `%@` does not
+    /// apply `%-Ns` field-width padding to Swift `String` values.
+    static func formattedRow(name: String, udid: String, status: String,
+        nameWidth: Int, udidWidth: Int, statusWidth: Int) -> String {
+        [
+            padded(name, to: nameWidth),
+            padded(udid, to: udidWidth),
+            padded(status, to: statusWidth),
+        ].joined(separator: "  ")
+    }
+
+    private static func padded(_ value: String, to length: Int) -> String {
+        guard value.count < length else { return value }
+        return value + String(repeating: " ", count: length - value.count)
     }
 }
 
