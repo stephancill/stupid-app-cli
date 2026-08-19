@@ -172,6 +172,7 @@ stupid-app release archive [--sdk-id <id>] [--swift <path>] [--sdk-version <ver>
 stupid-app release upload [--wait] [--ipa <path>] [--app-bundle-id <id>] [--home <dir>] [--output <dir>] [--poll-interval <sec>] [--sdk-id <id>] [--swift <path>]
 stupid-app release status [--live] [--home <dir>] [--output <dir>]
 stupid-app release new-build [--home <dir>] [--bundle-id <id>] [--build-number <n>]
+stupid-app release bump [--build-number <n>] [--shallow]
 ```
 
 - `archive` — release-configure build, one real Apple Distribution signing pass
@@ -181,8 +182,13 @@ stupid-app release new-build [--home <dir>] [--bundle-id <id>] [--build-number <
   rejects duplicate build numbers, uploads via the Build Upload APIs, and with
   `--wait` polls until internally TestFlight-ready (`VALID` /
   `READY_FOR_BETA_TESTING`). Writes the public-safe release manifest. `--ipa`
-  and `--output` default to `./.release`.
+  and `--output` default to `./.release`. A build number that already exists
+  (e.g. from a killed earlier run) is reported as an already-uploaded state
+  pointing at `release status --live`, not a packaging failure.
 - `status` — reports the recorded last release; `--live` queries App Store
   Connect for the current processing/beta state of the resolved build.
 - `new-build` — suggests the next integer build number based on the latest
   uploaded build, or increments `--build-number` when given.
+- `bump` — increments `CFBundleVersion` in `Info.plist` and every bundled
+  extension's plist in lockstep (a deep release shares one build), or sets it to
+  `--build-number`. `--shallow` bumps only the app plist.

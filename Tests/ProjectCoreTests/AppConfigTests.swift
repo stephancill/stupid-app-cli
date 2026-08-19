@@ -204,4 +204,29 @@ struct AppConfigTests {
             try decode(yaml)
         }
     }
+
+    @Test("entitlements resolution honors an explicit path and falls back only to an existing App.entitlements")
+    func entitlementsResolution() throws {
+        let tmps = FileManager.default.temporaryDirectory
+            .appendingPathComponent("appconfig-ent-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmps, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmps) }
+
+        // Explicit path is always honored (even when the file is absent; read-time fails
+        // loudly there).
+        #expect(
+            AppConfig.resolvedEntitlementsURL(
+                entitlementsPath: "Custom.entitlements", projectRoot: tmps)
+                == tmps.appendingPathComponent("Custom.entitlements"))
+
+        // No path + no App.entitlements -> nil (empty request, no placeholder needed).
+        #expect(AppConfig.resolvedEntitlementsURL(entitlementsPath: nil, projectRoot: tmps) == nil)
+
+        // No path + existing default App.entitlements -> use it.
+        let defaultURL = tmps.appendingPathComponent("App.entitlements")
+        try Data("<plist/>".utf8).write(to: defaultURL)
+        #expect(
+            AppConfig.resolvedEntitlementsURL(entitlementsPath: nil, projectRoot: tmps)
+                == defaultURL)
+    }
 }

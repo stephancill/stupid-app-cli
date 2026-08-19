@@ -146,8 +146,8 @@ struct RunCommand: AsyncParsableCommand {
           identity: identity,
           teamID: teamID,
           profileURL: profileURL,
-          sourceEntitlementsURL: projectRoot.appendingPathComponent(
-            config.entitlementsPath ?? "App.entitlements"),
+          sourceEntitlementsURL: AppConfig.resolvedEntitlementsURL(
+            entitlementsPath: config.entitlementsPath, projectRoot: projectRoot),
           configuration: .development,
           bundleID: config.bundleID,
           product: config.product,
@@ -171,8 +171,8 @@ struct RunCommand: AsyncParsableCommand {
           identity: identity,
           teamID: teamID,
           profileURL: extensionProfileURL,
-          sourceEntitlementsURL: projectRoot.appendingPathComponent(
-            extensionPlan.entitlementsPath ?? "App.entitlements"),
+          sourceEntitlementsURL: AppConfig.resolvedEntitlementsURL(
+            entitlementsPath: extensionPlan.entitlementsPath, projectRoot: projectRoot),
           configuration: .development,
           bundleID: extensionPlan.bundleID
         )
@@ -183,8 +183,8 @@ struct RunCommand: AsyncParsableCommand {
           identity: identity,
           teamID: teamID,
           profileURL: profileURL,
-          sourceEntitlementsURL: projectRoot.appendingPathComponent(
-            config.entitlementsPath ?? "App.entitlements"),
+          sourceEntitlementsURL: AppConfig.resolvedEntitlementsURL(
+            entitlementsPath: config.entitlementsPath, projectRoot: projectRoot),
           configuration: .development,
           bundleID: config.bundleID,
           product: config.product,

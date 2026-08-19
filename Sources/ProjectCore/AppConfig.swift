@@ -130,6 +130,21 @@ public struct AppConfig: Codable, Equatable, Sendable {
         }
     }
 
+    /// Resolves the source entitlements URL for a bundle, or nil when the project has
+    /// no entitlements. An explicitly configured `entitlementsPath` is always honored
+    /// (an absent explicit file fails loudly at read time). When it is nil, the default
+    /// `App.entitlements` is used only if the file exists; otherwise nil (empty request),
+    /// so projects with no entitlements do not need a placeholder file.
+    public static func resolvedEntitlementsURL(
+        entitlementsPath: String?, projectRoot: URL
+    ) -> URL? {
+        if let entitlementsPath {
+            return entitlementsPath.isEmpty ? nil : projectRoot.appendingPathComponent(entitlementsPath)
+        }
+        let defaultURL = projectRoot.appendingPathComponent("App.entitlements")
+        return FileManager.default.fileExists(atPath: defaultURL.path) ? defaultURL : nil
+    }
+
     /// A parsed app-extension configuration (`extensions:` entries in `stupid-app.yml`).
     /// It mirrors the root app model, minus the app icon, and becomes a
     /// `PlugIns/<product>.appex` nested bundle.

@@ -3980,3 +3980,52 @@ support; the profile-gated pass-through is that generalization.
 
 - The packaged `stupid-app` binary on PATH is `0.0.3` from a local release build; a future
   GitHub release should publish `0.0.3`.
+
+## 2026-08-19 - Migration Feedback: Optional Entitlements, Duplicate Upload, Release Bump
+
+### Summary
+
+Three findings from migrating `stupid-authenticator`, `stupid-social`, and
+`stupid-torrent-client` to the CLI were fed back as product improvements (CLI `0.0.4`):
+
+1. **Optional source entitlements.** `EntitlementDeriver.derive` now accepts a `URL?`
+   source. `AppConfig.resolvedEntitlementsURL` returns nil when `entitlementsPath` is
+   unset and no default `App.entitlements` exists, so `signing`/`release archive`/`run`
+   treat an absent entitlements file as an empty source request instead of requiring a
+   placeholder `App.entitlements`. An explicitly configured entitlements path is still
+   honored and fails loudly if unreadable.
+2. **Duplicate-build upload handling.** `release upload` now catches an HTTP 409 already
+   matches an existing build, and reports it as an already-uploaded state pointing at
+   `release status --live` (recoverable, not a packaging failure). This removes the
+   confusing "increment CFBundleVersion" advice that previously accompanied a build
+   already created by a killed/earlier run.
+3. **`release bump`.** New command that increments (or `--build-number` sets)
+   `CFBundleVersion` across the app `Info.plist` and every bundled extension plist in
+   lockstep, so a deep release carries one shared build number. `--shallow` restricts the
+   bump to the app plist. Backed by a formatting-preserving text replacement in
+   `ProjectCore.ReleaseBumper`.
+
+### Why
+
+The real apps hit the absent-entitlements wall (torrent had no entitlements), a
+mid-poll-kill duplicate upload confused the rerun, and every repo hand-maintained the
+app + extension `CFBundleVersion` bump with a local `bump-build` helper. These changes
+close those three workflow gaps.
+
+### Verification
+
+- `ReleaseBumper` covered by new `ReleaseBumperTests` (read, in-place bump preserving
+  formatting, non-integer rejection, missing-key rejection).
+- `AppConfigTests.entitlementsResolution` covers nil/fallback/explicit cases.
+- Full suite: 233 tests across 43 suites pass (one unrelated flaky USB pairing test
+  passes in isolation).
+- Manual smoke: `release bump`, `release bump --build-number N`, and `release bump
+  --shallow` behave correctly in a scratch deep project.
+- `release upload` duplicate path compiles and reports the `status --live` guidance.
+- SKILL.md and `references/commands.md` updated and pass the skill-creator
+  `quick_validate.py`.
+
+### Follow-Up
+
+- Re-run the migration dogfood after the next CLI surface change to keep the skill
+  honest; keep the SKILL `commands.md` in sync with the release that bundles it.

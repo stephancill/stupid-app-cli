@@ -478,13 +478,16 @@ stupid-app release new-build
 stupid-app release status
 ```
 
-Implemented so far: `new`, `sdk export`, `sdk import`, `build`, `credentials add`,
+implemented so far: `new`, `sdk export`, `sdk import`, `build`, `credentials add`,
 `signing setup --kind distribution|development`, `devices`, `run --usb`,
 `device pair --usb`, `run --network`, `run --simulator`, `simulators`,
-`release archive`, `release upload --wait`, `release new-build`, `release status`, and
+`release archive`, `release upload --wait`, `release new-build`, `release bump`,
+`release status`, and
 `doctor`. `release new-build` queries App Store Connect for the most recently uploaded
-build number (or takes an explicit `--build-number` base) and suggests the next integer,
-mirroring the retired release script's `release_build_number()`.
+build number (or takes an explicit `--build-number` base) and suggests the next integer.
+`release bump` increments (or sets with `--build-number`) `CFBundleVersion` across the
+app's `Info.plist` and every bundled extension's plist in lockstep, so a deep release
+carries one shared build number; `--shallow` restricts the bump to the app plist.
 
 The command surface is provisional until the proof gates complete. Keep build, signing, install, launch, upload, and status as separable operations even if convenience commands compose them.
 

@@ -1,6 +1,6 @@
 ---
 name: stupid-app-cli
-description: Operate the stupid-app CLI for iOS development without Xcode. Use when the user wants to create, build, sign, install, launch, or release a SwiftPM/SwiftUI iOS app on a Mac or Linux host — including scaffold a project (`stupid-app new`), export/import the iOS Swift SDK bundle (`sdk export`/`sdk import`), provision App Store Connect credentials, signing identities, and profiles (`credentials add`, `signing setup`), build an unsigned .app (`build`), register devices (`devices`), pair an iPhone (`device pair`), build/sign/install/launch over USB or the network (`run --usb`, `run --network`) or a simulator (`run --simulator`, `simulators`), or produce and upload a distribution IPA (`release archive`, `release upload`, `release status`, `release new-build`). Also use to diagnose the environment with `stupid-app doctor` or recover a host that fails to run, install, or upload.
+description: Operate the stupid-app CLI for iOS development without Xcode. Use when the user wants to create, build, sign, install, launch, or release a SwiftPM/SwiftUI iOS app on a Mac or Linux host — including scaffold a project (`stupid-app new`), export/import the iOS Swift SDK bundle (`sdk export`/`sdk import`), provision App Store Connect credentials, signing identities, and profiles (`credentials add`, `signing setup`), build an unsigned .app (`build`), register devices (`devices`), pair an iPhone (`device pair`), build/sign/install/launch over USB or the network (`run --usb`, `run --network`) or a simulator (`run --simulator`, `simulators`), or produce and upload a distribution IPA (`release archive`, `release upload`, `release status`, `release new-build`, `release bump`). Also use to diagnose the environment with `stupid-app doctor` or recover a host that fails to run, install, or upload.
 ---
 
 # stupid-app CLI
@@ -153,10 +153,18 @@ iconPath: Resources/AppIcon.png
 Extensions share the app's signing identity per kind, are provisioned as their own
 bundle IDs (`signing setup --bundle-id` per bundle, or read all from `stupid-app.yml`),
 and are signed leaf-first during `run`/`release archive` with their own profiles and
-entitlements. App Groups (`com.apple.security.application-groups` in entitlements) are
+entitlements. Entitlements are profile-gated pass-through: every source entitlement is
+signed it exists, and anything the profile does not authorize fails loudly, so the
+supported-capability set stays open without per-capability code. A project with no
+entitlements file needs no placeholder — when `entitlementsPath` is unset and
+`App.entitlements` is absent, signing treats the source as empty. App Groups
+(`com.apple.security.application-groups` in entitlements) are
 supported: `signing setup` enables the capability via the API, but the concrete group
 association is a one-time Developer Portal step that signing enforces loudly until the
-downloaded profile authorizes the group.
+downloaded profile authorizes the group. `signing setup` also enables
+`AUTOFILL_CREDENTIAL_PROVIDER` for apps that ship a credential-provider extension, so
+the `com.apple.developer.authentication-services.autofill-credential-provider`
+entitlement is provisioned.
 
 ### 2. Build an unsigned app
 
@@ -214,13 +222,17 @@ ad-hoc signs, boots, installs, and launches via `simctl`.
 ### 6. Distribution release
 
 ```bash
+stupid-app release bump                 # increment build across app + extensions
 stupid-app release archive
 stupid-app release new-build            # suggest the next build number
 stupid-app release upload --wait
 stupid-app release status [--live]
 ```
 
-`release archive` produces `./.release/<product>.ipa` signed once with the
+`release bump` increments `CFBundleVersion` in `Info.plist` and every bundled
+extension's plist in lockstep (or sets a value with `--build-number`; `--shallow`
+bumps only the app). `release archive` produces `./.release/<product>.ipa` signed
+once with the
 Apple Distribution identity and App Store profile, timestamps disabled, with a
 native `Assets.car` and build-system Info.plist keys. `release upload --wait`
 resolves the exact build by bundle ID + marketing version + build number,

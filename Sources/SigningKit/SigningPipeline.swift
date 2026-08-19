@@ -13,8 +13,8 @@ public enum SigningPipeline {
     public var identity: IdentityManager.SigningIdentity
     public var teamID: String
     public var profileURL: URL
-    /// Source `App.entitlements` plist.
-    public var sourceEntitlementsURL: URL
+    /// Source `App.entitlements` plist. Nil resolves to an empty source request.
+    public var sourceEntitlementsURL: URL?
     public var configuration: EntitlementDeriver.Configuration
     public var bundleID: String
     /// App product name used for the IPA filename.
@@ -26,7 +26,7 @@ public enum SigningPipeline {
       identity: IdentityManager.SigningIdentity,
       teamID: String,
       profileURL: URL,
-      sourceEntitlementsURL: URL,
+      sourceEntitlementsURL: URL?,
       configuration: EntitlementDeriver.Configuration,
       bundleID: String,
       product: String,
@@ -142,13 +142,14 @@ public enum DeepSigningPipeline {
     public var identity: IdentityManager.SigningIdentity
     public var teamID: String
     public var profileURL: URL
-    public var sourceEntitlementsURL: URL
+    /// Source entitlements plist. Nil resolves to an empty source request.
+    public var sourceEntitlementsURL: URL?
     public var configuration: EntitlementDeriver.Configuration
     public var bundleID: String
 
     public init(
       appexBundle: URL, identity: IdentityManager.SigningIdentity, teamID: String,
-      profileURL: URL, sourceEntitlementsURL: URL,
+      profileURL: URL, sourceEntitlementsURL: URL?,
       configuration: EntitlementDeriver.Configuration, bundleID: String
     ) {
       self.appexBundle = appexBundle
@@ -167,7 +168,7 @@ public enum DeepSigningPipeline {
     public var identity: IdentityManager.SigningIdentity
     public var teamID: String
     public var profileURL: URL
-    public var sourceEntitlementsURL: URL
+    public var sourceEntitlementsURL: URL?
     public var configuration: EntitlementDeriver.Configuration
     public var bundleID: String
     public var product: String
@@ -175,7 +176,7 @@ public enum DeepSigningPipeline {
 
     public init(
       unsignedApp: URL, identity: IdentityManager.SigningIdentity, teamID: String,
-      profileURL: URL, sourceEntitlementsURL: URL,
+      profileURL: URL, sourceEntitlementsURL: URL?,
       configuration: EntitlementDeriver.Configuration, bundleID: String, product: String,
       ipaOutputDirectory: URL
     ) {

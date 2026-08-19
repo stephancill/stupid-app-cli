@@ -83,7 +83,8 @@ struct ReleaseUploadCommand: AsyncParsableCommand {
       version: versions.marketing,
       buildNumber: versions.build
     ) {
-      throw ReleaseUploadError.buildNumberAlreadyUploaded(versions.build, existing.id)
+      throw ReleaseUploadError.buildNumberAlreadyUploaded(
+        versions.build, existing.id, alreadyUploaded: true)
     }
 
     // 4. Upload, optionally waiting for TestFlight readiness.
@@ -92,14 +93,27 @@ struct ReleaseUploadCommand: AsyncParsableCommand {
       logger: { print($0) }
     )
     let timeouts = BuildUploader.Timeouts(pollInterval: pollInterval)
-    let result = try uploader.upload(
-      ipaURL: ipaURL,
-      appID: appID,
-      version: versions.marketing,
-      buildNumber: versions.build,
-      wait: wait,
-      timeouts: timeouts
-    )
+    let result: BuildUploader.Result
+    do {
+      result = try uploader.upload(
+        ipaURL: ipaURL,
+        appID: appID,
+        version: versions.marketing,
+        buildNumber: versions.build,
+        wait: wait,
+        timeouts: timeouts
+      )
+    } catch ASCError.http(let status, _) where status == 409 {
+      // App Store Connect rejects a build number that already exists or is being
+      // processed. This is a recoverable, already-uploaded state, not a packaging bug.
+      let existing = try? operations.findBuild(
+        appID: appID, version: versions.marketing, buildNumber: versions.build)
+      if let existing {
+        throw ReleaseUploadError.buildNumberAlreadyUploaded(
+          versions.build, existing.id, alreadyUploaded: true)
+      }
+      throw ASCError.http(status, "a build " + (existing?.id ?? "with this number") + " is already being uploaded or processed")
+    }
 
     // 5. Write the release manifest.
     let manifest = ReleaseManifest(
@@ -195,7 +209,7 @@ struct ReleaseUploadCommand: AsyncParsableCommand {
 enum ReleaseUploadError: Error, CustomStringConvertible {
   case ipaMissing(String)
   case appRecordNotFound(String)
-  case buildNumberAlreadyUploaded(String, String)
+  case buildNumberAlreadyUploaded(String, String, alreadyUploaded: Bool)
   case versionInfoMissing(String)
 
   var description: String {
@@ -205,7 +219,10 @@ enum ReleaseUploadError: Error, CustomStringConvertible {
     case .appRecordNotFound(let bundleID):
       return
         "No App Store Connect app record exists for '\(bundleID)'. Create the app record in App Store Connect first (the API cannot create app records)."
-    case .buildNumberAlreadyUploaded(let build, let id):
+    case .buildNumberAlreadyUploaded(let build, let id, alreadyUploaded: true):
+      return
+        "Build number \(build) already exists on App Store Connect (build \(id)). This is likely from an earlier upload of the same build that finished before this run. Run `stupid-app release status --live` to confirm the state instead of re-uploading; only bump CFBundleVersion if you genuinely need a new build."
+    case .buildNumberAlreadyUploaded(let build, let id, alreadyUploaded: false):
       return
         "Build number \(build) has already been uploaded (build \(id)). Increment CFBundleVersion in Info.plist before re-uploading."
     case .versionInfoMissing(let path):

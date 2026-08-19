@@ -38,19 +38,26 @@ public enum EntitlementDeriver {
     /// authoritative gate. `get-task-allow`, `application-identifier`, and the team
     /// identifier are derived, and any entitlement the profile does not authorize fails
     /// loudly. This keeps the supported-capability set open without per-capability code.
+    /// A nil source URL (or an absent entitlements file when configured with the default
+    /// `App.entitlements`) yields an empty source request, so projects with no
+    /// entitlements do not need a placeholder file.
     /// - Returns: the final entitlement dictionary.
     public static func derive(
-        sourceURL: URL,
+        sourceURL: URL?,
         configuration: Configuration,
         bundleID: String,
         profile: MobileProvisionParser.ProvisioningProfile,
         teamID: String
     ) throws -> [String: Any] {
-        guard let data = try? Data(contentsOf: sourceURL) else {
-            throw Error.sourceUnreadable(sourceURL.path)
-        }
-        guard let requested = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any] else {
-            throw Error.sourceUnreadable("\(sourceURL.path) is not a plist dictionary")
+        var requested: [String: Any] = [:]
+        if let sourceURL {
+            guard let data = try? Data(contentsOf: sourceURL) else {
+                throw Error.sourceUnreadable(sourceURL.path)
+            }
+            guard let plist = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any] else {
+                throw Error.sourceUnreadable("\(sourceURL.path) is not a plist dictionary")
+            }
+            requested = plist
         }
 
         var derived = requested

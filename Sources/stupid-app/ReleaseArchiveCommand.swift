@@ -13,7 +13,7 @@ struct ReleaseCommand: AsyncParsableCommand {
     abstract: "Distribution build, signing, and upload operations.",
     subcommands: [
       ReleaseArchiveCommand.self, ReleaseUploadCommand.self, ReleaseStatusCommand.self,
-      ReleaseNewBuildCommand.self,
+      ReleaseNewBuildCommand.self, ReleaseBumpCommand.self,
     ]
   )
 }
@@ -104,9 +104,9 @@ struct ReleaseArchiveCommand: AsyncParsableCommand {
           unsignedApp: unsignedApp,
           identity: identity,
           teamID: teamID,
-          profileURL: profileURL,
-          sourceEntitlementsURL: projectRoot.appendingPathComponent(
-            config.entitlementsPath ?? "App.entitlements"),
+profileURL: profileURL,
+          sourceEntitlementsURL: AppConfig.resolvedEntitlementsURL(
+            entitlementsPath: config.entitlementsPath, projectRoot: projectRoot),
           configuration: .distribution,
           bundleID: config.bundleID,
           product: config.product,
@@ -129,8 +129,8 @@ struct ReleaseArchiveCommand: AsyncParsableCommand {
           identity: identity,
           teamID: teamID,
           profileURL: extensionProfileURL,
-          sourceEntitlementsURL: projectRoot.appendingPathComponent(
-            extensionPlan.entitlementsPath ?? "App.entitlements"),
+          sourceEntitlementsURL: AppConfig.resolvedEntitlementsURL(
+            entitlementsPath: extensionPlan.entitlementsPath, projectRoot: projectRoot),
           configuration: .distribution,
           bundleID: extensionPlan.bundleID
         )
@@ -141,8 +141,8 @@ struct ReleaseArchiveCommand: AsyncParsableCommand {
           identity: identity,
           teamID: teamID,
           profileURL: profileURL,
-          sourceEntitlementsURL: projectRoot.appendingPathComponent(
-            config.entitlementsPath ?? "App.entitlements"),
+          sourceEntitlementsURL: AppConfig.resolvedEntitlementsURL(
+            entitlementsPath: config.entitlementsPath, projectRoot: projectRoot),
           configuration: .distribution,
           bundleID: config.bundleID,
           product: config.product,
