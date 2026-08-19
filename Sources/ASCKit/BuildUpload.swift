@@ -276,13 +276,12 @@ public extension ASCOperations {
 
     /// Returns the build number of the most recently uploaded build for an app, or nil
     /// when the app has no builds. Used by `release new-build` to suggest the next one.
-    func latestBuildNumber(appID: String, platform: String = "IOS") throws -> String? {
+    func latestBuildNumber(appID: String) throws -> String? {
         let response = try client.request(
             method: .get,
             path: "builds",
             query: [
                 URLQueryItem(name: "filter[app]", value: appID),
-                URLQueryItem(name: "filter[platform]", value: platform),
                 URLQueryItem(name: "sort", value: "-uploadedDate"),
                 URLQueryItem(name: "limit", value: "1"),
             ]

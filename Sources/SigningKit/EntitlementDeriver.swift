@@ -34,16 +34,18 @@ public enum EntitlementDeriver {
         }
     }
 
-    /// The officially supported version 1 entitlement set. These are the bare, simple
-    /// entitlements the signing pipeline derives from the bundle ID and profile with no
-    /// capability association. Everything else (app groups, keychain sharing, push, sign
-    /// in, associated domains, etc.) is out of scope for version 1 and is rejected loudly
-    /// until the capability-association support described in the engineering handover is
-    /// implemented.
+    /// The officially supported entitlement set. These are the bare, simple
+    /// entitlements the signing pipeline derives from the bundle ID and profile with
+    /// minimal capability handling, plus application groups (which are reconciled on
+    /// array-subset semantics against the profile and gated on the profile actually
+    /// authorizing the requested groups). Everything else (keychain sharing, push,
+    /// sign in, associated domains, etc.) is rejected loudly until the corresponding
+    /// capability-association support is implemented.
     public static let supportedKeys: Set<String> = [
         "get-task-allow",
         "application-identifier",
         "com.apple.developer.team-identifier",
+        "com.apple.security.application-groups",
     ]
 
     /// Reads the source entitlements plist, forces the `get-task-allow` value for the

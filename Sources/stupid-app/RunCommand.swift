@@ -129,28 +129,75 @@ struct RunCommand: AsyncParsableCommand {
     guard let teamID = identity.teamID else {
       throw RunError.identityMissingTeam
     }
-    let profileURL = try locateProfile(home: context.homeURL, bundleID: config.bundleID)
+    guard let profileURL = try locateProfile(home: context.homeURL, bundleID: config.bundleID) else {
+      throw RunError.profileMissing(config.bundleID)
+    }
 
-    // 3. Sign once with development entitlements and package the IPA.
+    // 3. Sign with development entitlements and package the IPA. Deep projects sign
+    // each nested extension first, then the app in deep mode.
     let ipaDir =
       projectRoot
       .appendingPathComponent(".build/arm64-apple-ios/debug", isDirectory: true)
-    let output = try SigningPipeline.signAndPackage(
-      input: .init(
-        unsignedApp: unsignedApp,
-        identity: identity,
-        teamID: teamID,
-        profileURL: profileURL,
-        sourceEntitlementsURL: projectRoot.appendingPathComponent(
-          config.entitlementsPath ?? "App.entitlements"),
-        configuration: .development,
-        bundleID: config.bundleID,
-        product: config.product,
-        ipaOutputDirectory: ipaDir
-      ))
-    print("Signed \(output.appBundle.path)")
-    print("Packaged \(output.ipaURL.path)")
-    print("IPA SHA-256: \(try SHA256.file(at: output.ipaURL))")
+    var ipaURL: URL
+    if plan.extensions.isEmpty {
+      let output = try SigningPipeline.signAndPackage(
+        input: .init(
+          unsignedApp: unsignedApp,
+          identity: identity,
+          teamID: teamID,
+          profileURL: profileURL,
+          sourceEntitlementsURL: projectRoot.appendingPathComponent(
+            config.entitlementsPath ?? "App.entitlements"),
+          configuration: .development,
+          bundleID: config.bundleID,
+          product: config.product,
+          ipaOutputDirectory: ipaDir
+        ))
+      ipaURL = output.ipaURL
+      print("Signed \(output.appBundle.path)")
+      print("Packaged \(output.ipaURL.path)")
+      print("IPA SHA-256: \(try SHA256.file(at: output.ipaURL))")
+    } else {
+      let extensions = try plan.extensions.map { extensionPlan -> DeepSigningPipeline.ExtensionInput in
+        let appexURL = unsignedApp
+          .appendingPathComponent("PlugIns/\(extensionPlan.product).appex", isDirectory: true)
+        guard let extensionProfileURL = try locateProfile(
+          home: context.homeURL, bundleID: extensionPlan.bundleID)
+        else {
+          throw RunError.profileMissing(extensionPlan.bundleID)
+        }
+        return DeepSigningPipeline.ExtensionInput(
+          appexBundle: appexURL,
+          identity: identity,
+          teamID: teamID,
+          profileURL: extensionProfileURL,
+          sourceEntitlementsURL: projectRoot.appendingPathComponent(
+            extensionPlan.entitlementsPath ?? "App.entitlements"),
+          configuration: .development,
+          bundleID: extensionPlan.bundleID
+        )
+      }
+      let deepOutput = try DeepSigningPipeline.signAndPackage(
+        input: .init(
+          unsignedApp: unsignedApp,
+          identity: identity,
+          teamID: teamID,
+          profileURL: profileURL,
+          sourceEntitlementsURL: projectRoot.appendingPathComponent(
+            config.entitlementsPath ?? "App.entitlements"),
+          configuration: .development,
+          bundleID: config.bundleID,
+          product: config.product,
+          ipaOutputDirectory: ipaDir
+        ),
+        extensions: extensions
+      )
+      ipaURL = deepOutput.ipaURL
+      print("Signed \(deepOutput.appBundle.path)")
+      for result in deepOutput.extensions { print("Signed nested extension \(result.bundleID)") }
+      print("Packaged \(deepOutput.ipaURL.path)")
+      print("IPA SHA-256: \(try SHA256.file(at: deepOutput.ipaURL))")
+    }
 
     // 4. Determine the target device.
     if usb {
@@ -165,7 +212,7 @@ struct RunCommand: AsyncParsableCommand {
         throw RunError.deviceSelection(0)
       }
       print("Installing on the selected device over USB...")
-      try installer.install(ipa: output.ipaURL, bundleID: config.bundleID, udid: targetUDID)
+      try installer.install(ipa: ipaURL, bundleID: config.bundleID, udid: targetUDID)
       print("Installed.")
       let nativeRunner = NativeCoreDeviceRunner(
         sudoPath: sudoPath,
@@ -184,7 +231,7 @@ struct RunCommand: AsyncParsableCommand {
         let pid = try nativeRunner.runNetwork(
           bundleID: config.bundleID,
           udid: udid,
-          ipa: output.ipaURL,
+          ipa: ipaURL,
           discoveryTimeoutSeconds: discoveryTimeout,
           installTimeoutSeconds: installTimeout
         )
@@ -193,7 +240,7 @@ struct RunCommand: AsyncParsableCommand {
         let networkRunner = NativeNetworkRunner(
           pairingDirectory: credentialHome.appendingPathComponent("pairing", isDirectory: true),
           udid: udid,
-          ipa: output.ipaURL,
+          ipa: ipaURL,
           bundleID: config.bundleID,
           discoveryTimeoutSeconds: discoveryTimeout,
           installTimeoutSeconds: installTimeout,
@@ -279,7 +326,22 @@ struct RunCommand: AsyncParsableCommand {
   private func adHocSign(appURL: URL) throws {
     // `codesign -s -` performs the ad-hoc signing that Xcode's "Sign to Run Locally"
     // uses for simulator builds. The scoped exception is documented in
-    // docs/macos-host-support-scope.md.
+    // docs/macos-host-support-scope.md. For deep apps (with bundled extensions), each
+    // nested .appex is ad-hoc signed leaf-first so the simulator can load the widget
+    // extension, then the containing app seals the signed appex.
+    let pluginsDir = appURL.appendingPathComponent("PlugIns", isDirectory: true)
+    if FileManager.default.fileExists(atPath: pluginsDir.path),
+      let appexes = try? FileManager.default.contentsOfDirectory(atPath: pluginsDir.path) {
+      for appex in appexes.sorted()
+      where appex.hasSuffix(".appex") {
+        try adHocSignSingle(
+          appURL: pluginsDir.appendingPathComponent(appex, isDirectory: true))
+      }
+    }
+    try adHocSignSingle(appURL: appURL)
+  }
+
+  private func adHocSignSingle(appURL: URL) throws {
     let result = try ProcessRunner.run(
       executable: "/usr/bin/codesign",
       arguments: ["--force", "--sign", "-", appURL.path]
@@ -316,7 +378,7 @@ struct RunCommand: AsyncParsableCommand {
       .appendingPathComponent(".stupid-app/credentials", isDirectory: true)
   }
 
-  private func locateProfile(home: URL, bundleID: String) throws -> URL {
+  private func locateProfile(home: URL, bundleID: String) throws -> URL? {
     let candidates = [
       home.appendingPathComponent("profiles/\(bundleID) Development.mobileprovision"),
       home.appendingPathComponent("profiles/\(bundleID).mobileprovision"),
@@ -324,7 +386,7 @@ struct RunCommand: AsyncParsableCommand {
     for url in candidates where FileManager.default.fileExists(atPath: url.path) {
       return url
     }
-    throw RunError.profileMissing(bundleID)
+    return nil
   }
 }
 

@@ -103,22 +103,25 @@ struct ReleaseUploadCommand: AsyncParsableCommand {
 
     // 5. Write the release manifest.
     let manifest = ReleaseManifest(
-      appBundleId: bundleID,
-      marketingVersion: versions.marketing,
-      buildNumber: versions.build,
-      ipaPath: relativePath(ipaURL, from: projectRoot) ?? ipaURL.path,
-      ipaSha256: try SHA256.file(at: ipaURL),
-      buildUploadId: result.buildUploadID,
-      buildId: result.buildID,
-      uploadState: result.uploadState,
-      processingState: result.processingState,
-      internalBetaState: result.internalBetaState,
-      externalBetaState: result.externalBetaState,
-      toolVersion: nil,
-      signerVersion: NativeSigner.engineVersion,
-      sdkVersion: try? SDKVersion.resolve(
-        sdkID: sdkID, targetTriple: "arm64-apple-ios", swiftPath: swiftPath),
-      compilerVersion: try? HostInfo.compilerVersion(swiftPath: swiftPath)
+        appBundleId: bundleID,
+        marketingVersion: versions.marketing,
+        buildNumber: versions.build,
+        ipaPath: relativePath(ipaURL, from: projectRoot) ?? ipaURL.path,
+        ipaSha256: try SHA256.file(at: ipaURL),
+        buildUploadId: result.buildUploadID,
+        buildId: result.buildID,
+        uploadState: result.uploadState,
+        processingState: result.processingState,
+        internalBetaState: result.internalBetaState,
+        externalBetaState: result.externalBetaState,
+        toolVersion: nil,
+        signerVersion: NativeSigner.engineVersion,
+        sdkVersion: try? SDKVersion.resolve(
+            sdkID: sdkID, targetTriple: "arm64-apple-ios", swiftPath: swiftPath),
+        compilerVersion: try? HostInfo.compilerVersion(swiftPath: swiftPath),
+        extensions: config.extensions?.map {
+            ReleaseManifest.ExtensionRecord(bundleId: $0.bundleID, product: $0.product)
+        }
     )
     let manifestURL = outputDir.appendingPathComponent("release-manifest.json")
     try manifest.write(to: manifestURL)

@@ -61,7 +61,8 @@ Without this step the CLI works identically; the skill only adds agent guidance.
   the SDK export manifest model, host triple / Swift version probing, and safe archive
   listing/validation.
 - `Sources/ProjectCore` — the typed `stupid-app.yml` schema and project generator.
-- `Sources/BuildCore` — SwiftPM planning, unsigned `.app` assembly, SDK-version
+- `Sources/BuildCore` — SwiftPM planning, unsigned `.app` assembly (including
+  `PlugIns/*.appex` extensions from the `extensions:` config), SDK-version
   discovery, native app-icon generation and `Assets.car` writing (`swift-png`), and
   Mach-O inspection.
 - `Sources/CLZFSE` — Apple's pinned BSD-3-Clause LZFSE reference implementation used
@@ -69,9 +70,9 @@ Without this step the CLI works identically; the skill only adds agent guidance.
 - `Sources/ASCKit` — App Store Connect ES256 JWT, HTTP client, and bundle-ID /
   certificate / profile / Build Upload operations; permission-hardened credential
   storage; the release manifest.
-- `Sources/SigningKit` — provisioning-profile CMS parsing, entitlement derivation,
-  native shallow-app signing and verification, pinned public Apple signing trust, and
-  IPA packaging.
+- `Sources/SigningKit` — provisioning-profile CMS parsing, entitlement derivation
+  (including App Groups), native shallow and deep (extension) signing and
+  verification, pinned public Apple signing trust, and IPA packaging.
 - `Sources/DeviceKit` — native usbmux discovery, pair-record access, lockdown session
   TLS, AFC staging, installation proxy, bounded native USB installation, mDNS DNS-SD,
   remote-pairing Pair-Verify, the SRP-3072 Pair-Setup bootstrap, CoreDevice

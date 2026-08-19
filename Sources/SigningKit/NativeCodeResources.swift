@@ -25,8 +25,12 @@ public enum NativeCodeResources {
   }
 
   public static func write(appBundle: URL, executableName: String) throws -> Data {
+    try write(appBundle: appBundle, executableName: executableName, deep: false)
+  }
+
+  public static func write(appBundle: URL, executableName: String, deep: Bool) throws -> Data {
     let appBundle = appBundle.standardizedFileURL.resolvingSymlinksInPath()
-    let seals = try collectSeals(appBundle: appBundle, executableName: executableName)
+    let seals = try collectSeals(appBundle: appBundle, executableName: executableName, deep: deep)
     var resourcesIsDirectory: ObjCBool = false
     let hasResourcesDirectory =
       FileManager.default.fileExists(
@@ -66,6 +70,10 @@ public enum NativeCodeResources {
   }
 
   public static func verify(appBundle: URL, executableName: String, data: Data) throws {
+    try verify(appBundle: appBundle, executableName: executableName, data: data, deep: false)
+  }
+
+  public static func verify(appBundle: URL, executableName: String, data: Data, deep: Bool) throws {
     let object: Any
     do {
       object = try PropertyListSerialization.propertyList(from: data, options: [], format: nil)
@@ -78,7 +86,7 @@ public enum NativeCodeResources {
     else {
       throw Error.malformed("required root dictionaries are missing")
     }
-    let expected = try collectSeals(appBundle: appBundle, executableName: executableName)
+    let expected = try collectSeals(appBundle: appBundle, executableName: executableName, deep: deep)
     guard Set(files2.keys) == Set(expected.keys),
       Set(files.keys)
         == Set(
@@ -110,7 +118,7 @@ public enum NativeCodeResources {
     }
   }
 
-  private static func collectSeals(appBundle: URL, executableName: String) throws
+  private static func collectSeals(appBundle: URL, executableName: String, deep: Bool) throws
     -> [String: Seal]
   {
     let root = appBundle.standardizedFileURL.resolvingSymlinksInPath()
@@ -141,6 +149,13 @@ public enum NativeCodeResources {
       if relative == "Info.plist" || relative == executableName {
         continue
       }
+      // For deep (nested-bundle) signing, the containing app does not re-seal the
+      // nested bundle's own CodeDirectory/CodeSignature/CodeRequirements; those are
+      // the nested bundle's code-identity, verified against its own signature. Its
+      // CodeResources resource seal, by contrast, is sealed like any other file.
+      if deep, matchesNestedSignatureInternal(relative) {
+        continue
+      }
       let values = try url.resourceValues(forKeys: [
         .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey,
       ])
@@ -158,6 +173,15 @@ public enum NativeCodeResources {
       }
     }
     return result
+  }
+
+  /// True when `relative` points at a nested signable bundle's own signature-identity
+  /// file (`_CodeSignature/CodeDirectory|CodeSignature|CodeRequirements`), which the
+  /// containing bundle must not re-seal in deep mode.
+  private static func matchesNestedSignatureInternal(_ relative: String) -> Bool {
+    guard let slash = relative.range(of: "/_CodeSignature/") else { return false }
+    let leaf = String(relative[slash.upperBound...])
+    return leaf == "CodeDirectory" || leaf == "CodeSignature" || leaf == "CodeRequirements"
   }
 
   private static func validateSymlink(target: String, at url: URL, root: URL) throws {
@@ -222,11 +246,6 @@ public enum NativeCodeResources {
     }
     return [
       "^.*": true,
-      "^[^/]+$": ["nested": true, "weight": 10],
-      "^(Frameworks|SharedFrameworks|PlugIns|Plug-ins|XPCServices|Helpers|MacOS|Library/(Automator|Spotlight|LoginItems))/":
-        [
-          "nested": true, "weight": 10,
-        ],
       ".*\\.dSYM($|/)": ["weight": 11],
       "^(.*/)?\\.DS_Store$": ["omit": true, "weight": 2000],
       "^Info\\.plist$": ["omit": true, "weight": 20],

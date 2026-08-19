@@ -20,6 +20,18 @@ public struct ReleaseManifest: Codable, Equatable, Sendable {
     public var signerVersion: String?
     public var sdkVersion: String?
     public var compilerVersion: String?
+    /// Nested extension bundle identifiers included in this release (deep apps).
+    public var extensions: [ExtensionRecord]?
+
+    public struct ExtensionRecord: Codable, Equatable, Sendable {
+        public var bundleId: String
+        public var product: String?
+
+        public init(bundleId: String, product: String? = nil) {
+            self.bundleId = bundleId
+            self.product = product
+        }
+    }
 
     public init(
         appBundleId: String,
@@ -36,7 +48,8 @@ public struct ReleaseManifest: Codable, Equatable, Sendable {
         toolVersion: String? = nil,
         signerVersion: String? = nil,
         sdkVersion: String? = nil,
-        compilerVersion: String? = nil
+        compilerVersion: String? = nil,
+        extensions: [ExtensionRecord]? = nil
     ) {
         self.appBundleId = appBundleId
         self.marketingVersion = marketingVersion
@@ -53,6 +66,7 @@ public struct ReleaseManifest: Codable, Equatable, Sendable {
         self.signerVersion = signerVersion
         self.sdkVersion = sdkVersion
         self.compilerVersion = compilerVersion
+        self.extensions = extensions
     }
 
     /// Encodes and atomically writes the manifest.

@@ -90,32 +90,78 @@ struct ReleaseArchiveCommand: AsyncParsableCommand {
     guard let teamID = identity.teamID else {
       throw ReleaseArchiveError.identityMissingTeam
     }
-    let profileURL = try locateProfile(home: context.homeURL, bundleID: config.bundleID)
+    guard let profileURL = try locateProfile(home: context.homeURL, bundleID: config.bundleID) else {
+      throw ReleaseArchiveError.profileMissing(config.bundleID)
+    }
 
-    // 3. Sign once (distribution) and package the IPA.
+    // 3. Sign and package the IPA. Deep projects (with extensions) sign each nested
+    // bundle first with its own profile, then the app in deep mode.
     let outputDir = URL(
       fileURLWithPath: output ?? projectRoot.appendingPathComponent(".release").path)
-    let output = try SigningPipeline.signAndPackage(
-      input: .init(
-        unsignedApp: unsignedApp,
-        identity: identity,
-        teamID: teamID,
-        profileURL: profileURL,
-        sourceEntitlementsURL: projectRoot.appendingPathComponent(
-          config.entitlementsPath ?? "App.entitlements"),
-        configuration: .distribution,
-        bundleID: config.bundleID,
-        product: config.product,
-        ipaOutputDirectory: outputDir
-      ))
-    print("Signed \(output.appBundle.path)")
-    print("Packaged \(output.ipaURL.path)")
-    print("IPA SHA-256: \(try SHA256.file(at: output.ipaURL))")
+    if plan.extensions.isEmpty {
+      let output = try SigningPipeline.signAndPackage(
+        input: .init(
+          unsignedApp: unsignedApp,
+          identity: identity,
+          teamID: teamID,
+          profileURL: profileURL,
+          sourceEntitlementsURL: projectRoot.appendingPathComponent(
+            config.entitlementsPath ?? "App.entitlements"),
+          configuration: .distribution,
+          bundleID: config.bundleID,
+          product: config.product,
+          ipaOutputDirectory: outputDir
+        ))
+      print("Signed \(output.appBundle.path)")
+      print("Packaged \(output.ipaURL.path)")
+      print("IPA SHA-256: \(try SHA256.file(at: output.ipaURL))")
+    } else {
+      let extensions = try plan.extensions.map { extensionPlan -> DeepSigningPipeline.ExtensionInput in
+        let appexURL = unsignedApp
+          .appendingPathComponent("PlugIns/\(extensionPlan.product).appex", isDirectory: true)
+        guard let extensionProfileURL = try locateProfile(
+          home: context.homeURL, bundleID: extensionPlan.bundleID)
+        else {
+          throw ReleaseArchiveError.profileMissing(extensionPlan.bundleID)
+        }
+        return DeepSigningPipeline.ExtensionInput(
+          appexBundle: appexURL,
+          identity: identity,
+          teamID: teamID,
+          profileURL: extensionProfileURL,
+          sourceEntitlementsURL: projectRoot.appendingPathComponent(
+            extensionPlan.entitlementsPath ?? "App.entitlements"),
+          configuration: .distribution,
+          bundleID: extensionPlan.bundleID
+        )
+      }
+      let deepOutput = try DeepSigningPipeline.signAndPackage(
+        input: .init(
+          unsignedApp: unsignedApp,
+          identity: identity,
+          teamID: teamID,
+          profileURL: profileURL,
+          sourceEntitlementsURL: projectRoot.appendingPathComponent(
+            config.entitlementsPath ?? "App.entitlements"),
+          configuration: .distribution,
+          bundleID: config.bundleID,
+          product: config.product,
+          ipaOutputDirectory: outputDir
+        ),
+        extensions: extensions
+      )
+      print("Signed \(deepOutput.appBundle.path)")
+      for result in deepOutput.extensions {
+        print("Signed nested extension \(result.bundleID)")
+      }
+      print("Packaged \(deepOutput.ipaURL.path)")
+      print("IPA SHA-256: \(try SHA256.file(at: deepOutput.ipaURL))")
+    }
 
     print("Native signature passed the project-owned post-sign verifier.")
   }
 
-  private func locateProfile(home: URL, bundleID: String) throws -> URL {
+  private func locateProfile(home: URL, bundleID: String) throws -> URL? {
     let candidates = [
       home.appendingPathComponent("profiles/\(bundleID) AppStore.mobileprovision"),
       home.appendingPathComponent("profiles/\(bundleID).mobileprovision"),
@@ -123,7 +169,7 @@ struct ReleaseArchiveCommand: AsyncParsableCommand {
     for url in candidates where FileManager.default.fileExists(atPath: url.path) {
       return url
     }
-    throw ReleaseArchiveError.profileMissing(bundleID)
+    return nil
   }
 }
 

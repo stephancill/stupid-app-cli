@@ -32,9 +32,11 @@ from a source checkout.
   (directory `0700`, files `0600`, plaintext, atomic writes).
 - The CLI never elevates silently. Privileged CoreDevice TUN operations run
   through a helper subcommand; pass `--sudo <path>` to authorize it.
-- Version 1 supports one SwiftPM library product with code-based SwiftUI. App
-  extensions, Xcode project inputs, storyboards, un-compiled asset catalogs,
-  Core Data models, and unsupported resources must fail loudly.
+- Version 1 supports one SwiftPM library product with code-based SwiftUI, plus an
+  optional `extensions:` list in `stupid-app.yml` for bundled `PlugIns/*.appex`
+  extensions (e.g. a WidgetKit extension) sharing App Groups. Xcode project inputs,
+  storyboards, un-compiled asset catalogs, Core Data models, ExtensionKit products,
+  and other unsupported resources must fail loudly.
 
 ## Environment requirements
 
@@ -78,7 +80,9 @@ stupid-app signing setup --key-id <id> --issuer-id <id> --p8 <key.p8> --team-id 
 `signing setup` is the single provisioning command. `--kind` is repeatable and
 defaults to both distribution and development; development runs only when
 `--udid` is given. When run in a project directory, `--bundle-id` defaults to
-the value in `stupid-app.yml`. ASC credentials may also come from environment
+all bundle IDs in `stupid-app.yml` (the app plus every configured extension), and
+the `APP_GROUPS` capability is enabled per bundle when the project declares app
+groups. ASC credentials may also come from environment
 variables `ASC_API_KEY_ID`, `ASC_API_ISSUER_ID`, `ASC_API_KEY_PATH`, and
 `DEVELOPER_TEAM_ID`.
 
@@ -137,7 +141,22 @@ deploymentTarget: "17.0"
 infoPath: Info.plist
 entitlementsPath: App.entitlements
 iconPath: Resources/AppIcon.png
+# Optional bundled app extensions (each becomes a PlugIns/<product>.appex):
+# extensions:
+#   - product: MyWidgetExtension
+#     bundleID: net.example.acceptance-app.widget
+#     infoPath: WidgetExtension-Info.plist
+#     entitlementsPath: WidgetExtension.entitlements
+#     appIntentsMetadata: WidgetMetadata/Metadata.appintents
 ```
+
+Extensions share the app's signing identity per kind, are provisioned as their own
+bundle IDs (`signing setup --bundle-id` per bundle, or read all from `stupid-app.yml`),
+and are signed leaf-first during `run`/`release archive` with their own profiles and
+entitlements. App Groups (`com.apple.security.application-groups` in entitlements) are
+supported: `signing setup` enables the capability via the API, but the concrete group
+association is a one-time Developer Portal step that signing enforces loudly until the
+downloaded profile authorizes the group.
 
 ### 2. Build an unsigned app
 

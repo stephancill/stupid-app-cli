@@ -27,13 +27,14 @@ public struct Planner: Sendable {
     }
 
     /// Builds the plan: selects the library product, walks its dependency graph for
-    /// resources, and synthesizes the merged Info.plist.
+    /// resources, synthesizes the merged Info.plist, and plans any configured
+    /// extensions as nested bundles.
     public func makePlan() throws -> BuildPlan {
         let root = try describePackage(at: projectRoot)
         let library = try selectLibrary(from: root.products ?? [], matching: config.product)
 
         var resources: [BuildPlan.Resource] = []
-        var packages = root.productsByName()
+        let packages = root.productsByName()
         // Walk target dependencies within the root package. Version 1 expects a single
         // self-contained package; dependency packages are resolved by SwiftPM at build
         // time and their resource bundles still appear under the root-target output.
@@ -53,8 +54,56 @@ public struct Planner: Sendable {
             product: library.name,
             bundleID: config.bundleID,
             deploymentTarget: deploymentTarget,
-            platform: platform
+            platform: platform,
+            isExtension: false,
+            infoPath: config.infoPath
         )
+
+        var extensionPlans: [ExtensionPlan] = []
+        if let extensions = config.extensions {
+            for extensionConfig in extensions {
+                guard let product = root.products?.first(where: {
+                    $0.isLibrary && $0.name == extensionConfig.product
+                }) else {
+                    throw BuildError.extensionProductMissing(
+                        extensionConfig.product, config.product)
+                }
+                var extensionResources: [BuildPlan.Resource] = []
+                try collectResources(
+                    from: product.targets,
+                    in: root,
+                    packages: packages,
+                    into: &extensionResources
+                )
+                if let configured = extensionConfig.resources {
+                    extensionResources += configured.map(BuildPlan.Resource.root)
+                }
+                extensionResources = Array(Set(extensionResources))
+                let extensionDeploymentTarget =
+                    extensionConfig.deploymentTarget ?? root.iosDeploymentTarget ?? config.deploymentTarget
+                // Nested bundles root their Info.plist so relative source `Resources`
+                // that were copied against the app root are located from the project root.
+                let extensionInfo = try synthesizeInfoPlist(
+                    product: product.name,
+                    bundleID: extensionConfig.bundleID,
+                    deploymentTarget: extensionDeploymentTarget,
+                    platform: platform,
+                    isExtension: true,
+                    infoPath: extensionConfig.infoPath
+                )
+                extensionPlans.append(
+                    ExtensionPlan(
+                        product: product.name,
+                        bundleID: extensionConfig.bundleID,
+                        deploymentTarget: extensionDeploymentTarget,
+                        infoPlist: extensionInfo,
+                        resources: extensionResources,
+                        entitlementsPath: extensionConfig.entitlementsPath,
+                        appIntentsMetadata: extensionConfig.appIntentsMetadata
+                    )
+                )
+            }
+        }
 
         return BuildPlan(
             product: library.name,
@@ -64,7 +113,8 @@ public struct Planner: Sendable {
             resources: resources,
             iconPath: config.iconPath,
             entitlementsPath: config.entitlementsPath,
-            platform: platform
+            platform: platform,
+            extensions: extensionPlans
         )
     }
 
@@ -149,7 +199,10 @@ public struct Planner: Sendable {
         }
     }
 
-    private func synthesizeInfoPlist(product: String, bundleID: String, deploymentTarget: String, platform: TargetPlatform) throws -> [String: Sendable] {
+    private func synthesizeInfoPlist(
+        product: String, bundleID: String, deploymentTarget: String, platform: TargetPlatform,
+        isExtension: Bool, infoPath: String
+    ) throws -> [String: Sendable] {
         var info: [String: Sendable] = [
             "CFBundleInfoDictionaryVersion": "6.0",
             "CFBundleDevelopmentRegion": "en",
@@ -160,30 +213,34 @@ public struct Planner: Sendable {
             "CFBundleName": product,
             "CFBundleExecutable": product,
             "CFBundleDisplayName": product,
-            "CFBundlePackageType": "APPL",
-            "LSRequiresIPhoneOS": true,
-            "UIRequiredDeviceCapabilities": ["arm64"],
+            "CFBundlePackageType": isExtension ? "XPC!" : "APPL",
             "CFBundleSupportedPlatforms": [platform.supportedPlatformsKey],
-            "UIDeviceFamily": [1, 2],
-            "UISupportedInterfaceOrientations": ["UIInterfaceOrientationPortrait"],
-            "UISupportedInterfaceOrientations~ipad": [
+            // Both apps and bundled app extensions carry the arm64 slice requirement;
+            // ASC rejects 64-bit extensions that omit it.
+            "UIRequiredDeviceCapabilities": ["arm64"],
+        ]
+        if !isExtension {
+            info["LSRequiresIPhoneOS"] = true
+            info["UIDeviceFamily"] = [1, 2]
+            info["UISupportedInterfaceOrientations"] = ["UIInterfaceOrientationPortrait"]
+            info["UISupportedInterfaceOrientations~ipad"] = [
                 "UIInterfaceOrientationPortrait",
                 "UIInterfaceOrientationPortraitUpsideDown",
                 "UIInterfaceOrientationLandscapeLeft",
                 "UIInterfaceOrientationLandscapeRight",
-            ],
-            "UILaunchScreen": [:] as [String: Sendable],
-        ]
+            ]
+            info["UILaunchScreen"] = [:] as [String: Sendable]
+        }
 
-        let sourceURL = projectRoot.appendingPathComponent(config.infoPath)
+        let sourceURL = projectRoot.appendingPathComponent(infoPath)
         guard FileManager.default.fileExists(atPath: sourceURL.path) else {
-            throw BuildError.infoPlistMissing(config.infoPath)
+            throw BuildError.infoPlistMissing(infoPath)
         }
         if let data = try? Data(contentsOf: sourceURL),
            let parsed = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Sendable] {
             info.merge(parsed) { _, overlay in overlay }
         } else {
-            throw BuildError.infoPlistInvalid(config.infoPath)
+            throw BuildError.infoPlistInvalid(infoPath)
         }
         return info
     }
@@ -199,11 +256,41 @@ public struct BuildPlan: Sendable {
     public var iconPath: String?
     public var entitlementsPath: String?
     public var platform: TargetPlatform
+    public var extensions: [ExtensionPlan]
 
     public enum Resource: Sendable, Equatable, Hashable {
         case bundle(target: String)
         case library(name: String)
         case root(source: String)
+    }
+}
+
+/// A planned nested app extension, assembled into `PlugIns/<product>.appex`.
+public struct ExtensionPlan: Sendable {
+    public var product: String
+    public var bundleID: String
+    public var deploymentTarget: String
+    public var infoPlist: [String: Sendable]
+    public var resources: [BuildPlan.Resource]
+    public var entitlementsPath: String?
+    public var appIntentsMetadata: String?
+
+    public init(
+        product: String,
+        bundleID: String,
+        deploymentTarget: String,
+        infoPlist: [String: Sendable],
+        resources: [BuildPlan.Resource],
+        entitlementsPath: String? = nil,
+        appIntentsMetadata: String? = nil
+    ) {
+        self.product = product
+        self.bundleID = bundleID
+        self.deploymentTarget = deploymentTarget
+        self.infoPlist = infoPlist
+        self.resources = resources
+        self.entitlementsPath = entitlementsPath
+        self.appIntentsMetadata = appIntentsMetadata
     }
 }
 
@@ -290,6 +377,7 @@ public enum BuildError: Error, Equatable, Sendable, CustomStringConvertible {
     case malformedPackageDescription
     case noLibraryProduct
     case productMismatch(declared: String, found: String)
+    case extensionProductMissing(String, String)
     case ambiguousLibrary([String])
     case targetNotFound(String, String)
     case unsupportedModule(String)
@@ -309,6 +397,8 @@ public enum BuildError: Error, Equatable, Sendable, CustomStringConvertible {
             return "The package exposes no library product. A stupid-app project must expose exactly one library product."
         case let .productMismatch(declared, found):
             return "stupid-app.yml declares product '\(declared)' but the package exposes '\(found)'."
+        case let .extensionProductMissing(product, root):
+            return "The package exposes no library product '\(product)' for the configured extension of app '\(root)'. Ensure the extension target is a library product."
         case let .ambiguousLibrary(names):
             return "The package exposes multiple library products (\(names)). Specify the intended product in stupid-app.yml."
         case let .targetNotFound(name, package):

@@ -147,6 +147,8 @@ struct SigningSetupCommand: AsyncParsableCommand {
         // 1. Disposable/real explicit bundle ID.
         let bundleResourceID = try operations.getOrCreateBundleID(name: bundleID, identifier: bundleID)
         print("Bundle ID \(bundleID) -> \(bundleResourceID)")
+        try enableRequestedCapabilities(
+            operations: operations, bundleIDResourceID: bundleResourceID, bundleID: bundleID)
 
         // 2. Reuse an existing active distribution identity when present, else import
         // or mint one.
@@ -221,6 +223,8 @@ struct SigningSetupCommand: AsyncParsableCommand {
         // 1. Bundle ID and physical device.
         let bundleResourceID = try operations.getOrCreateBundleID(name: bundleID, identifier: bundleID)
         print("Bundle ID \(bundleID) -> \(bundleResourceID)")
+        try enableRequestedCapabilities(
+            operations: operations, bundleIDResourceID: bundleResourceID, bundleID: bundleID)
 
         let device = try operations.getOrRegisterDevice(udid: deviceUDID, name: deviceName ?? "iPhone")
         print("Device \(device.id) (\(device.udid ?? deviceUDID))")
@@ -286,6 +290,23 @@ struct SigningSetupCommand: AsyncParsableCommand {
         print("Development signing setup complete.")
     }
 
+    /// Enables the App Groups capability on a bundle ID when the current project
+    /// declares `com.apple.security.application-groups`. Best-effort: a failed enable
+    /// is reported but the authoritative gate is the profile-authorization check at
+    /// signing time (the concrete group association is a manual Developer Portal step).
+    private func enableRequestedCapabilities(
+        operations: ASCOperations, bundleIDResourceID: String, bundleID: String
+    ) throws {
+        guard projectRequestsAppGroups() else { return }
+        do {
+            try operations.enableAppGroups(bundleIDResourceID: bundleIDResourceID)
+            print("Enabled App Groups capability on \(bundleID)")
+        } catch {
+            print(
+                "WARNING: could not enable App Groups capability on \(bundleID): \(error). The app-group association remains a manual Developer Portal step.")
+        }
+    }
+
     private func decodeCertificate(_ base64: String) throws -> String {
         let data = try base64Data(base64)
         return "-----BEGIN CERTIFICATE-----\n" +
@@ -305,14 +326,42 @@ struct SigningSetupCommand: AsyncParsableCommand {
 
     // MARK: - Xcode credential reuse
 
-    /// Returns the explicitly-supplied bundle IDs, or the bundle ID from a
-    /// `stupid-app.yml` present in the current directory when none were supplied.
+    /// Returns the explicitly-supplied bundle IDs, or the bundle IDs from a
+    /// `stupid-app.yml` present in the current directory (the app plus every
+    /// configured extension) when none were supplied.
     private func resolveBundleIDs() throws -> [String] {
         if !bundleIDs.isEmpty { return bundleIDs }
         let configURL = URL(fileURLWithPath: "stupid-app.yml")
         guard let data = try? Data(contentsOf: configURL) else { return [] }
         let config = try AppConfig.decode(data)
-        return [config.bundleID]
+        var ids = [config.bundleID]
+        if let extensions = config.extensions {
+            ids += extensions.map(\.bundleID)
+        }
+        return ids
+    }
+
+    /// True when the current project (app or any extension) requests
+    /// `com.apple.security.application-groups`, so the App Groups capability should be
+    /// enabled on every bundle in the project.
+    private func projectRequestsAppGroups() -> Bool {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: "stupid-app.yml")),
+            let config = try? AppConfig.decode(data)
+        else { return false }
+        var entitlementsPaths = [config.entitlementsPath].compactMap { $0 }
+        if let extensions = config.extensions {
+            entitlementsPaths += extensions.compactMap { $0.entitlementsPath }
+        }
+        for path in entitlementsPaths {
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+                let plist = try? PropertyListSerialization.propertyList(from: data, format: nil)
+                    as? [String: Any]
+            else { continue }
+            if (plist["com.apple.security.application-groups"] as? [Any])?.isEmpty == false {
+                return true
+            }
+        }
+        return false
     }
 
     private func optionalASCContext() throws -> ASCContext? {

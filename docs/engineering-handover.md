@@ -338,7 +338,11 @@ Successful TestFlight processing and installation are the release correctness pr
 - Device and release builds must use real Apple certificates. The pipeline must not pseudo-sign or ad-hoc sign an application as an intermediate step.
 - The exact configured bundle identifier is retained. Do not add xtool-style `XTL-*` prefixes.
 - The release artifact is a distribution-signed IPA plus a release manifest. An `.xcarchive` is not required for App Store Connect upload.
-- App extensions are not part of the first supported project model. The architecture must not preclude adding per-bundle extension signing later.
+- App extensions and App Groups are now supported in an initial cut: `stupid-app.yml`
+  may declare an `extensions:` list, each planned/built into `PlugIns/*.appex`, signed
+  leaf-first by `DeepSigningPipeline` with per-file nested sealing, and provisioned with
+  the `APP_GROUPS` capability. Design basis and remaining validation in
+  `docs/app-extensions-app-groups-scope.md`.
 - An isolated x86_64 Ubuntu 24.04 WSL 2 distribution is the initial Gate 0 build host. Renting a VPS and integrating the existing low-resource Raspberry Pi are deferred until a concrete need remains after WSL validation.
 - No timeline estimates belong in planning documents. Use ordered gates and, only when useful, relative point estimates.
 
@@ -448,7 +452,9 @@ Inputs that must initially fail loudly:
 - Metal source requiring Apple tooling.
 - Arbitrary Xcode build phases.
 - Build tool plugins or macros not validated on the host and target pair.
-- App extensions.
+- App Intents / other Apple build-tool outputs not handled by the declared
+  `appIntentsMetadata` extension path (e.g. unrecognized catalogs that still require
+  Apple tooling).
 - ExtensionKit products.
 
 ## Proposed Command Surface
@@ -644,12 +650,17 @@ Before signing, validate at least:
 
 The public API can enable several capabilities but cannot associate every concrete resource, including App Group identifiers. Complex capabilities are therefore deferred from the initial application fixture. When added, any required Developer portal web step must be explicit and profile output must be verified afterward.
 
-**Version 1 entitlement scope (resolved):** the officially supported v1 set is the bare
-set the pipeline derives and reconciles — `application-identifier`,
-`com.apple.developer.team-identifier`, and `get-task-allow` (true for development, false
-for distribution). Other capabilities (app groups, keychain sharing, push, etc.) are out
-of scope for v1 and must fail loudly at planning/derivation until the capability-association
-support described above is implemented.
+**Entitlement scope (resolved, with App Groups enabled):** the supported set the pipeline
+derives and reconciles is `application-identifier`, `com.apple.developer.team-identifier`,
+`get-task-allow` (true for development, false for distribution), plus
+`com.apple.security.application-groups`. Other capabilities (keychain sharing, push, etc.)
+fail loudly at planning/derivation until the corresponding capability-association support is
+implemented. App Groups are supported: `signing setup` enables the `APP_GROUPS` capability
+on each project bundle and `EntitlementDeriver` reconciles the requested group against the
+profile (array-subset), failing loudly when the profile does not authorize it — because the
+public API cannot create the group or bind the concrete identifier, the one-time Developer
+Portal association remains a manual prerequisite that the profile-authorization gate
+enforces.
 
 ### Signing Engine
 
@@ -1918,20 +1929,14 @@ Execute the remaining work in this order:
    `run --network` runs are physically qualified on a Mac (the network-path NDP and
    mDNS intermittencies are resolved). Next: Gate M2 (macOS-produced release), M4
    (Xcode-absent path), and M5 (productization), plus a clean-host macOS run.
-4. Add support for app extensions and richer entitlements. Version 1 supports one
-   library product with the bare entitlement set (`application-identifier`,
-   `com.apple.developer.team-identifier`, `get-task-allow`); app extensions,
-   ExtensionKit products, and other capabilities must fail loudly at planning today.
-   Extend the project model to a signed app plus extension products (widgets, share
-   extensions, notification services, and similar), with per-bundle provisioning
-   profiles, capability association through the Developer portal API (app groups,
-   keychain sharing, push, and other entitlement groups), per-bundle entitlement
-   derivation and reconciliation, nested-bundle embedding, and one real signing pass per
-   bundle in dependency order. Validate each nested bundle's signature, profile, and
-   entitlements independently before IPA assembly. Use the
-   `~/environments/personal/pus/stupid-authenticator` (app/extension entitlements) and
-   `~/environments/personal/pus/stupid-widgets` (widget entitlements, extension
-   metadata) projects as fixture references.
+ 4. App extensions and App Groups are implemented in an initial cut (see
+    `docs/app-extensions-app-groups-scope.md`): `stupid-app.yml` `extensions:`, planner and
+    packer producing `PlugIns/*.appex`, a leaf-first `DeepSigningPipeline` with per-file
+    nested sealing, per-bundle provisioning and profiles, and the `APP_GROUPS` capability
+    plus a profile-authorization gate. Remaining to qualify: nested-seal byte-layout
+    validation against an Xcode widget build, clean-host device run, and App Store
+    processing/TestFlight of a deep build. ExtensionKit products and other capability
+    groups (keychain sharing, push, and other entitlement groups) still fail loudly.
 5. Add macOS (`arm64-apple-macosx`) as a build target. The CLI currently builds iOS
    device (`arm64-apple-ios`) and simulator (`arm64-apple-ios-simulator`) targets only.
    Add macOS app-bundle support end to end: SDK/toolchain export and import for the

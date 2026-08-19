@@ -16,6 +16,193 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
 
+## 2026-08-19 - Physical Device Wireless Run Of The Deep Build
+
+### Summary
+
+- Provisioned development signing for the deep `stupid-widgets` project and ran the
+  build (app + widget extension) wirelessly on the paired iPhone.
+- `signing setup --kind development` read both bundle IDs from `stupid-app.yml`,
+  registered the paired device, enabled the App Groups capability on both bundle IDs, and
+  created a development profile for the app and the extension. Both development profiles
+  authorize `group.net.stupidtech.stupidwidgets`, carry `get-task-allow=true`, and
+  provision the single device.
+- `stupid-app run --network --udid <device> --sudo /usr/bin/sudo` built the debug deep
+  app, deep-signed it leaf-first with the development identity + per-bundle development
+  profiles, and installed and launched it over the network on the iPhone
+  (`Installed and launched ... (pid ...)`).
+
+### Verification
+
+- The native network install reported success and a live process pid; the native installer
+  verifies the exact installed bundle ID before reporting install.
+- The deep build's structure and signatures were independently validated earlier via
+  `codesign` (extension alone and `--deep`) and by App Store Connect processing; this run
+  confirmed the same deep bundle installs and launches on a physical device over the CoreDevice
+  network path.
+
+### Follow-Up
+
+- Manually confirm on the device: the widget appears in the Home Screen gallery (App Intents
+  metadata) and an App-Group-backed script selection refreshes the extension timeline.
+
+## 2026-08-19 - Deep App Qualification: TestFlight And Simulator
+
+### Summary
+
+- Qualified the multi-bundle (`stupid-widgets`, app + WidgetKit extension sharing an App
+  Group) pipeline end to end against App Store Connect and the simulator, fixing four
+  real defects the live upload surfaced.
+- **`Packer.copyTree` destination bug:** directory resources (and the extension's App
+  Intents metadata) failed because `copyTree` never created its destination directory, so
+  copying the first child threw `NSFileNoSuchFileError`. The method now creates the
+  destination first.
+- **ASC 90034 ("missing or invalid signature") — nested-seal rule fix:** the shallow
+  `CodeResources` `rules2` carried a `^[^/]+$ -> nested:true` rule (inherited). When a
+  top-level directory such as the appex's `Metadata.appintents` matched it, `codesign`
+  treated the directory as nested code, conflicting with the correct per-file sealing of
+  its contents; only the appex was independently verifiable after removing that rule.
+  `modernRules` no longer emits any `nested:true` rules, matching `codesign`'s own output
+  exactly (verified byte-structure against a `codesign` reference). This also required
+  `codesign --verify --strict` on the appex alone to pass before App Store would accept
+  the upload.
+- **ASC 90502 ("must include arm64 in UIRequiredDeviceCapabilities") — extension
+  Info.plist:** the planner only added `UIRequiredDeviceCapabilities=[arm64]` to apps, but
+  App Store rejects it being absent from a 64-bit extension. It is now emitted for both
+  apps and extensions.
+- **ASC 90898 ("pass -e _NSExtensionMain to the linker") — extension entry point:** the
+  extension's synthetic executable defaulted to `_main`. It now links with
+  `-e _NSExtensionMain` and `.linkedLibrary("extension")` (linking `libextension`, which
+  provides the symbol), matching Xcode's extension linking. Verified the appex references
+  `_NSExtensionMain`.
+- **`release new-build` bug fix:** the `/builds` query used `filter[platform]`, which App
+  Store Connect rejects (`PARAMETER_ERROR.INVALID`). Removed that filter; the app filter +
+  `-uploadedDate` sort is sufficient.
+
+### Verification
+
+- Bumped `CFBundleVersion` to 9 (app and extension) and ran `stupid-app release archive`
+  then `stupid-app release upload --wait`.
+- App Store Connect accepted build 9 for `net.stupidtech.stupidwidgets` (marketing
+  1.0.0): `processing=VALID`, `internal=IN_BETA_TESTING`, `external=READY_FOR_BETA_SUBMISSION`
+  — the build is internally TestFlight-ready. The release manifest records the nested
+  extension bundle ID `net.stupidtech.stupidwidgets.widget`.
+- Local verification passed throughout: `codesign --verify --deep --strict` on the whole
+  app and `codesign --verify --strict` on the extension alone both return exit 0; both
+  bundles carry correct distribution entitlements (`application-identifier` per bundle,
+  `com.apple.security.application-groups=[group.net.stupidtech.stupidwidgets]` on both,
+  `get-task-allow=false`); distribution profiles embedded in both bundles.
+- Deep simulator run: `stupid-app run --simulator --udid <preferred>` built for
+  `arm64-apple-ios-simulator`, ad-hoc signed each `PlugIns/*.appex` leaf-first then the app
+  (extended `adHocSign`), installed, and launched (pid observed). The installed app
+  container contains `PlugIns/StupidWidgetsWidgetExtension.appex` with its own
+  `_CodeSignature` and valid ad-hoc signature.
+- `swift test` passes 224 tests in 41 suites.
+
+### Follow-Up
+
+- A physical-device wireless `run --network` of the deep build remains unqualified.
+- Note for future work: `release archive`/`run` read the packaged extension versions; keep
+  the app and extension `CFBundleVersion` in sync (matching is required for App Store).
+
+## 2026-08-19 - App Extensions And App Groups Implementation
+
+### Summary
+
+- Implemented multi-bundle support so `stupid-widgets` (app + WidgetKit extension sharing an
+  App Group) can be built, signed, and distributed, per the design in
+  `docs/app-extensions-app-groups-scope.md`.
+- `AppConfig` (`Sources/ProjectCore/AppConfig.swift`) gained an optional `extensions:`
+  list (`ExtensionConfig`: product, bundleID, infoPath, entitlementsPath, optional
+  deploymentTarget, resources, appIntentsMetadata) with validation (unique bundle IDs,
+  valid product/bundle IDs, relative paths, per-extension deployment target).
+- `Planner` plans the app plus each extension: selects each library product, synthesizes a
+  per-bundle Info.plist (extensions get `CFBundlePackageType = "XPC!"` and no app-only UI
+  keys), and produces `BuildPlan.extensions`/`ExtensionPlan`.
+- `Packer` builds the app product and each extension product through synthetic executable
+  packages, assembling `PlugIns/<product>.appex` per extension, copying extension resources,
+  and packing a declared `appIntentsMetadata` directory at the appex root.
+- `EntitlementDeriver.supportedKeys` now includes `com.apple.security.application-groups`,
+  reconciled with the profile via existing array-subset semantics.
+- Deep signing: `NativeAppClassifier` gained a `deep` mode that permits nested
+  `PlugIns/*.appex` (rejecting stray executables/escaping links via the sealer);
+  `NativeCodeResources` gained a `deep` sealer that emits no `nested: true` rules and seals
+  a nested bundle's files per-file while excluding its
+  `_CodeSignature/CodeDirectory|CodeSignature|CodeRequirements` (keeping `CodeResources`);
+  `NativeSigner.sign(... mode:)` threads `deep` through classification and sealing.
+- `DeepSigningPipeline` (`Sources/SigningKit/SigningPipeline.swift`) signs each extension
+  leaf-first with its own profile/entitlements, then signs the containing app in `deep`
+  mode, then packages the IPA.
+- `ASCOperations` gained `bundleIdCapabilities` operations; `signing setup` now resolves all
+  project bundles (app + extensions) and enables the `APP_GROUPS` capability per bundle
+  (best-effort; the profile-authorization gate is authoritative).
+- `release archive` and `run` use the deep pipeline when extensions are configured, locating
+  a profile per bundle. `ReleaseManifest` records nested extension bundle IDs.
+
+### Decisions
+
+- Deep signing uses Apple's default per-file nested sealing (empirically verified against
+  macOS `codesign`): the containing app hashes each appex file (including its
+  `_CodeSignature/CodeResources`) and emits no `nested: true` rules, because `codesign`
+  rejects `nested: true` co-existing with per-file hashing for nested bundles.
+- The App Groups capability is enabled via API but the concrete group association is a
+  manual Developer Portal step the profile-authorization gate enforces loudly.
+
+### Verification
+
+- `swift build` passes; `swift test` passes 224 tests in 41 suites (added deep-seal,
+  classifier deep-mode, App Groups deriver, and extension config tests).
+- New focused tests cover: deep `CodeResources` excluding nested
+  `CodeDirectory/CodeSignature/CodeRequirements` while sealing `CodeResources`; classifier
+  deep accept/reject; App Groups derive acceptance and fail-loud; extension config decode
+  and validation.
+
+### Follow-Up
+
+- Qualify on device/App Store: nested-seal byte layout against a real Xcode widget build,
+  a clean-host `run`, and App Store processing + TestFlight of a deep IPA. `doctor` should
+  add extension config and per-bundle profile checks.
+
+## 2026-08-19 - App Extensions And App Groups Planning
+
+### Summary
+
+- Authored the design basis for extending `stupid-app` from the single shallow app to
+  multi-bundle projects at `docs/app-extensions-app-groups-scope.md`, driven by
+  `stupid-widgets` (app + WidgetKit extension sharing an App Group).
+- Verified the current state that makes multi-bundle projects unsupported today: the config
+  and planner model one product; the signer is `native-shallow-v1` and `NativeAppClassifier`
+  rejects any nested signable bundle; `NativeCodeResources.collectSeals` hashes every inner
+  file without nested-code sealing; `EntitlementDeriver` allows only the bare three-key set;
+  and `ASCOperations` has no `bundleIdCapabilities` operation.
+- Confirmed against the pinned App Store Connect OpenAPI spec that there is **no**
+  `/v1/appGroups` resource and that `CapabilitySetting` (settings on a `bundleIdCapability`)
+  only carries iCloud/data-protection/Apple-ID keys, so the API can enable `APP_GROUPS` but
+  cannot create the group or associate the concrete identifier. The concrete
+  `group.net.stupidtech.stupidwidgets` association remains a manual Developer Portal step.
+- Recorded the design decisions: a flat `extensions:` list in `stupid-app.yml`; one identity
+  per kind shared by app and extensions; leaf-first (extensions then app) deep signing with
+  nested-code sealing; single-source App Groups with loud failure when the downloaded profile
+  does not authorize the requested group; and packaging the checked-in `Metadata.appintents`
+  directory as a declared, sealed extension resource.
+
+### Decisions
+
+- Deep signing is a new `native-deep-v1` engine path with per-bundle profiles and
+  entitlements; `NativeSigner` remains a single-bundle leaf signer and the pipeline owns the
+  order so each pass stays independently testable.
+- Frameworks embedding is deferred for the first cut (the extension statically links its
+  shared core); the nested-seal machinery is designed to extend to frameworks later.
+- App Groups via the API is best-effort enablement only; the authoritative gate is whether the
+  profile authorizes the requested group.
+
+### Follow-Up
+
+- Implement per the gate order in the scope document (config/planner -> packer -> deep
+  signing and nested seals -> app-groups provisioning -> distribution/manifest/doctor), then
+  validate nested-seal byte layout against a known-good Xcode widget build and clean-host
+  proof gates. This is planning work; no code changed.
+
 ## 2026-08-16 - Initial Scope And Architecture Research
 
 ### Summary

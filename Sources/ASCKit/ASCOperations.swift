@@ -70,6 +70,54 @@ public struct ASCOperations: Sendable {
         return try createBundleID(name: name, identifier: identifier)
     }
 
+    // MARK: - Bundle ID capabilities (App Groups)
+
+    /// Enables a capability (e.g. `APP_GROUPS`) on a bundle-ID resource if it is not
+    /// already present. The public API can enable the capability but cannot create or
+    /// associate the concrete resource (e.g. an App Group identifier); that is a manual
+    /// Developer Portal step that the profile-authorization gate enforces.
+    public func enableBundleIDCapability(bundleIDResourceID: String, capabilityType: String) throws {
+        let existing = try listBundleIDCapabilities(bundleIDResourceID: bundleIDResourceID)
+        if existing.contains(capabilityType) { return }
+        _ = try client.request(method: .post, path: "bundleIdCapabilities", body: [
+            "data": [
+                "type": "bundleIdCapabilities",
+                "attributes": ["capabilityType": capabilityType],
+                "relationships": [
+                    "bundleId": [
+                        "data": ["type": "bundleIds", "id": bundleIDResourceID],
+                    ],
+                ],
+            ],
+        ])
+    }
+
+    /// Lists capability types currently enabled on a bundle-ID resource.
+    public func listBundleIDCapabilities(bundleIDResourceID: String) throws -> [String] {
+        let response = try client.request(
+            method: .get,
+            path: "bundleIds/\(bundleIDResourceID)/bundleIdCapabilities"
+        )
+        struct Envelope: Decodable {
+            struct Data: Decodable {
+                struct Attributes: Decodable {
+                    let capabilityType: String?
+                }
+                let attributes: Attributes
+            }
+            let data: [Data]
+        }
+        guard let envelope = try? JSONDecoder().decode(Envelope.self, from: response.data) else {
+            throw ASCError.malformedPayload("bundleIdCapabilities list")
+        }
+        return envelope.data.compactMap { $0.attributes.capabilityType }
+    }
+
+    /// Enables the App Groups capability on a bundle-ID resource (idempotent).
+    public func enableAppGroups(bundleIDResourceID: String) throws {
+        try enableBundleIDCapability(bundleIDResourceID: bundleIDResourceID, capabilityType: "APP_GROUPS")
+    }
+
     // MARK: - Devices
 
     public struct Device: Sendable, Equatable {

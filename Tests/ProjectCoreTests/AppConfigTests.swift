@@ -139,4 +139,69 @@ struct AppConfigTests {
         #expect(!AppConfig.isValidVersion(""))
         #expect(!AppConfig.isValidVersion("abc"))
     }
+
+    @Test("extensions decode with product, bundleID, infoPath, and entitlements")
+    func extensionsDecode() throws {
+        let config = try decode("""
+        version: 1
+        product: StupidWidgets
+        bundleID: net.stupidtech.widgets
+        deploymentTarget: "17.0"
+        infoPath: Info.plist
+        entitlementsPath: App.entitlements
+        extensions:
+          - product: WidgetExtension
+            bundleID: net.stupidtech.widgets.widget
+            infoPath: WidgetExtension-Info.plist
+            entitlementsPath: WidgetExtension.entitlements
+            appIntentsMetadata: WidgetMetadata/Metadata.appintents
+            resources:
+              - WidgetMetadata/Metadata.appintents
+        """)
+        let extensions = try #require(config.extensions)
+        #expect(extensions.count == 1)
+        #expect(extensions[0].product == "WidgetExtension")
+        #expect(extensions[0].bundleID == "net.stupidtech.widgets.widget")
+        #expect(extensions[0].appIntentsMetadata == "WidgetMetadata/Metadata.appintents")
+    }
+
+    @Test("duplicate extension bundle IDs are rejected")
+    func duplicateExtensionBundleIDs() {
+        let yaml = """
+        version: 1
+        product: App
+        bundleID: net.example.app
+        deploymentTarget: "17.0"
+        infoPath: Info.plist
+        extensions:
+          - product: ExtA
+            bundleID: net.example.app.widget
+            infoPath: A.plist
+          - product: ExtB
+            bundleID: net.example.app.widget
+            infoPath: B.plist
+        """
+        #expect(throws: ProjectError.duplicateExtensionBundleID("net.example.app.widget")) {
+            try decode(yaml)
+        }
+    }
+
+    @Test("invalid extension product name is rejected")
+    func invalidExtensionProduct() {
+        let yaml = """
+        version: 1
+        product: App
+        bundleID: net.example.app
+        deploymentTarget: "17.0"
+        infoPath: Info.plist
+        extensions:
+          - product: 1Bad Name!
+            bundleID: net.example.app.widget
+            infoPath: A.plist
+        """
+        #expect(throws: ProjectError.invalidExtensionProduct(
+            "extensions[0]", "1Bad Name!")) {
+            try decode(yaml)
+        }
+    }
 }

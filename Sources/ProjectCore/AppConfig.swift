@@ -19,6 +19,8 @@ public struct AppConfig: Codable, Equatable, Sendable {
     public var iconPath: String?
     /// Optional explicit raw resources, relative to the project root.
     public var resources: [String]?
+    /// Bundled app extensions (each becomes a `PlugIns/*.appex`).
+    public var extensions: [ExtensionConfig]?
 
     public init(
         version: Int,
@@ -28,7 +30,8 @@ public struct AppConfig: Codable, Equatable, Sendable {
         infoPath: String,
         entitlementsPath: String? = nil,
         iconPath: String? = nil,
-        resources: [String]? = nil
+        resources: [String]? = nil,
+        extensions: [ExtensionConfig]? = nil
     ) {
         self.version = version
         self.product = product
@@ -38,6 +41,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
         self.entitlementsPath = entitlementsPath
         self.iconPath = iconPath
         self.resources = resources
+        self.extensions = extensions
     }
 
     /// Decodes and fully validates a `stupid-app.yml` from data.
@@ -87,6 +91,81 @@ public struct AppConfig: Codable, Equatable, Sendable {
             for (index, resource) in resources.enumerated() {
                 try Self.validateRelativePath(resource, field: "resources[\(index)]", projectRoot: projectRoot)
             }
+        }
+        if let extensions {
+            var seenBundleIDs = Set<String>()
+            for (index, extensionConfig) in extensions.enumerated() {
+                let prefix = "extensions[\(index)]"
+                guard Self.isValidProductName(extensionConfig.product) else {
+                    throw ProjectError.invalidExtensionProduct(prefix, extensionConfig.product)
+                }
+                guard Self.isValidBundleID(extensionConfig.bundleID) else {
+                    throw ProjectError.invalidExtensionBundleID(prefix, extensionConfig.bundleID)
+                }
+                guard seenBundleIDs.insert(extensionConfig.bundleID).inserted else {
+                    throw ProjectError.duplicateExtensionBundleID(extensionConfig.bundleID)
+                }
+                if let deploymentTarget = extensionConfig.deploymentTarget {
+                    guard Self.isValidVersion(deploymentTarget) else {
+                        throw ProjectError.invalidExtensionDeploymentTarget(prefix, deploymentTarget)
+                    }
+                }
+                try Self.validateRelativePath(
+                    extensionConfig.infoPath, field: "\(prefix).infoPath", projectRoot: projectRoot)
+                if let entitlementsPath = extensionConfig.entitlementsPath {
+                    try Self.validateRelativePath(
+                        entitlementsPath, field: "\(prefix).entitlementsPath", projectRoot: projectRoot)
+                }
+                if let resources = extensionConfig.resources {
+                    for (resourceIndex, resource) in resources.enumerated() {
+                        try Self.validateRelativePath(
+                            resource, field: "\(prefix).resources[\(resourceIndex)]", projectRoot: projectRoot)
+                    }
+                }
+                if let appIntentsMetadata = extensionConfig.appIntentsMetadata {
+                    try Self.validateRelativePath(
+                        appIntentsMetadata, field: "\(prefix).appIntentsMetadata", projectRoot: projectRoot)
+                }
+            }
+        }
+    }
+
+    /// A parsed app-extension configuration (`extensions:` entries in `stupid-app.yml`).
+    /// It mirrors the root app model, minus the app icon, and becomes a
+    /// `PlugIns/<product>.appex` nested bundle.
+    public struct ExtensionConfig: Codable, Equatable, Sendable {
+        /// The SwiftPM library product name that represents this extension.
+        public var product: String
+        /// The exact extension bundle identifier, preserved verbatim.
+        public var bundleID: String
+        /// Source Info.plist path relative to the project root.
+        public var infoPath: String
+        /// Optional source entitlements plist path (defaults to `App.entitlements`).
+        public var entitlementsPath: String?
+        /// Optional deployment target; defaults to the root project's target.
+        public var deploymentTarget: String?
+        /// Optional explicit raw resources copied into the appex.
+        public var resources: [String]?
+        /// Optional path to a bundled App Intents metadata directory
+        /// (`WidgetMetadata/Metadata.appintents`), copied to the appex root.
+        public var appIntentsMetadata: String?
+
+        public init(
+            product: String,
+            bundleID: String,
+            infoPath: String,
+            entitlementsPath: String? = nil,
+            deploymentTarget: String? = nil,
+            resources: [String]? = nil,
+            appIntentsMetadata: String? = nil
+        ) {
+            self.product = product
+            self.bundleID = bundleID
+            self.infoPath = infoPath
+            self.entitlementsPath = entitlementsPath
+            self.deploymentTarget = deploymentTarget
+            self.resources = resources
+            self.appIntentsMetadata = appIntentsMetadata
         }
     }
 
@@ -184,6 +263,10 @@ public enum ProjectError: Error, Equatable, Sendable, CustomStringConvertible {
     case pathEscape(String, String)
     case iconNotPng(String)
     case fileExists(String)
+    case invalidExtensionProduct(String, String)
+    case invalidExtensionBundleID(String, String)
+    case duplicateExtensionBundleID(String)
+    case invalidExtensionDeploymentTarget(String, String)
 
     public var description: String {
         switch self {
@@ -211,6 +294,14 @@ public enum ProjectError: Error, Equatable, Sendable, CustomStringConvertible {
             return "iconPath '\(path)' must be a PNG file."
         case let .fileExists(path):
             return "Cannot create project at '\(path)': a file or directory already exists there."
+        case let .invalidExtensionProduct(prefix, name):
+            return "\(prefix): invalid extension product '\(name)'. Use a valid Swift identifier."
+        case let .invalidExtensionBundleID(prefix, id):
+            return "\(prefix): invalid extension bundle identifier '\(id)'. Use reverse-DNS form with no 'XTL-' prefix."
+        case let .duplicateExtensionBundleID(id):
+            return "Duplicate extension bundle identifier '\(id)'. Each extension must have a unique bundle ID."
+        case let .invalidExtensionDeploymentTarget(prefix, target):
+            return "\(prefix): invalid extension deployment target '\(target)'. Use a numeric version such as '17.0'."
         }
     }
 }

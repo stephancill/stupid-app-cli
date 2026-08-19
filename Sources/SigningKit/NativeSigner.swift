@@ -1,6 +1,6 @@
 import Foundation
 
-public struct NativeSigner {
+  public struct NativeSigner {
   public static let engineVersion = "native-shallow-v1"
 
   public struct IdentityInput: Sendable {
@@ -47,17 +47,19 @@ public struct NativeSigner {
     identity: IdentityInput,
     entitlements: [String: Any],
     teamID: String,
-    flags: UInt32 = 0
+    flags: UInt32 = 0,
+    mode: NativeAppClassifier.Mode = .shallow
   ) throws {
     guard !identity.intermediateCertificatePEM.isEmpty, !identity.trustedRootCertificatesPEM.isEmpty
     else {
       throw Error.missingCertificateChain
     }
-    let plan = try NativeAppClassifier.classify(appBundle: appBundle)
+    let plan = try NativeAppClassifier.classify(appBundle: appBundle, mode: mode)
     let infoData = try Data(contentsOf: plan.appBundle.appendingPathComponent("Info.plist"))
     let executable = try Data(contentsOf: plan.executableURL)
     let codeResources = try NativeCodeResources.write(
-      appBundle: plan.appBundle, executableName: plan.executableName)
+      appBundle: plan.appBundle, executableName: plan.executableName,
+      deep: mode == .deep)
     let commonName = try NativeCMS.certificateCommonName(identity.leafCertificatePEM)
     let requirements = try NativeSigningSerialization.requirementSet(
       identifier: plan.bundleIdentifier, leafCommonName: commonName)
@@ -114,7 +116,8 @@ public struct NativeSigner {
       executable: finalExecutable,
       trustedRootCertificatesPEM: identity.trustedRootCertificatesPEM)
     try NativeCodeResources.verify(
-      appBundle: plan.appBundle, executableName: plan.executableName, data: codeResources)
+      appBundle: plan.appBundle, executableName: plan.executableName, data: codeResources,
+      deep: mode == .deep)
     try finalExecutable.write(to: plan.executableURL, options: .atomic)
     try FileManager.default.setAttributes(
       [.posixPermissions: 0o755], ofItemAtPath: plan.executableURL.path)

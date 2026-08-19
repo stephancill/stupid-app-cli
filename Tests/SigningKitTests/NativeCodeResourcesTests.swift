@@ -51,6 +51,62 @@ struct NativeCodeResourcesTests {
     try NativeCodeResources.verify(appBundle: fixture, executableName: "Fixture", data: data)
   }
 
+  @Test("deep signing excludes nested signature internals but seals appex CodeResources")
+  func deepSealExcludesNestedSignatureInternals() throws {
+    let fixture = try makeDeepBundle()
+    defer { try? FileManager.default.removeItem(at: fixture) }
+
+    let data = try NativeCodeResources.write(
+      appBundle: fixture, executableName: "Fixture", deep: true)
+    let plist = try #require(
+      PropertyListSerialization.propertyList(from: data, options: [], format: nil)
+        as? [String: Any])
+    let rules2 = try #require(plist["rules2"] as? [String: Any])
+    // Deep mode must not emit `nested: true` rules, which would conflict with the
+    // containing app sealing the appex bundles per-file.
+    #expect(hasNestedRule(rules2) == false)
+
+    let files2 = try #require(plist["files2"] as? [String: Any])
+    // The appex's own CodeResources resource seal is sealed by the containing app...
+    #expect(files2["PlugIns/TestExt.appex/_CodeSignature/CodeResources"] != nil)
+    // ...but its CodeDirectory/CodeSignature/CodeRequirements are not.
+    #expect(files2["PlugIns/TestExt.appex/_CodeSignature/CodeDirectory"] == nil)
+    #expect(files2["PlugIns/TestExt.appex/_CodeSignature/CodeSignature"] == nil)
+    #expect(files2["PlugIns/TestExt.appex/_CodeSignature/CodeRequirements"] == nil)
+    // Normal appex resource files are still sealed.
+    #expect(files2["PlugIns/TestExt.appex/Info.plist"] != nil)
+
+    try NativeCodeResources.verify(
+      appBundle: fixture, executableName: "Fixture", data: data, deep: true)
+  }
+
+  private func hasNestedRule(_ rules: [String: Any]) -> Bool {
+    rules.values.contains { value in
+      guard let dict = value as? [String: Any] else { return false }
+      return dict["nested"] as? Bool == true
+    }
+  }
+
+  private func makeDeepBundle() throws -> URL {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("native-deep-\(UUID().uuidString).app", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try Data("app-plist".utf8).write(to: root.appendingPathComponent("Info.plist"))
+    try Data("app-exec".utf8).write(to: root.appendingPathComponent("Fixture"))
+
+    let appex = root.appendingPathComponent("PlugIns/TestExt.appex", isDirectory: true)
+    try FileManager.default.createDirectory(at: appex, withIntermediateDirectories: true)
+    try Data("ext-plist".utf8).write(to: appex.appendingPathComponent("Info.plist"))
+    try Data("ext-exec".utf8).write(to: appex.appendingPathComponent("TestExt"))
+    let sigDir = appex.appendingPathComponent("_CodeSignature", isDirectory: true)
+    try FileManager.default.createDirectory(at: sigDir, withIntermediateDirectories: true)
+    try Data("sig-code-directory".utf8).write(to: sigDir.appendingPathComponent("CodeDirectory"))
+    try Data("sig-code-signature".utf8).write(to: sigDir.appendingPathComponent("CodeSignature"))
+    try Data("sig-code-requirements".utf8).write(to: sigDir.appendingPathComponent("CodeRequirements"))
+    try Data("sig-code-resources".utf8).write(to: sigDir.appendingPathComponent("CodeResources"))
+    return root
+  }
+
   private func makeBundle(includeResourcesDirectory: Bool = true) throws -> URL {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent("native-resources-\(UUID().uuidString).app", isDirectory: true)

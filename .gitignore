@@ -1,5 +1,6 @@
 .build/
 .swiftpm/
+.release-dist/
 .venv/
 __pycache__/
 *.pyc

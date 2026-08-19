@@ -8,6 +8,16 @@ public enum NativeAppClassifier {
     public let bundleIdentifier: String
   }
 
+  /// How strictly to treat nested signable bundles.
+  public enum Mode: Equatable, Sendable {
+    /// Reject any nested signable bundle or nested signable directory. Used by the
+    /// single shallow app and by individual extension leaves.
+    case shallow
+    /// Permit nested signable bundles under `PlugIns/`/`Frameworks/` and nested
+    /// signable directories. Used for the containing app in a multi-bundle build.
+    case deep
+  }
+
   public enum Error: Swift.Error, Equatable, Sendable, CustomStringConvertible {
     case malformed(String)
     case unsupported(String)
@@ -21,8 +31,14 @@ public enum NativeAppClassifier {
   }
 
   public static func classify(appBundle: URL) throws -> Plan {
+    try classify(appBundle: appBundle, mode: .shallow)
+  }
+
+  public static func classify(appBundle: URL, mode: Mode) throws -> Plan {
     let root = appBundle.standardizedFileURL
-    guard root.pathExtension == "app" else { throw Error.malformed("input is not an .app bundle") }
+    guard root.pathExtension == "app" || root.pathExtension == "appex" else {
+      throw Error.malformed("input is not an .app/.appex bundle")
+    }
     let infoURL = root.appendingPathComponent("Info.plist")
     guard let infoData = try? Data(contentsOf: infoURL),
       let info = try? PropertyListSerialization.propertyList(
@@ -49,9 +65,11 @@ public enum NativeAppClassifier {
     let unsupportedRoots = [
       "Frameworks", "SharedFrameworks", "PlugIns", "Plug-ins", "XPCServices", "Helpers",
     ]
-    for name in unsupportedRoots
-    where FileManager.default.fileExists(atPath: root.appendingPathComponent(name).path) {
-      throw Error.unsupported("nested signable directory '\(name)' is present")
+    if mode == .shallow {
+      for name in unsupportedRoots
+      where FileManager.default.fileExists(atPath: root.appendingPathComponent(name).path) {
+        throw Error.unsupported("nested signable directory '\(name)' is present")
+      }
     }
     guard
       let enumerator = FileManager.default.enumerator(
@@ -71,11 +89,19 @@ public enum NativeAppClassifier {
       let values = try url.resourceValues(forKeys: [
         .isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey,
       ])
-      if values.isDirectory == true,
-        url.pathExtension == "app" || url.pathExtension == "appex"
-          || url.pathExtension == "framework"
-      {
-        throw Error.unsupported("nested signable bundle '\(relative)' is present")
+      let isNestedBundle =
+        values.isDirectory == true
+        && (url.pathExtension == "app" || url.pathExtension == "appex"
+          || url.pathExtension == "framework")
+      if isNestedBundle {
+        // Nested signable bundles are sealed (not individually hashed) by the outer
+        // app's CodeResources; they must be signed separately as leaves first. In
+        // deep mode we permit them and let their CodeDirectory be sealed.
+        if mode == .shallow {
+          throw Error.unsupported("nested signable bundle '\(relative)' is present")
+        }
+        enumerator.skipDescendants()
+        continue
       }
       if values.isRegularFile == true {
         if ["dylib", "so"].contains(url.pathExtension.lowercased()) {

@@ -318,6 +318,7 @@ public enum Doctor {
         ["Package.swift", config.infoPath]
         + [config.entitlementsPath, config.iconPath].compactMap { $0 }
         + (config.resources ?? [])
+        + extensionPaths(from: config)
       let missing = requiredPaths.filter {
         !FileManager.default.fileExists(atPath: root.appendingPathComponent($0).path)
       }
@@ -326,6 +327,20 @@ public enum Doctor {
       }
       return "stupid-app.yml is valid for \(config.product) (\(config.bundleID))."
     }
+  }
+
+  /// Collects the project file paths contributed by configured extensions
+  /// (info plist, entitlements, resources, and App Intents metadata).
+  private static func extensionPaths(from config: AppConfig) -> [String] {
+    guard let extensions = config.extensions else { return [] }
+    var paths: [String] = []
+    for ext in extensions {
+      paths.append(ext.infoPath)
+      paths += [ext.entitlementsPath].compactMap { $0 }
+      paths += ext.resources ?? []
+      paths += [ext.appIntentsMetadata].compactMap { $0 }
+    }
+    return paths
   }
 
   private enum CompatibilityError: Swift.Error, CustomStringConvertible {
