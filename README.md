@@ -37,6 +37,18 @@ stupid-app --version
 Verify the installation with `stupid-app doctor` once you have imported an iOS SDK
 bundle or Xcode installed.
 
+### Optional: install the agent skill (recommended)
+
+The repository ships an agent-facing usage skill at `skills/stupid-app-cli/`. Symlink it
+into your opencode skills directory so AI agents can consult it whenever they operate the CLI:
+
+```bash
+mkdir -p ~/.config/opencode/skills
+ln -s <path-to-clone>/skills/stupid-app-cli ~/.config/opencode/skills/stupid-app-cli
+```
+
+Without this step the CLI works identically; the skill only adds agent guidance.
+
 ## Supported platforms
 
 - **Linux:** x86_64 Ubuntu 24.04 LTS — the primary deployment host for building,

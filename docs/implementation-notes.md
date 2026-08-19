@@ -3733,3 +3733,21 @@ supported hosts (clean WSL host for the Linux gates; the iPhone on the deploymen
 
 - Update the exact binary filename when a new version is published (the current link
   pins version 0.0.1).
+
+## 2026-08-19 - README Optional Skill Install Step
+
+### Summary
+
+- Added an "Optional: install the agent skill (recommended)" step to the README
+  installation section showing how to symlink `skills/stupid-app-cli/` into
+  `~/.config/opencode/skills`.
+
+### Verification
+
+- Section renders correctly; the link targets the repository's bundled skill path.
+
+### Follow-Up
+
+- Keep the symlink step accurate if the opencode skills directory layout changes.
+- Keep the README informational for the released version; move engineering status into
+  the handover and implementation notes only.
