@@ -3409,3 +3409,55 @@ Gate 5 "broader compatibility/fixture coverage" item.
 - Remaining Gate 5 fixture coverage still to add (Test Strategy): Mach-O inspection,
   IPA path/mode/symlink round-trip packaging tests, generated-project golden fixtures,
   and SDK archive-level (created-on-disk) tests if practical.
+
+## 2026-08-19 - Fix Deterministic CoreDevice TLS Flaky Tests
+
+### Summary
+
+Fixed the long-documented flaky `CoreDeviceTLSConnectionTests` suite (`totalTimeout`
+and `cancellation`), which intermittently failed under full-suite parallel load. Root
+cause was a timing race, not a defect in the TLS exchange itself.
+
+### Root Cause
+
+Under `swift test` parallel load (200 tests), the Swift cooperative executor and
+`DispatchQueue.global` saturate, delaying async work (e.g. `Task.sleep` and
+`withTaskCancellationHandler`'s `onCancel` delivery) by many seconds. Debug
+instrumentation confirmed this:
+
+- The `cancellation` test slept 100 ms then cancelled, expecting `.cancelled`, but ran
+  a 10 s deadline. When cooperative-pool saturation delayed `Task.sleep`'s resume past
+  the 10 s deadline, `task.cancel()` (where `onCancel` fires) landed after the C worker
+  had already returned `.timedOut`. So a genuine cancellation surfaced as a spurious
+  timeout.
+- The `totalTimeout` test asserted a tight `< 10 s` wall-clock bound for a 250 ms C
+  deadline. Under load the blocking C worker's `DispatchQueue.global` dispatch can be
+  delayed ~14 s, inflating the measured duration and flaking the bound.
+
+### Changes
+
+- `cancellation`:
+  - Raised the deadline to 60 s so the total timeout can never race (and pre-empt) the
+    cancel; the correctness claim is now that cancellation is observed once delivered,
+    not that it beats an arbitrary deadline.
+  - The test now waits deterministically until the `StalledTCPServer` has accepted
+    (a new `waitUntilAccepted` signaled via a `DispatchSemaphore` on the accept path)
+    so the client is provably inside the exchange before cancelling, replacing the
+    load-sensitive `Task.sleep(100 ms)`.
+  - Measures cancellation-propagation latency from after `cancel()` with a generous 30 s
+    bound.
+  - `StalledTCPServer` gained `waitUntilAccepted` + a `noAccept` error.
+- `totalTimeout`: removed the tight `< 10 s` wall-clock bound; asserts `.timedOut`
+  (which proves the deadline fired rather than hanging). Kept a generous 120 s safety
+  net solely to catch a hypothetical removed deadline, far above the ~14 s worst-case
+  observed dispatch latency.
+
+### Verification
+
+- `CoreDeviceTLSConnectionTests` passes in isolation in ~0.25 s; cancellation resolves
+  in ~5 ms (down from the prior 100 ms sleep + variable latency).
+- 11 consecutive clean full-suite runs (200 tests, 35 suites) with no failures. The
+  previously reproduced 1-in-2 cancel/timeout flake is no longer reproducible.
+- `swift build` clean. These are test-harness and instrumentation-only changes; no
+  product/production behavior changed (debug `STUPID_APP_DEBUG` instrumentation added
+  to identify the race was removed after diagnosis).

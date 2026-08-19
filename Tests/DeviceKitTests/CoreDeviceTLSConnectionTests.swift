@@ -49,6 +49,11 @@ struct CoreDeviceTLSConnectionTests {
   func totalTimeout() async throws {
     let server = try StalledTCPServer()
     defer { server.stop() }
+    // The worker's 250 ms deadline must fire and surface a .timedOut rather than hanging.
+    // The only wall-clock bound is a very generous one (well beyond the ~14 s worst-case
+    // worker dispatch latency observed under full-suite parallel load) that exists solely
+    // as a safety net: if the deadline were ever removed, the await below would hang
+    // against the stalled peer and fail this bound instead of blocking the suite.
     let clock = ContinuousClock()
     let start = clock.now
     await #expect(throws: CoreDeviceTLSConnection.Error.timedOut) {
@@ -58,17 +63,20 @@ struct CoreDeviceTLSConnectionTests {
         preSharedKey: Data(repeating: 7, count: 32)
       )
     }
-    // The C deadline fires at ~250 ms; the wall-clock bound must tolerate global
-    // queue dispatch delay under full-suite parallel load (isolation ~0.25 s) while
-    // still failing if the deadline were ever removed or raised to the default.
-    #expect(start.duration(to: clock.now) < .seconds(10))
+    #expect(start.duration(to: clock.now) < .seconds(120))
   }
 
   @Test("task cancellation interrupts an in-flight TLS exchange")
   func cancellation() async throws {
     let server = try StalledTCPServer()
     defer { server.stop() }
-    let connection = CoreDeviceTLSConnection(timeoutMilliseconds: 10_000)
+    // Use a very large deadline so the total timeout can never race (and pre-empt) the
+    // cancel. The correctness claim is that cancellation is observed promptly once it is
+    // delivered, NOT that it beats an arbitrarily tight deadline. Under full-suite parallel
+    // load the cooperative executor can delay Task.sleep / onCancel delivery by seconds;
+    // with a 10 s deadline that latency could push the cancel past the deadline and turn a
+    // genuine cancellation into a spurious timeout.
+    let connection = CoreDeviceTLSConnection(timeoutMilliseconds: 60_000)
     let task = Task {
       try await connection.connect(
         host: "127.0.0.1",
@@ -76,14 +84,19 @@ struct CoreDeviceTLSConnectionTests {
         preSharedKey: Data(repeating: 9, count: 32)
       )
     }
-    try await Task.sleep(for: .milliseconds(100))
+    // Wait until the server has accepted so the client is definitely inside the exchange
+    // (connected and blocked in the TLS poll loop) before cancelling.
+    try server.waitUntilAccepted(timeout: TimeInterval(30))
     let clock = ContinuousClock()
     let start = clock.now
     task.cancel()
     await #expect(throws: CoreDeviceTLSConnection.Error.cancelled) {
       try await task.value
     }
-    #expect(start.duration(to: clock.now) < .seconds(2))
+    // Measure from after cancel() so the bound reflects cancellation propagation latency
+    // (onCancel delivery plus the ~50 ms C poll slice). The generous bound tolerates load
+    // while still failing if cancellation were ever ignored.
+    #expect(start.duration(to: clock.now) < .seconds(30))
   }
 
   @Test("connects to an optional physical CoreDevice listener")
@@ -129,6 +142,7 @@ private final class StalledTCPServer: @unchecked Sendable {
   let port: Int
   private let descriptor: Int32
   private let queue = DispatchQueue(label: "stupid-app.tests.stalled-tcp")
+  private let accepted = DispatchSemaphore(value: 0)
 
   init() throws {
     #if os(Linux)
@@ -164,12 +178,21 @@ private final class StalledTCPServer: @unchecked Sendable {
     }
     descriptor = socketDescriptor
     port = Int(UInt16(bigEndian: bound.sin_port))
+    let accepted = self.accepted
     queue.async { [descriptor] in
       let client = accept(descriptor, nil, nil)
       guard client >= 0 else { return }
+      accepted.signal()
       var byte: UInt8 = 0
       while recv(client, &byte, 1, 0) > 0 {}
       close(client)
+    }
+  }
+
+  func waitUntilAccepted(timeout: TimeInterval) throws {
+    let deadline = DispatchTime.now() + .milliseconds(Int(timeout * 1000))
+    guard accepted.wait(timeout: deadline) == .success else {
+      throw ServerError.noAccept
     }
   }
 
@@ -180,5 +203,6 @@ private final class StalledTCPServer: @unchecked Sendable {
 
   enum ServerError: Error {
     case setup
+    case noAccept
   }
 }
