@@ -130,8 +130,8 @@ struct MobileProvisionParserTests {
         #expect(derived["application-identifier"] as? String == "TEAMID1234.net.example.app")
     }
 
-    @Test("unsupported entitlement is rejected loudly")
-    func unsupportedEntitlementRejected() throws {
+    @Test("an entitlement the profile authorizes passes through, even if unlisted")
+    func authorizedCapabilityPassesThrough() throws {
         let profilePlist: [String: Any] = [
             "TeamIdentifier": ["TEAMID1234"],
             "Entitlements": [
@@ -152,18 +152,20 @@ struct MobileProvisionParserTests {
         <plist version="1.0"><dict><key>com.apple.developer.icloud-container-identifiers</key><array><string>iCloud.net.example</string></array></dict></plist>
         """.write(to: entitlementsURL, atomically: true, encoding: .utf8)
 
-        #expect(throws: EntitlementDeriver.Error.self) {
-            try EntitlementDeriver.derive(
-                sourceURL: entitlementsURL,
-                configuration: .distribution,
-                bundleID: "net.example.app",
-                profile: profile,
-                teamID: "TEAMID1234"
-            )
-        }
+        let derived = try EntitlementDeriver.derive(
+            sourceURL: entitlementsURL,
+            configuration: .distribution,
+            bundleID: "net.example.app",
+            profile: profile,
+            teamID: "TEAMID1234"
+        )
+        #expect(
+            (derived["com.apple.developer.icloud-container-identifiers"] as? [String])
+                == ["iCloud.net.example"]
+        )
     }
 
-    @Test("capability entitlements are out of scope and rejected loudly in v1")
+    @Test("capability entitlements fail loudly when the profile does not authorize them")
     func capabilityEntitlementsRejected() throws {
         let profilePlist: [String: Any] = [
             "TeamIdentifier": ["TEAMID1234"],
@@ -176,7 +178,7 @@ struct MobileProvisionParserTests {
         let profile = MobileProvisionParser.ProvisioningProfile(plist: profilePlist)
 
         for capabilityKey in [
-            "application-groups",
+            "com.apple.security.application-groups",
             "keychain-access-groups",
             "com.apple.developer.applesignin",
             "com.apple.developer.associated-domains",

@@ -13,7 +13,6 @@ public enum EntitlementDeriver {
 
     public enum Error: Swift.Error, Equatable, Sendable, CustomStringConvertible {
         case sourceUnreadable(String)
-        case unsupportedEntitlement(String)
         case notAuthorizedByProfile(String)
         case teamMismatch
         case applicationIdentifierMismatch(expected: String, profile: String)
@@ -22,8 +21,6 @@ public enum EntitlementDeriver {
             switch self {
             case let .sourceUnreadable(path):
                 return "Could not read entitlements at '\(path)'."
-            case let .unsupportedEntitlement(key):
-                return "Entitlement '\(key)' is not supported in version 1; remove it from App.entitlements."
             case let .notAuthorizedByProfile(key):
                 return "Entitlement '\(key)' is not authorized by the selected provisioning profile."
             case .teamMismatch:
@@ -34,22 +31,13 @@ public enum EntitlementDeriver {
         }
     }
 
-    /// The officially supported entitlement set. These are the bare, simple
-    /// entitlements the signing pipeline derives from the bundle ID and profile with
-    /// minimal capability handling, plus application groups (which are reconciled on
-    /// array-subset semantics against the profile and gated on the profile actually
-    /// authorizing the requested groups). Everything else (keychain sharing, push,
-    /// sign in, associated domains, etc.) is rejected loudly until the corresponding
-    /// capability-association support is implemented.
-    public static let supportedKeys: Set<String> = [
-        "get-task-allow",
-        "application-identifier",
-        "com.apple.developer.team-identifier",
-        "com.apple.security.application-groups",
-    ]
-
     /// Reads the source entitlements plist, forces the `get-task-allow` value for the
     /// configuration, and reconciles the derived entitlements with the profile.
+    ///
+    /// Every source entitlement passes through: the profile's authorized set is the
+    /// authoritative gate. `get-task-allow`, `application-identifier`, and the team
+    /// identifier are derived, and any entitlement the profile does not authorize fails
+    /// loudly. This keeps the supported-capability set open without per-capability code.
     /// - Returns: the final entitlement dictionary.
     public static func derive(
         sourceURL: URL,
@@ -63,11 +51,6 @@ public enum EntitlementDeriver {
         }
         guard let requested = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any] else {
             throw Error.sourceUnreadable("\(sourceURL.path) is not a plist dictionary")
-        }
-
-        // Reject unsupported entitlements before doing anything else.
-        for key in requested.keys where !supportedKeys.contains(key) {
-            throw Error.unsupportedEntitlement(key)
         }
 
         var derived = requested

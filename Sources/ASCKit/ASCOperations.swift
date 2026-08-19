@@ -113,11 +113,6 @@ public struct ASCOperations: Sendable {
         return envelope.data.compactMap { $0.attributes.capabilityType }
     }
 
-    /// Enables the App Groups capability on a bundle-ID resource (idempotent).
-    public func enableAppGroups(bundleIDResourceID: String) throws {
-        try enableBundleIDCapability(bundleIDResourceID: bundleIDResourceID, capabilityType: "APP_GROUPS")
-    }
-
     // MARK: - Devices
 
     public struct Device: Sendable, Equatable {

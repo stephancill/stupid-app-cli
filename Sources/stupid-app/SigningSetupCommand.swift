@@ -290,21 +290,72 @@ struct SigningSetupCommand: AsyncParsableCommand {
         print("Development signing setup complete.")
     }
 
-    /// Enables the App Groups capability on a bundle ID when the current project
-    /// declares `com.apple.security.application-groups`. Best-effort: a failed enable
-    /// is reported but the authoritative gate is the profile-authorization check at
-    /// signing time (the concrete group association is a manual Developer Portal step).
+    /// Enables the capabilities a project requests on a bundle ID, derived from the
+    /// entitlements of the app and every configured extension. Best-effort: a failed
+    /// enable is reported but the authoritative gate is the profile-authorization check
+    /// at signing time (concrete resource associations, e.g. an App Group identity,
+    /// remain manual Developer Portal steps).
     private func enableRequestedCapabilities(
         operations: ASCOperations, bundleIDResourceID: String, bundleID: String
     ) throws {
-        guard projectRequestsAppGroups() else { return }
-        do {
-            try operations.enableAppGroups(bundleIDResourceID: bundleIDResourceID)
-            print("Enabled App Groups capability on \(bundleID)")
-        } catch {
-            print(
-                "WARNING: could not enable App Groups capability on \(bundleID): \(error). The app-group association remains a manual Developer Portal step.")
+        for capability in projectRequestedCapabilities() {
+            do {
+                try operations.enableBundleIDCapability(
+                    bundleIDResourceID: bundleIDResourceID, capabilityType: capability.type)
+                print("Enabled \(capability.displayName) capability on \(bundleID)")
+            } catch {
+                print(
+                    "WARNING: could not enable \(capability.displayName) capability on \(bundleID): \(error). The concrete association remains a manual Developer Portal step.")
+            }
         }
+    }
+
+    /// The capabilities the project requests, derived from the source entitlements of
+    /// the app and every configured extension. An entitlement set requests a capability
+    /// when any bundle declares the corresponding source entitlement key.
+    private func projectRequestedCapabilities() -> [SigningCapability] {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: "stupid-app.yml")),
+            let config = try? AppConfig.decode(data)
+        else { return [] }
+        var entitlementsPaths = [config.entitlementsPath].compactMap { $0 }
+        if let extensions = config.extensions {
+            entitlementsPaths += extensions.compactMap { $0.entitlementsPath }
+        }
+        var requested: [SigningCapability] = []
+        for path in entitlementsPaths {
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+                let plist = try? PropertyListSerialization.propertyList(from: data, format: nil)
+                    as? [String: Any]
+            else { continue }
+            for capability in SigningCapability.all where plist[capability.entitlementKey] != nil {
+                if !requested.contains(capability) {
+                    requested.append(capability)
+                }
+            }
+        }
+        return requested
+    }
+
+    /// A mapping from a source entitlement key to the App Store Connect capability that
+    /// must be enabled on a bundle ID so the downloaded profile authorizes it.
+    private struct SigningCapability: Equatable {
+        let entitlementKey: String
+        let type: String
+        let displayName: String
+
+        static let appGroups = SigningCapability(
+            entitlementKey: "com.apple.security.application-groups",
+            type: "APP_GROUPS",
+            displayName: "App Groups"
+        )
+        static let autoFillCredentialProvider = SigningCapability(
+            entitlementKey: "com.apple.developer.authentication-services" +
+                ".autofill-credential-provider",
+            type: "AUTOFILL_CREDENTIAL_PROVIDER",
+            displayName: "AutoFill Credential Provider"
+        )
+
+        static let all: [SigningCapability] = [.appGroups, .autoFillCredentialProvider]
     }
 
     private func decodeCertificate(_ base64: String) throws -> String {
@@ -339,29 +390,6 @@ struct SigningSetupCommand: AsyncParsableCommand {
             ids += extensions.map(\.bundleID)
         }
         return ids
-    }
-
-    /// True when the current project (app or any extension) requests
-    /// `com.apple.security.application-groups`, so the App Groups capability should be
-    /// enabled on every bundle in the project.
-    private func projectRequestsAppGroups() -> Bool {
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: "stupid-app.yml")),
-            let config = try? AppConfig.decode(data)
-        else { return false }
-        var entitlementsPaths = [config.entitlementsPath].compactMap { $0 }
-        if let extensions = config.extensions {
-            entitlementsPaths += extensions.compactMap { $0.entitlementsPath }
-        }
-        for path in entitlementsPaths {
-            guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-                let plist = try? PropertyListSerialization.propertyList(from: data, format: nil)
-                    as? [String: Any]
-            else { continue }
-            if (plist["com.apple.security.application-groups"] as? [Any])?.isEmpty == false {
-                return true
-            }
-        }
-        return false
     }
 
     private func optionalASCContext() throws -> ASCContext? {

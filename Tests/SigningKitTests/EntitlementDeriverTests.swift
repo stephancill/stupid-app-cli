@@ -74,4 +74,68 @@ struct EntitlementDeriverTests {
       )
     }
   }
+
+  @Test("autofill credential provider entitlement is supported when profiled")
+  func autofillCredentialProviderSupported() throws {
+    let tmps = FileManager.default.temporaryDirectory
+      .appendingPathComponent("deriver-autofill-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: tmps, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tmps) }
+
+    let source = tmps.appendingPathComponent("Autofill.entitlements")
+    try writePlist([
+      "com.apple.developer.authentication-services.autofill-credential-provider": true,
+    ], to: source)
+
+    let profile = MobileProvisionParser.ProvisioningProfile(plist: [
+      "Entitlements": [
+        "com.apple.developer.authentication-services.autofill-credential-provider": true,
+        "application-identifier": "TEAM123.net.stupidtech.autofill",
+        "com.apple.developer.team-identifier": "TEAM123",
+        "get-task-allow": false,
+      ]
+    ])
+
+    let derived = try EntitlementDeriver.derive(
+      sourceURL: source,
+      configuration: .distribution,
+      bundleID: "net.stupidtech.autofill",
+      profile: profile,
+      teamID: "TEAM123"
+    )
+    #expect(derived["com.apple.developer.authentication-services.autofill-credential-provider"] as? Bool == true)
+    #expect(derived["get-task-allow"] as? Bool == false)
+  }
+
+  @Test("autofill credential provider fails loudly when the profile does not authorize it")
+  func autofillCredentialProviderNotAuthorized() throws {
+    let tmps = FileManager.default.temporaryDirectory
+      .appendingPathComponent("deriver-autofill-missing-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: tmps, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tmps) }
+
+    let source = tmps.appendingPathComponent("Autofill.entitlements")
+    try writePlist([
+      "com.apple.developer.authentication-services.autofill-credential-provider": true,
+    ], to: source)
+
+    let profile = MobileProvisionParser.ProvisioningProfile(plist: [
+      "Entitlements": [
+        "application-identifier": "TEAM123.net.stupidtech.autofill",
+        "com.apple.developer.team-identifier": "TEAM123",
+        "get-task-allow": false,
+      ]
+    ])
+
+    #expect(throws: EntitlementDeriver.Error.notAuthorizedByProfile(
+      "com.apple.developer.authentication-services.autofill-credential-provider")) {
+      _ = try EntitlementDeriver.derive(
+        sourceURL: source,
+        configuration: .distribution,
+        bundleID: "net.stupidtech.autofill",
+        profile: profile,
+        teamID: "TEAM123"
+      )
+    }
+  }
 }
