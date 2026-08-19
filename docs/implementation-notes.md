@@ -2938,8 +2938,9 @@ match.
   TestFlight.
 - The App Store record, distribution identity, and App Store profile already existed as
   team resources from the Linux Gate 1/2 proofs. Apple's distribution-certificate limit
-  blocks minting a new one, so the existing identity (`<distribution-identity-id>`, active to
-  2027-08-12) and the `<signing-proof-bundle-id> AppStore` profile were imported
+  blocks minting a new one, so the existing distribution identity (team identifier
+  `<team-identifier>`, active to 2027-08-12) and the `<signing-proof-bundle-id> AppStore`
+  profile were imported
   onto this Mac through the CLI's standard `signing setup --import-*` path rather than
   any non-product shortcut.
 
@@ -2950,7 +2951,7 @@ match.
   bumped `CFBundleVersion` from 9 (the last WSL upload) to 10.
 - `signing setup --kind distribution --bundle-id <signing-proof-bundle-id>
   --import-key --import-cert --cert-id` reused the ASC profile
-  `<app-store-connect-certificate-id>` (keyed to the imported certificate) and stored it owner-only.
+  `<certificate-resource-id>` (keyed to the imported certificate) and stored it owner-only.
 - `release archive` built in place against Xcode's SDK (no artifact bundle), signed once
   with the native engine (timestamps disabled), and packaged
   `AcceptanceApp.ipa` (SHA-256 `723b4724231726d54004cf906cfe5b5c710d58cf0b1562eaa5f414108a0282d1`).
