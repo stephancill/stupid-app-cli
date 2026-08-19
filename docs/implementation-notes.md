@@ -3496,3 +3496,36 @@ inspection and IPA packaging round-trip / symlink safety.
 - Remaining Test Strategy coverage (deferred): generated-project golden fixtures and
   on-disk SDK archive round-trip tests. These are lower value / higher environment
   coupling than the security (SafeArchive), Mach-O, and IPA coverage now landed.
+
+## 2026-08-19 - Gate 5 Fixture Coverage: Generated-Project Golden Tests
+
+### Summary
+
+Added a golden-fixture test suite for the project generator, completing the local
+hermetic portion of the resolved Gate 5 fixture-coverage item (the remaining Test
+Strategy items are lower-value or environment-coupled).
+
+### Changes
+
+- `Tests/ProjectCoreTests/ProjectGeneratorTests.swift` (6 tests): scaffolds a real
+  project in a temp directory and asserts the exact generated file tree
+  (`Package.swift`, `stupid-app.yml`, `Info.plist`, `App.entitlements`,
+  `Sources/<Module>/<Module>.swift`, `ContentView.swift`, and copied `Resources/AppIcon.png`)
+  plus the resulting `AppConfig`. Also verifies:
+  - module-name derivation (`Foo-Bar` -> `Foo_Bar`),
+  - the generated `stupid-app.yml` round-trips through `AppConfig`,
+  - invalid product name, existing destination, and non-PNG icon rejection.
+
+### Verification
+
+- `swift test` passes 213 tests across 38 suites (6 new). Fully hermetic; no Apple
+  tooling or external services. `git diff --check` passes.
+
+### Follow-Up
+
+The local, hermetic fixture-coverage items from the Test Strategy are now landed:
+SDK importer path-safety (SafeArchive), Mach-O inspection, IPA packaging, and
+generated-project golden fixtures. Remaining Gate 5 items are operational and require
+external environments: re-exporting the SDK under `stupid-app-ios`, `signing setup`
+fresh-host acceptance, and the complete acceptance run through stable commands on clean
+supported hosts (clean WSL host for the Linux gates; the iPhone on the deployment host).
