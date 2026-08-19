@@ -3461,3 +3461,38 @@ instrumentation confirmed this:
 - `swift build` clean. These are test-harness and instrumentation-only changes; no
   product/production behavior changed (debug `STUPID_APP_DEBUG` instrumentation added
   to identify the race was removed after diagnosis).
+
+## 2026-08-19 - Gate 5 Fixture Coverage: Mach-O And IPA Packaging
+
+### Summary
+
+Continued the resolved Gate 5 "broader compatibility/fixture coverage" item with two
+more hermetic test suites matching the handover Test Strategy: Mach-O load-command
+inspection and IPA packaging round-trip / symlink safety.
+
+### Changes
+
+- `Tests/BuildCoreTests/MachOInspectorTests.swift` (4 tests): builds a synthetic thin
+  ARM64 `MH_EXECUTE` with an `LC_BUILD_VERSION` and verifies `MachOInspector` reads
+  architecture (`arm64`), platform (`ios`), minimum OS (`17.0.0`), and SDK (`26.1.0`)
+  without Apple tooling. Also rejects ELF magic, short payloads, and non-ARM64 CPU
+  types. Full synthetic-Mach-O construction, no fixture files on disk.
+- `Tests/SigningKitTests/IPAPackerTests.swift` (3 tests): builds a real small `.app` in
+  a temp directory, packages it through `IPAPacker.pack`, and confirms the IPA exists
+  with the expected name (re-read verification runs inside `pack`). Verifies an app
+  whose bundle contains an absolute escaping symlink is rejected, and a missing bundle
+  fails loudly (`appBundleMissing`). The packaging tests are gated on `zip`/`unzip`
+  availability via Swift Testing's `.enabled(if:)` so Linux hosts without the tools skip
+  them rather than fail, keeping the suite portable.
+
+### Verification
+
+- `swift test` passes 207 tests across 37 suites (4 new Mach-O + 3 new IPA tests).
+- `swift build` and previous documentation changes pass. The two suites are independent
+  of the earlier deterministic CoreDevice TLS flake fix.
+
+### Follow-Up
+
+- Remaining Test Strategy coverage (deferred): generated-project golden fixtures and
+  on-disk SDK archive round-trip tests. These are lower value / higher environment
+  coupling than the security (SafeArchive), Mach-O, and IPA coverage now landed.
