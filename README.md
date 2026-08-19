@@ -7,6 +7,36 @@ applications without requiring Xcode or macOS at runtime.
 them over USB or the network onto a physical iPhone, and uploads distribution IPAs to
 App Store Connect through the public API. It runs on macOS and Linux.
 
+## Installation
+
+### macOS (Apple Silicon)
+
+Download the `stupid-app-<version>-macos-arm64` binary from the
+[releases page](https://github.com/stephancill/stupid-app-cli/releases) and put it on
+your `PATH`:
+
+```bash
+curl -fsSL -o /usr/local/bin/stupid-app \
+  https://github.com/stephancill/stupid-app-cli/releases/latest/download/stupid-app-0.0.1-macos-arm64
+chmod +x /usr/local/bin/stupid-app
+stupid-app --version
+```
+
+### Linux
+
+Build from source with a Swift 6.2 toolchain (x86_64 Ubuntu 24.04 LTS):
+
+```bash
+git clone https://github.com/stephancill/stupid-app-cli.git
+cd stupid-app-cli
+swift build -c release
+sudo install -m 755 .build/release/stupid-app /usr/local/bin/stupid-app
+stupid-app --version
+```
+
+Verify the installation with `stupid-app doctor` once you have imported an iOS SDK
+bundle or Xcode installed.
+
 ## Supported platforms
 
 - **Linux:** x86_64 Ubuntu 24.04 LTS — the primary deployment host for building,

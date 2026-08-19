@@ -3715,3 +3715,21 @@ supported hosts (clean WSL host for the Linux gates; the iPhone on the deploymen
 
 - Keep the README informational for the released version; move engineering status into
   the handover and implementation notes only.
+
+## 2026-08-19 - README Installation Instructions
+
+### Summary
+
+- Added an "Installation" section to `README.md` covering macOS (download the
+  platform binary from the GitHub releases page and place it on `PATH`) and Linux
+  (build from source with a Swift 6.2 toolchain), closing with a `doctor` verification
+  hint.
+
+### Verification
+
+- Section renders correctly with relative and absolute link to the release binary.
+
+### Follow-Up
+
+- Update the exact binary filename when a new version is published (the current link
+  pins version 0.0.1).
