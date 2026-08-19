@@ -118,6 +118,33 @@ Do not include timeline estimates in planning documents. Use ordered dependencie
 - Do not claim Linux compatibility based only on a macOS build.
 - Run proof gates on clean supported hosts, not only a developer machine with undeclared state.
 
+## Release Process
+
+Publishing a new `stupid-app` version:
+
+1. Bump `StupidApp.productVersion` in `Sources/stupid-app/StupidApp.swift`.
+2. Build the release binary: `swift build -c release`.
+3. Tag and push: `git tag -a v<version> -m "stupid-app <version>" && git push origin v<version>`.
+4. Create the GitHub release with **versionless asset names** so the install
+   instructions in `README.md` never pin a version and require an update. Build the
+   binary to a filename without the version, e.g. `stupid-app-macos-arm64`, and attach
+   it under that exact name:
+
+   ```bash
+   gh release create v<version> /tmp/stupid-app-macos-arm64 \
+     --title "stupid-app v<version> for Apple Silicon macOS" --notes "..."
+   ```
+
+   The README install command uses
+   `releases/latest/download/stupid-app-macos-arm64`; because the asset name carries no
+   version, the `latest` download keeps working across releases without editing the
+   README. Keep the asset name stable (`stupid-app-macos-arm64`) on every release.
+5. Update `docs/implementation-notes.md` with the release summary.
+
+The bundled CLI skill (`skills/stupid-app-cli/`) ships with the CLI binary
+(`skills/stupid-app-cli/` documents the command surface via `references/commands.md`);
+verify any surface change with the skill-creator validation before releasing.
+
 ## External References
 
 The engineering handover lists the currently relevant xtool, App Store release, App Store Connect, `apple-codesign`, and `pymobiledevice3` references. Consult those sources when changing corresponding behavior, but verify current source and API schemas because external implementations evolve.

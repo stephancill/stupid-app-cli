@@ -11,13 +11,13 @@ App Store Connect through the public API. It runs on macOS and Linux.
 
 ### macOS (Apple Silicon)
 
-Download the `stupid-app-<version>-macos-arm64` binary from the
+Download the `stupid-app-macos-arm64` binary from the
 [releases page](https://github.com/stephancill/stupid-app-cli/releases) and put it on
-your `PATH`. The pinned latest version is `0.0.4`:
+your `PATH`:
 
 ```bash
 curl -fsSL -o /usr/local/bin/stupid-app \
-  https://github.com/stephancill/stupid-app-cli/releases/latest/download/stupid-app-0.0.4-macos-arm64
+  https://github.com/stephancill/stupid-app-cli/releases/latest/download/stupid-app-macos-arm64
 chmod +x /usr/local/bin/stupid-app
 stupid-app --version
 ```

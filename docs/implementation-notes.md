@@ -4029,3 +4029,23 @@ close those three workflow gaps.
 
 - Re-run the migration dogfood after the next CLI surface change to keep the skill
   honest; keep the SKILL `commands.md` in sync with the release that bundles it.
+
+## 2026-08-19 - Versionless Release Asset Names
+
+### Summary
+
+- The GitHub release workflow now attaches versionless asset names so install
+  instructions never pin a version. README's macOS install uses
+  `releases/latest/download/stupid-app-macos-arm64`, which redirects to the latest
+  release's asset regardless of version, so future releases don't require a README edit.
+- `AGENTS.md` gained a `Release Process` section documenting: bump
+  `StupidApp.productVersion`, `swift build -c release`, tag and push, then `gh release
+  create` with the stable versionless asset name, and an implementation-notes update.
+- The existing `v0.0.4` release was re-uploaded under the versionless name (the
+  versioned asset was removed), and the pinned `0.0.4` README URL replaced with the
+  versionless one.
+
+### Verification
+
+- `releases/latest/download/stupid-app-macos-arm64` returns HTTP 200 and the expected
+  binary size (14.9 MB).
