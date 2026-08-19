@@ -284,6 +284,34 @@ struct BuildUploadTests {
         #expect(!raw.contains("secret"))
     }
 
+    // MARK: - Latest build number
+
+    @Test("decodes the newest uploaded build number")
+    func decodeLatestBuildNumber() throws {
+        let json = """
+        {
+          "data": [
+            { "id": "build-5", "attributes": { "version": "104" } }
+          ]
+        }
+        """
+        let number = try ASCOperations.decodeLatestBuildNumber(Data(json.utf8))
+        #expect(number == "104")
+    }
+
+    @Test("returns nil when no builds exist")
+    func decodeLatestBuildNumberEmpty() throws {
+        let number = try ASCOperations.decodeLatestBuildNumber(Data("{\"data\": []}".utf8))
+        #expect(number == nil)
+    }
+
+    @Test("rejects a malformed latest-build response")
+    func decodeLatestBuildNumberMalformed() {
+        #expect(throws: ASCError.self) {
+            _ = try ASCOperations.decodeLatestBuildNumber(Data("not json".utf8))
+        }
+    }
+
     // MARK: - Beta readiness state transitions
 
     @Test("beta state reaches readiness at READY_FOR_BETA_TESTING")

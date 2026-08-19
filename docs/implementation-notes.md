@@ -3306,3 +3306,67 @@ toolset-in-place iOS link on this Mac.
 - **Resolved 2026-08-19:** Stupid Social 1.0.0 (99) was built with the fixed writer and
   uploaded to TestFlight (`processing=VALID`, `internal=IN_BETA_TESTING`), correcting the
   icon in the field.
+
+## 2026-08-19 - Gate 5 Productization: Support Decisions And `release new-build`
+
+### Summary
+
+Resumed Gate 5 productization. First clarified four open handover decisions with the
+project owner (see the question-tool record in `docs/implementation-notes.md`/handover),
+then implemented the concrete release-workflow deliverable those decisions implied.
+
+### Resolved Decisions
+
+1. **Supported host:** x86_64 Ubuntu 24.04 LTS is the official production (non-macOS)
+   deployment host.
+2. **WSL:** the isolated `iosdev-ubuntu` WSL 2 environment is a proof/reference
+   environment, not a supported production target.
+3. **Release layout:** keep `.release/` for the IPA and `release-manifest.json`; the
+   next build number is provided by a new helper instead of restructuring output.
+4. **v1 entitlement scope:** the bare set (`application-identifier`,
+   `com.apple.developer.team-identifier`, `get-task-allow`) is the supported v1 set;
+   other capabilities are out of scope and must fail loudly.
+
+### Changes
+
+- **New `stupid-app release new-build`** (`Sources/stupid-app/ReleaseNewBuildCommand.swift`):
+  queries App Store Connect for the most recently uploaded build number for the app
+  (or takes an explicit `--build-number` base) and prints `n+1`, mirroring the retired
+  release script's `release_build_number()`. The bundle ID is read from `stupid-app.yml`
+  or overridden with `--bundle-id`. Registered under `release`; help/doc updated.
+- **`ASCKit`** (`Sources/ASCKit/BuildUpload.swift`): added
+  `ASCOperations.latestBuildNumber(appID:)` (`builds?filter[app]&sort=-uploadedDate&limit=1`)
+  plus a static `decodeLatestBuildNumber` for hermetic tests.
+- **v1 entitlement tightening** (`Sources/SigningKit/EntitlementDeriver.swift`): narrowed
+  `supportedKeys` to the bare set. `application-groups`, `keychain-access-groups`,
+  `applesignin`, `associated-domains`, and other capability-bearing keys now fail loudly
+  at derivation instead of being accepted and profile-reconciled, matching the resolved
+  v1 scope and the "keep unsupported types explicit, fail loudly" invariant.
+- **Docs**: added README `Supported platforms` + `Version 1 entitlement scope` sections
+  and the `new-build` command line; updated the engineering handover's command surface,
+  Open Decisions (record resolutions), and Provisioning/Entitlements (v1 scope).
+
+### Verification
+
+- `swift build` succeeds (only the pre-existing Homebrew OpenSSL deployment-target linker
+  warnings). `swift test` passes 182 tests with the `CoreDeviceTLSConnectionTests` suite
+  skipped (its cancellation/total-timeout timing assertion is the documented pre-existing
+  flake that passes in isolation; unrelated to this change).
+- New hermetic tests pass: 3 in `ASCKitTests/BuildUploadTests` (latest-build decode,
+  empty list, malformed response) and 1 in `SigningKitTests/MobileProvisionParserTests`
+  (capability keys rejected loudly in v1).
+- `stupid-app release --help` lists `new-build`; running it without a config or
+  `--bundle-id` fails loudly with the actionable `configMissing` error.
+- `git diff --check` passes.
+
+### Notes And Follow-Up
+
+- `swift format lint --strict` was run on the changed files; the installed formatter's
+  default 2-space official style disagrees with the repo's consistent 4-space style and
+  there is no `.swift-format` config, so it reports pre-existing errors across nearly
+  every source and test file regardless of this change. Changes were kept style-consistent
+  with the surrounding 4-space code rather than reformatting the whole (unrelated)
+  codebase.
+- Remaining Gate 5 work is unchanged: broader compatibility/fixture coverage, re-exporting
+  the SDK under the `stupid-app-ios` artifact ID, `signing setup` fresh-host acceptance,
+  and the complete acceptance run through stable commands on clean supported hosts.

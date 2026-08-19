@@ -73,7 +73,6 @@ struct MobileProvisionParserTests {
                 "application-identifier": "TEAMID1234.net.example.app",
                 "com.apple.developer.team-identifier": "TEAMID1234",
                 "get-task-allow": false,
-                "application-groups": ["group.net.example"],
             ] as [String: Any],
         ]
         let profile = MobileProvisionParser.ProvisioningProfile(plist: profilePlist)
@@ -84,7 +83,7 @@ struct MobileProvisionParserTests {
         try """
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-        <plist version="1.0"><dict><key>application-groups</key><array><string>group.net.example</string></array></dict></plist>
+        <plist version="1.0"><dict/></plist>
         """.write(to: entitlementsURL, atomically: true, encoding: .utf8)
 
         let derived = try EntitlementDeriver.derive(
@@ -161,6 +160,48 @@ struct MobileProvisionParserTests {
                 profile: profile,
                 teamID: "TEAMID1234"
             )
+        }
+    }
+
+    @Test("capability entitlements are out of scope and rejected loudly in v1")
+    func capabilityEntitlementsRejected() throws {
+        let profilePlist: [String: Any] = [
+            "TeamIdentifier": ["TEAMID1234"],
+            "Entitlements": [
+                "application-identifier": "TEAMID1234.net.example.app",
+                "com.apple.developer.team-identifier": "TEAMID1234",
+                "get-task-allow": false,
+            ] as [String: Any],
+        ]
+        let profile = MobileProvisionParser.ProvisioningProfile(plist: profilePlist)
+
+        for capabilityKey in [
+            "application-groups",
+            "keychain-access-groups",
+            "com.apple.developer.applesignin",
+            "com.apple.developer.associated-domains",
+            "aps-environment",
+            "com.apple.developer.icloud-container-identifiers",
+        ] {
+            let entitlementsURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("stupid-app-ent-test-\(UUID().uuidString).plist")
+            defer { try? FileManager.default.removeItem(at: entitlementsURL) }
+            let plist = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+            <plist version="1.0"><dict><key>\(capabilityKey)</key><array><string>example</string></array></dict></plist>
+            """
+            try plist.write(to: entitlementsURL, atomically: true, encoding: .utf8)
+
+            #expect(throws: EntitlementDeriver.Error.self) {
+                try EntitlementDeriver.derive(
+                    sourceURL: entitlementsURL,
+                    configuration: .distribution,
+                    bundleID: "net.example.app",
+                    profile: profile,
+                    teamID: "TEAMID1234"
+                )
+            }
         }
     }
 }

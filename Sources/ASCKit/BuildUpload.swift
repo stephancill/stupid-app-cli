@@ -274,6 +274,37 @@ public extension ASCOperations {
         return nil
     }
 
+    /// Returns the build number of the most recently uploaded build for an app, or nil
+    /// when the app has no builds. Used by `release new-build` to suggest the next one.
+    func latestBuildNumber(appID: String, platform: String = "IOS") throws -> String? {
+        let response = try client.request(
+            method: .get,
+            path: "builds",
+            query: [
+                URLQueryItem(name: "filter[app]", value: appID),
+                URLQueryItem(name: "filter[platform]", value: platform),
+                URLQueryItem(name: "sort", value: "-uploadedDate"),
+                URLQueryItem(name: "limit", value: "1"),
+            ]
+        )
+        return try Self.decodeLatestBuildNumber(response.data)
+    }
+
+    /// Extracts the newest uploaded build number from a `builds` list response.
+    static func decodeLatestBuildNumber(_ data: Data) throws -> String? {
+        struct Envelope: Decodable {
+            struct Data: Decodable {
+                struct Attributes: Decodable { let version: String? }
+                let attributes: Attributes
+            }
+            let data: [Data]
+        }
+        guard let envelope = try? JSONDecoder().decode(Envelope.self, from: data) else {
+            throw ASCError.malformedPayload("latest build lookup")
+        }
+        return envelope.data.first?.attributes.version
+    }
+
     /// Fetches a single build, used to poll processing state.
     func getBuild(id: String) throws -> ASCBuild {
         let response = try client.request(method: .get, path: "builds/\(id)")

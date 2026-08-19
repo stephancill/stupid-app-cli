@@ -25,6 +25,28 @@ single `stupid-app signing setup` command bootstraps all signing credentials fro
 Store Connect API key and can reuse the identities and provisioning profiles Xcode already
 manages on macOS (`--from-xcode`).
 
+## Supported platforms
+
+- **Production Linux host (v1):** x86_64 Ubuntu 24.04 LTS. This is the officially
+  supported non-macOS deployment host.
+- **Reference Linux environment:** the isolated `iosdev-ubuntu` WSL 2 distribution is a
+  proof/reference environment, not a supported production target. The `usbipd-win` USB
+  pass-through and the qualified MTU-patched `usbmuxd` are specific to that WSL setup and
+  are documented only for reproduction (see `docs/clean-host-setup.md`).
+- **macOS (additive):** Apple Silicon macOS 14+, in either Xcode-present (in-place SDK)
+  or Xcode-absent (imported bundle) mode. See `docs/macos-host-support-scope.md`.
+
+## Version 1 entitlement scope
+
+Version 1 officially supports the bare, self-provisionable entitlement set that the
+signing pipeline derives and reconciles with the selected profile: `application-identifier`,
+`com.apple.developer.team-identifier`, and `get-task-allow` (true for development, false
+for distribution). Capabilities such as app groups, keychain sharing, push, and other
+geographically provisioned entitlements are out of scope for version 1 and must fail
+loudly if requested until the capability-association support in
+`docs/engineering-handover.md` is implemented.
+
+
 ## Package layout
 
 - `Sources/SDKCore` — cross-platform primitives: SHA-256 wrapper (`swift-crypto`),
@@ -75,6 +97,7 @@ stupid-app run --simulator [--udid] Build, sign, install, and launch in a simula
 stupid-app simulators               List simulator runtimes and devices
 stupid-app release archive          Build, sign (once, no timestamps), package the IPA
 stupid-app release upload --wait    Upload the IPA and wait for internal TestFlight
+stupid-app release new-build        Suggest the next build number from the latest uploaded build
 stupid-app release status           Report the last release's recorded or live state
 ```
 

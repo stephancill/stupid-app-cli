@@ -466,13 +466,17 @@ stupid-app run --usb [--udid <udid>]
 stupid-app run --network --udid <udid>
 stupid-app release archive
 stupid-app release upload [--wait]
+stupid-app release new-build
 stupid-app release status
 ```
 
 Implemented so far: `new`, `sdk export`, `sdk import`, `build`, `credentials add`,
 `signing setup --kind distribution|development`, `devices`, `run --usb`,
 `device pair --usb`, `run --network`, `run --simulator`, `simulators`,
-`release archive`, `release upload --wait`, `release status`, and `doctor`.
+`release archive`, `release upload --wait`, `release new-build`, `release status`, and
+`doctor`. `release new-build` queries App Store Connect for the most recently uploaded
+build number (or takes an explicit `--build-number` base) and suggests the next integer,
+mirroring the retired release script's `release_build_number()`.
 
 The command surface is provisional until the proof gates complete. Keep build, signing, install, launch, upload, and status as separable operations even if convenience commands compose them.
 
@@ -637,6 +641,13 @@ Before signing, validate at least:
 - App Store profiles have no device list.
 
 The public API can enable several capabilities but cannot associate every concrete resource, including App Group identifiers. Complex capabilities are therefore deferred from the initial application fixture. When added, any required Developer portal web step must be explicit and profile output must be verified afterward.
+
+**Version 1 entitlement scope (resolved):** the officially supported v1 set is the bare
+set the pipeline derives and reconciles — `application-identifier`,
+`com.apple.developer.team-identifier`, and `get-task-allow` (true for development, false
+for distribution). Other capabilities (app groups, keychain sharing, push, etc.) are out
+of scope for v1 and must fail loudly at planning/derivation until the capability-association
+support described above is implemented.
 
 ### Signing Engine
 
@@ -1699,15 +1710,21 @@ Required recurring integration coverage:
 
 ## Open Decisions
 
-- First officially supported Linux architecture and distribution (x86_64 Ubuntu 24.04 is the validated proof pair).
+- First officially supported Linux architecture and distribution (x86_64 Ubuntu 24.04 is the validated proof pair). **Resolved (2026-08-19):** x86_64 Ubuntu 24.04 LTS is the official production Linux host; the isolated `iosdev-ubuntu` WSL 2 environment is a proof/reference environment, not a supported production target.
 - How signing-trust updates are distributed and requalified before WWDR G3 expires or
   Apple moves supported identities to another intermediate.
 - Whether owner-only plaintext credential storage remains acceptable beyond technical
   validation or is replaced by an OS keyring/HSM-backed design.
-- Release directory layout and retention policy.
+- Release directory layout and retention policy. **Resolved (2026-08-19):** keep
+  `.release/` for the IPA and `release-manifest.json`; retention is documented and the
+  next build number is provided by `release new-build`.
 - Future local device gateway protocol and trust model.
-- Minimum entitlement and capability set included in version 1.
-- Whether the initial WSL x86_64 environment becomes a supported production host or remains a proof environment alongside a future native Linux host.
+- Minimum entitlement and capability set included in version 1. **Resolved (2026-08-19):**
+  the bare set (`application-identifier`,
+  `com.apple.developer.team-identifier`, `get-task-allow`) is the supported v1 set; other
+  capabilities are out of scope and must fail loudly until capability-association support
+  lands.
+- Whether the initial WSL x86_64 environment becomes a supported production host or remains a proof environment alongside a future native Linux host. **Resolved (2026-08-19):** proof/reference only.
 - Whether build and release environments are persistent or created ephemerally.
 - macOS host support is confirmed as additive work with decided modes: Xcode-present in
   place; Xcode-absent via the imported bundle with a pinned open-source LLVM Darwin
@@ -1882,8 +1899,10 @@ Execute the remaining work in this order:
    as a persistent systemd service. `docs/clean-host-setup.md` documents repeatable
    setup and recovery.
 2. Resume the remaining Gate 5 productization work (broader compatibility/fixture
-   coverage, re-exporting the SDK under `stupid-app-ios`, and the complete acceptance
-   run through stable commands on clean supported hosts) in parallel.
+   coverage, re-exporting the SDK under `stupid-app-ios`, `release new-build` added,
+   and the complete acceptance run through stable commands on clean supported hosts) in
+   parallel. Supported-host, release-layout, and v1-entitlement decisions were resolved
+   2026-08-19 (see Open Decisions and implementation notes).
 3. Continue the macOS host support gates in `docs/macos-host-support-scope.md`. M0
    (Xcode-present build), M1 (simulator run loop), and the Gate M3 device-stack port are
    implemented; `device pair --usb`, `run --usb`, and the three unplugged
