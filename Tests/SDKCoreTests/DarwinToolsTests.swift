@@ -23,6 +23,15 @@ struct DarwinToolsTests {
     #expect(DarwinTools.macOSHosted(forHostTriple: "x86_64-apple-macosx") == nil)
   }
 
+  @Test("resolves the pinned aarch64 Linux darwin-toolset")
+  func aarch64LinuxToolset() {
+    let src = DarwinTools.source(for: "aarch64")
+    #expect(src?.arch == "aarch64")
+    #expect(src?.version == "1.0.1")
+    #expect(src?.sha256 == "2660178e19983ab23bbeaea5f2ff2fefbe516302936a066ccd2370f36e019bbe")
+    #expect(src?.url.lastPathComponent == "toolset-aarch64.tar.gz")
+  }
+
   @Test("macOS toolset carries the three Darwin tools")
   func macToolsBinaries() {
     let names = DarwinTools.macOSHostedArm64.binaries.map(\.bundleName)

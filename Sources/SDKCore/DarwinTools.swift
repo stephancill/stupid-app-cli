@@ -31,6 +31,14 @@ public enum DarwinTools {
             version: "1.0.1",
             sha256: "58f567cbea08afb89aaee5ca0c2200e6c9fe7c014022fe380f0188e940d8d071"
         ),
+        Source(
+            arch: "aarch64",
+            url: URL(
+                string: "https://github.com/xtool-org/darwin-tools-linux-llvm/releases/download/v1.0.1/toolset-aarch64.tar.gz"
+            )!,
+            version: "1.0.1",
+            sha256: "2660178e19983ab23bbeaea5f2ff2fefbe516302936a066ccd2370f36e019bbe"
+        ),
     ]
 
     public static func source(for hostArch: String) -> Source? {

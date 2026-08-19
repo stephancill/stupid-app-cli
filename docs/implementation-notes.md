@@ -16,6 +16,42 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
 
+## 2026-08-19 - aarch64 Linux darwin-toolset pin
+
+### Summary
+
+Added a pinned `aarch64` source for the Linux-hosted Darwin toolchain to
+`Sources/SDKCore/DarwinTools.swift` alongside the existing `x86_64` entry. Both
+reference the same pinned `xtool-org/darwin-tools-linux-llvm` release (v1.0.1);
+the aarch64 archive is `toolset-aarch64.tar.gz`. A DarwinTools unit test asserts
+the arch, version, checksum, and asset name resolve correctly.
+
+### Why
+
+The toolchain already ships aarch64 build variants but the repo only pinned the
+x86_64 link toolset, so `sdk export --host <aarch64 linux triple>` would reject
+the host name with `hostArchUnsupported`. During an exploratory proof of running
+the CLI as an iOS build host on an ARM Linux box, the aarch64 darwin tools were
+confirmed present and statically linked aarch64 ELF (`ld64.lld`/`libtool`/
+`dsymutil`, archive SHA-256 pinned). The software design supports cross-building
+from an aarch64 Linux host once the pinned toolset exists.
+
+### Verification
+
+- Downloaded the official v1.0.1 `toolset-aarch64.tar.gz`, confirmed SHA-256 and
+  that all three tools are `ELF 64-bit ARM aarch64`, statically linked.
+- `swift test --filter DarwinToolsTests` passes (6/6).
+- A clean release `sdk export --host aarch64-unknown-linux-gnu` completes and
+  produces the device-only SDK artifact target at aarch64 host.
+
+### Known limitations / follow-up
+
+The experiment also proved an aarch64 Linux Swift toolchain and the exported iOS
+SDK import cleanly on the ARM device, and the CLI cross-compiles to aarch64;
+however the low-memory ARM board was impractical as a per-iteration build host and
+that work was reverted. The executable, host toolchain, and SDK were removed from
+the remote host. Only this toolset pin remains as product code.
+
 ## 2026-08-19 - Physical Device Wireless Run Of The Deep Build
 
 ### Summary
