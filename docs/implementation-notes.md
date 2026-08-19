@@ -3302,3 +3302,7 @@ toolset-in-place iOS link on this Mac.
 
 - The currently shipped TestFlight build (98) carries the buggy icon; a new build number
   must be released with the fixed CLI to correct the icon in TestFlight.
+
+- **Resolved 2026-08-19:** Stupid Social 1.0.0 (99) was built with the fixed writer and
+  uploaded to TestFlight (`processing=VALID`, `internal=IN_BETA_TESTING`), correcting the
+  icon in the field.
