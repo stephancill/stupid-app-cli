@@ -3739,8 +3739,8 @@ supported hosts (clean WSL host for the Linux gates; the iPhone on the deploymen
 ### Summary
 
 - Added an "Optional: install the agent skill (recommended)" step to the README
-  installation section showing how to symlink `skills/stupid-app-cli/` into
-  `~/.config/opencode/skills`.
+  installation section using the `npx skills add stephancill/stupid-app-cli` command to
+  install the bundled skill.
 
 ### Verification
 
