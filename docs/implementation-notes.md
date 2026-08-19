@@ -3692,3 +3692,26 @@ supported hosts (clean WSL host for the Linux gates; the iPhone on the deploymen
 
 - Re-run the dogfood after the next CLI surface change to keep the skill honest;
   consider surfacing the `run` mode contract in `--help` copy.
+
+## 2026-08-19 - README Cleanup
+
+### Summary
+
+- Rewrote `README.md` to describe the current product instead of the gate/proof history:
+  removed the Gate 0-5 and macOS M-gate status prose, the WSL reference-environment
+  scoping notes, and the "Version 1 entitlement scope" section (the entitlement set is
+  documented in the engineering handover and skill instead). The README now presents the
+  supported platforms, package layout, and command surface for the current version.
+
+### Verification
+
+- README no longer mentions proof gates, the WSL reference host, or version-scoping
+  caveats; the commands section matches the installed binary's help output.
+- Repo history was rewritten with `git filter-repo` to redact operational identifiers
+  (team IDs, certificate resource IDs, real bundle IDs) from all historical commits, and
+  the repository was made public at github.com/stephancill/stupid-app-cli.
+
+### Follow-Up
+
+- Keep the README informational for the released version; move engineering status into
+  the handover and implementation notes only.
