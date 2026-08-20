@@ -6,8 +6,8 @@ import Foundation
 struct DeviceCommand: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "device",
-    abstract: "Manage local device pairing.",
-    subcommands: [DevicePairCommand.self]
+    abstract: "Manage local device pairing and diagnostics.",
+    subcommands: [DevicePairCommand.self, DeviceCrashCommand.self]
   )
 }
 
@@ -108,6 +108,149 @@ enum DevicePairError: Error, CustomStringConvertible {
     case .deviceSelection(let count):
       return
         "Expected exactly one USB-connected device, found \(count). Pass --udid to select a device."
+    }
+  }
+}
+
+struct DeviceCrashCommand: AsyncParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "crash",
+    abstract: "Inspect an iOS crash report (.ips), from a file or a paired device."
+  )
+
+  @Option(
+    name: .customLong("path"),
+    help: "Path to a local .ips crash report to parse.")
+  var path: String?
+
+  @Option(
+    name: .customLong("udid"),
+    help: "Physical-device UDID (usbmux serial) to pull the newest crash report from.")
+  var udid: String?
+
+  @Flag(
+    name: .customLong("network"),
+    help: "Pull the crash report over the wireless (CoreDevice network) tunnel instead of USB.")
+  var network = false
+
+  @Option(
+    name: .customLong("sudo"), help: "Explicit path to sudo for the privileged network helper.")
+  var sudoPath: String?
+
+  @Option(
+    name: .customLong("filter"),
+    help: "Substring to match report file names when pulling from a device.")
+  var filter: String?
+
+  @Option(name: .customLong("home"), help: "Credential store directory.")
+  var home: String?
+
+  @Flag(
+    name: .customLong("json"),
+    help: "Print the parsed fields as JSON instead of a human summary.")
+  var json = false
+
+  mutating func run() async throws {
+    let report: CrashReport
+    if let path {
+      report = try Self.load(path: path)
+    } else if let udid {
+      report = try loadFromDevice(udid: udid)
+    } else {
+      throw DeviceCrashError.sourceRequired
+    }
+    if json {
+      print(Self.jsonString(of: report))
+    } else {
+      print(report.summary())
+    }
+  }
+
+  private func loadFromDevice(udid: String) throws -> CrashReport {
+    let homeURL =
+      home.map { URL(fileURLWithPath: $0) }
+      ?? FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent(".stupid-app/credentials", isDirectory: true)
+    let pairingDir = homeURL.appendingPathComponent("pairing", isDirectory: true)
+    if network {
+      do {
+        let runner = NativeCoreDeviceRunner(
+          sudoPath: sudoPath,
+          pairingDirectory: pairingDir,
+          launchTimeoutSeconds: 60
+        )
+        return try runner.pullNetworkCrash(
+          udid: udid, nameFilter: filter, discoveryTimeoutSeconds: 30)
+      } catch {
+        throw DeviceCrashError.device(String(describing: error))
+      }
+    }
+    let client = CrashReportClient(
+      pairingDirectory: pairingDir,
+      progress: { if !$0.isEmpty { print($0) } }
+    )
+    do {
+      return try client.latestParsedReportUSB(udid: udid, nameFilter: filter)
+    } catch {
+      throw DeviceCrashError.device(String(describing: error))
+    }
+  }
+
+  /// Loads and parses a local `.ips` report into a `CrashReport`. Kept as a pure
+  /// entry point so parsing is testable without a device or stdout capture.
+  static func load(path: String?) throws -> CrashReport {
+    guard let path else {
+      throw DeviceCrashError.pathRequired
+    }
+    let url = URL(fileURLWithPath: path)
+    let data: Data
+    do {
+      data = try Data(contentsOf: url)
+    } catch {
+      throw DeviceCrashError.unreadable(path)
+    }
+    guard let buffer = String(data: data, encoding: .utf8) else {
+      throw DeviceCrashError.notUTF8(path)
+    }
+    do {
+      return try CrashReportParsing.parse(buffer)
+    } catch {
+      throw DeviceCrashError.parse(String(describing: error))
+    }
+  }
+
+  static func jsonString(of report: CrashReport) -> String {
+    let formatter = JSONEncoder()
+    formatter.outputFormatting = [.sortedKeys, .prettyPrinted]
+    guard let data = try? formatter.encode(report) else {
+      return "{}"
+    }
+    return String(data: data, encoding: .utf8) ?? "{}"
+  }
+}
+
+enum DeviceCrashError: Error, CustomStringConvertible {
+  case sourceRequired
+  case pathRequired
+  case unreadable(String)
+  case notUTF8(String)
+  case parse(String)
+  case device(String)
+
+  var description: String {
+    switch self {
+    case .sourceRequired:
+      return "Provide either a --path to a crash report file or a --udid to pull from a device."
+    case .pathRequired:
+      return "Provide a --path to a .ips crash report to parse."
+    case .unreadable(let path):
+      return "Could not read the crash report at \(path). Confirm it exists and is a regular file."
+    case .notUTF8(let path):
+      return "The file at \(path) is not valid UTF-8 text and is not a supported .ips report."
+    case .parse(let detail):
+      return "The crash report could not be parsed: \(detail)."
+    case .device(let detail):
+      return "The on-device crash report could not be retrieved: \(detail)."
     }
   }
 }

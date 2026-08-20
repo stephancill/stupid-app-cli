@@ -16,6 +16,227 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
 
+## 2026-08-20 - `device crash --network` verified on a physical iPhone over the wireless tunnel
+
+### Summary
+
+Qualified the wireless crash pull end to end and fixed a tunnel-lifetime bug.
+
+- Bug: `CrashReportNetworkClient` opened the remote-pairing tunnel, connected the
+  crash-report service, then the old `openReportCandidate` tore the tunnel down
+  (`defer { relay.stop(); tunnel.stop() }`) *before* the AFC report read, so the
+  read hit a dead tunnel and failed with a misleading "Could not connect to
+  usbmuxd (error 65)". Restructured so the tunnel/relay stay alive for the whole
+  read (mirroring `NativeNetworkRunner`, whose tunnel lives across install+launch).
+- Verified `stupid-app device crash --network` on the physical iPhone 15 Pro over
+  the CoreDevice remote-pairing tunnel under the scoped sudo grant:
+  - Real `cpu_resource` report → `Termination: CPU_RESOURCE — cpu usage`,
+    classified watchdog.
+  - Real SIGTRAP report (timestamp filter) → `Termination: SIGNAL (5) — trace/BPT
+    trap`, `Exception: EXC_BREAKPOINT`.
+  - `--json` renders machine-readable fields.
+
+### Why
+
+The USB path was already verified; the wireless path lets a phone not attached via
+USB (or on a different network) be diagnosed with the same command. macOS needs the
+privileged TUN, provided by a scoped `coredevice-helper crash-network` sudoers grant
+rather than by silent elevation.
+
+### Notes
+
+- The `--network` path on macOS runs under `--sudo`; on Linux it stays in-process
+  (binary carries `cap_net_admin`).
+- Full suite: 244 tests across 45 suites pass.
+
+## 2026-08-20 - `device crash` network tunnel (wireless) crash pull
+
+### Summary
+
+Added a wireless/hosted crash-report pull to `device crash`:
+
+- New `CrashReportNetworkClient` (DeviceKit) establishes the CoreDevice
+  remote-pairing tunnel (mDNS discovery → RemotePairingTunnelClient verify →
+  PersistentCoreDeviceTunnel relay → RSD), resolves the peer, connects the
+  `com.apple.crashreportcopymobile.shim.remote` service, and reuses the shared
+  crash-report read path.
+- `CrashReportClient` now exposes shared list/pick/parse statics (`AFCClient`-based),
+  and `AFCClient` carries the new read ops (`READ_DIR`, `GET_FILE_INFO`,
+  `FileRefOpen`/`FileRefRead`) used by both USB and network pulls.
+- `coredevice-helper crash-network` subcommand + `NativeCoreDeviceRunner.pullNetworkCrash`:
+  macOS runs the network pull through the privileged helper (needs `--sudo` for the
+  TUN), Linux stays in-process (binary carries `cap_net_admin`).
+- `stupid-app device crash` gained `--network` and `--sudo` to select the tunnel.
+
+### Why
+
+The practical crash loop needs the report whether the phone is wired or wireless.
+The USB path was already working; the network path lets a wireless device on the
+LAN be targeted without a cable or a host tool.
+
+### Verification
+
+- 244 unit tests pass.
+- On a real iPhone reachable over the network, `device crash --udid … --network`
+  discovered the device over mDNS, verified and sent remote pairing, opened the
+  tunnel, resolved RSD, and connected the crash-report service `shim.remote` over
+  the tunnel. Run-completion copy of the report wasn't re-verified because the
+  macOS host here could not use the privileged TUN non-interactively (sudo needs a
+  password), so that final step is pending on a privileged host rather than claimed.
+
+### Follow-up
+
+- Complete a full network read-back on a privileged host (macOS `--sudo` or a
+  Linux `cap_net_admin` host) to fully qualify the end path; then `device console`,
+  `device apps`, `device fs`.
+
+## 2026-08-20 - On-device `device crash` pull + legacy text parsing (verified on a physical device)
+
+### Summary
+
+Extended the `device crash` slice so it pulls reports directly from a physical
+iPhone over USB and parses legacy resource-limit reports, then verified it on a
+real device:
+
+- `AFCClient` gained read support (`READ_DIR` 0x03, `GET_FILE_INFO` 0x0a,
+  `FileRefOpen` RDONLY + repeated `FileRefRead` 0x0f) in `NativeUSBInstaller.swift`.
+- New `CrashReportClient` connects to the `com.apple.crashreportcopymobile`
+  service over the native USB lockdown session, lists the report root, selects
+  the newest `.ips`/`.panic` by embedded timestamp, reads it, and parses it — no
+  host tool and no privileged TUN/elevation.
+- `device crash` gained `--udid` / `--filter` / `--home` to pull and print the
+  newest matching report; the local `--path` path is unchanged.
+- `CrashReportParsing` now extracts legacy text fields (`Event:`,
+  `Action taken:`) so `cpu_resource` / memory / jetsam text reports produce a
+  `CPU_RESOURCE` / `MEMORY` namespace verdict, complementing the JSON `.ips`
+  payload. The watchdog classifier now distinguishes a normal `SIGNAL`
+  application crash from a resource/jetsam termination (bug codes `298`, `98`,
+  `327`, `385`; namespaces jetsam/memory/cpu/diskwrite).
+
+### Why
+
+The earlier slice only read a local file. The practical crash loop is: a
+launch-stage crash on a physical device, pull the report, identify why it died.
+Making `device crash --udid` read the crash-report service over the existing native
+USB transport removes the `devicectl`/Xcode dependence and surfaces the verdict in
+one command.
+
+### Verification (physical device)
+
+Built a `CrashTester` sample app (`net.stupidtech.crashtester`), installed it on a
+paired iPhone over USB via `stupid-app run --usb`, and forced a crash:
+
+- **Uncaught Swift fatal error** → `CrashTester-2026-08-20-…ips` (bug type 309,
+  `EXC_BREAKPOINT`, termination `SIGNAL 5`). `device crash` printed the correct
+  summary and JSON.
+- **stderr log-flood** (reproducing the earlier torrent bug) → iOS killed it with a
+  `cpu_resource` report (bug type 202, `Event: cpu usage`). `device crash
+  --udid … --filter cpu_resource` now prints `Termination: CPU_RESOURCE — cpu
+  usage` and classifies it as a watchdog/resource-limit termination.
+- The on-device pull ran over the native lockdown + AFC service with no host tool.
+
+Full suite: 244 unit tests across 45 suites, all passing.
+
+### Follow-up / limitations
+
+- RSD network pull (`crashreportcopymobile.shim.remote` over the tunnel), then
+  `device console`, `device apps`, and `device fs`.
+- A `--since` / `--output-dir` to write pulled reports locally.
+- Broaden real-report coverage beyond the `fatalError` and `cpu_resource` shapes
+  exercised here.
+
+## 2026-08-20 - `device crash` report parser + CLI (slice 1 of native diagnostics)
+
+### Summary
+
+Implemented the first tested slice of the native device diagnostics planned in
+`docs/native-diagnostics.md`: an offline `.ips` parser and the `stupid-app device crash`
+command.
+
+- `Sources/DeviceKit/CrashReport.swift` — structured model (metadata + termination +
+  exception + application-specific detail) plus a watchdog/resource-limit classifier and
+  a one-screen `summary()`. Codable for JSON output.
+- `Sources/DeviceKit/CrashReportParsing.swift` — tolerant parser mirroring
+  `pycrashreport`'s `get_crash_report_from_buf`: first line is metadata JSON, the rest is
+  parsed as JSON, with the `\n  \n`-spliced payload recovery. Legacy text payloads fall
+  back to metadata-only.
+- `Sources/DeviceKit/CrashReportCommand` in `Sources/stupid-app/DeviceCommand.swift` —
+  `stupid-app device crash --path <file>.ips [--json]`; loud errors for missing/unreadable/
+  invalid reports. The parse/print split is a pure `load` entry point so it is testable
+  without stdout capture.
+- Tests: `CrashReportParsingTests` (parser) and `DeviceCrashCommandTests` (CLI load/json/
+  error paths). The full `swift test` suite reports 242 tests across 45 suites, all passing.
+
+### Why
+
+A physical-device launch crash is today diagnosed by hand over `devicectl systemCrashLogs`
+(.ips copy + `rg` + interpret). Slice 1 turns the end of that loop — reading the report — into
+a single deterministic command with a watchdog/`SIGKILL` classification, and does it with no
+host tool: the parser runs identically on macOS and Linux.
+
+### Decisions
+
+- Keep the first crash slice offline (file-path based) because the device-side pull needs a
+  physical device to qualify and would otherwise be shipped unverified (violating the
+  repo's "don't claim unverified success" rule).
+- `device crash` lives under the existing `device` subcommand tree; JSON via `--json` and a
+  shared `load(path:)` pure entry point for testability.
+- Watchdog classifier uses the bug-type codes `jetsam, 298, 98, 309, 327, 385, 509` that
+  appear in the practical watchdog reports.
+
+### Verification
+
+`swift build` clean; `swift test` = 242 tests across 45 suites, all passing. Manual run of
+`device crash --path` on a sample `.ips` produced the expected "Termination: JETSAM (0) —
+61f" summary and the `--json` field dump.
+
+### Follow-up / limitations
+
+- On-device pull: add AFC read/list/stat operations and a `CrashReportClient` against
+  `com.apple.crashreportcopymobile` (and `.shim.remote` over the tunnel); requires a
+  physical device to qualify.
+- `device console`, `device apps`, `device fs`.
+
+## 2026-08-20 - Native device diagnostics design; retired stale `pymobiledevice3` references
+
+### Summary
+
+Documented the device-diagnostic service boundary in `docs/native-diagnostics.md`:
+`device crash` (`.ips`/jetsam reports), `device console` (filtered syslog relay),
+`device apps` (installed build lookup via `installation_proxy`), and `device fs`
+(app-container copy via AFC), all built on the existing native `DeviceKit` transport so
+they behave identically on macOS and Linux without a host tool. Also removed stale
+runtime-`pymobiledevice3` guidance from `AGENTS.md` and `docs/engineering-handover.md`;
+the Python bridge was already replaced by the native transport (AFC, `installation_proxy`,
+CoreDevice tunnel, RSD/SRP, usbmux) and no product command invokes Python. Line
+`PyMobileDevice3NetworkBridge` "first wireless integration", Gate-4 reference, and the
+pinned-Python cache notes were corrected or re-scoped to "readable reference only".
+
+### Why
+
+A physical-device launch crash is currently diagnosed with a long, hand-driven
+`devicectl systemCrashLogs` + `.ips` copy + `rg` + container-bisect sequence done manually
+over `xcrun devicectl`. The handover still implied `pymobiledevice3` was a live direction
+even though `DeviceKit` is fully native, so the docs disagreed with the code.
+
+### Decisions
+
+- One native backend (`DeviceKit` services), transport-shaped by USB/network; no
+  `devicectl`/Xcode/`pymobiledevice3` runtime dependency. `devicectl` is only an optional
+  macOS accelerator.
+- Diagnostics reuse the existing lockdown connect machinery (`com.apple.afc`,
+  `com.apple.mobile.installation_proxy`, syslog relay) rather than adding a host tool.
+- `--start-stopped` debugger attach is explicitly out of parity scope (host LLDB on
+  macOS; best-effort on Linux) and must be stated, not silently degraded.
+
+### Verification
+
+No code changed; verified the CLI skill and README already contain no `pymobiledevice3`
+references and that `rg` in `Sources/DeviceKit`/`Sources/stupid-app` finds no Python
+invocation at runtime. Follow-up: implement `CrashReportClient` + shared
+`DiagnosticTransport` first, then `SyslogClient`, then installed-lookup and container-copy,
+updating `references/commands.md` and this handover in the same change.
+
 ## 2026-08-19 - aarch64 Linux darwin-toolset pin
 
 ### Summary

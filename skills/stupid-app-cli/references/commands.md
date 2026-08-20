@@ -132,14 +132,33 @@ Lists or registers App Store Connect devices. `--name` defaults to `iPhone`.
 
 ```text
 stupid-app device pair --usb [--udid <udid>] [--sudo <path>] [--usbmux <addr>] [--timeout <sec>] [--replace-lockdown-record] [--home <dir>]
+stupid-app device crash [--path <file>] [--udid <udid>] [--filter <name>] [--network] [--sudo <path>] [--json] [--home <dir>]
 ```
 
-Bootstraps lockdown trust natively and then CoreDevice remote pairing over USB.
-`--usbmux` accepts a Unix socket or `HOST:PORT`. `--timeout` defaults to 30
+`device pair` bootstraps lockdown trust natively and then CoreDevice remote pairing over
+USB. `--usbmux` accepts a Unix socket or `HOST:PORT`. `--timeout` defaults to 30
 seconds — raise it (e.g. `180`) when the on-device Trust dialog needs time.
 `--replace-lockdown-record` writes a fresh lockdown trust record instead of
-reusing the existing one. The privileged CoreDevice tunnel requires `--sudo` on
+reusing the existing one. The privileged CoreDevice pair requires `--sudo` on
 a capable host.
+
+`device crash` parses an iOS crash report and prints a human-readable summary
+(termination namespace/code/reason, exception, application-specific detail) or,
+with `--json`, machine-readable fields. It classifies watchdog/resource-limit
+terminations (jetsam, `cpu usage`, memory/exc_resource) so a launch crash such as
+a `SIGKILL` from excessive logging is surfaced directly.
+
+- With `--path <file>` it parses a local `.ips` file.
+- With `--udid <udid>` (a usbmux serial/UDID) it pulls the newest matching report
+  from the device's crash-report service over USB (native lockdown + AFC, no host
+  tool or privilege needed) and parses it. `--filter <name>` is a substring against
+  report file names (e.g. `CrashTester`); the newest by embedded timestamp is
+  chosen.
+- Adding `--network` pulls over the wireless CoreDevice tunnel instead, eventually
+  routed through the `coredevice-helper crash-network` subcommand. On macOS the
+  network tunnel needs the privileged TUN, so pass `--sudo <path>`; on Linux the
+  tunnel stays in-process and needs no privilege.
+- `--home` points at the credential store (default `~/.stupid-app/credentials`).
 
 ## run
 

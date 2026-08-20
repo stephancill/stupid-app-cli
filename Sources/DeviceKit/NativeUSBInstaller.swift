@@ -138,10 +138,13 @@ struct AFCClient {
   enum Operation: UInt64 {
     case status = 0x01
     case data = 0x02
+    case readDir = 0x03
+    case getFileInfo = 0x0a
     case removePath = 0x08
     case makeDirectory = 0x09
     case fileOpen = 0x0d
     case fileOpenResult = 0x0e
+    case read = 0x0f
     case write = 0x10
     case fileClose = 0x14
   }
@@ -151,6 +154,88 @@ struct AFCClient {
 
   init(connection: LockdownServiceConnection) {
     self.connection = connection
+  }
+
+  /// Lists the entries in a device directory, excluding `.` and `..`.
+  mutating func listDirectory(_ path: String) throws -> [String] {
+    let response = try exchange(operation: .readDir, payload: Self.cString(path))
+    if response.operation == .status {
+      try validateStatus(response, allowed: [0])
+      return []
+    }
+    guard response.operation == .data else {
+      throw NativeUSBInstaller.Error.afc("read directory returned an unexpected response")
+    }
+    return response.payload.split(separator: 0x00).compactMap {
+      $0.isEmpty ? nil : String(data: Data($0), encoding: .utf8)
+    }
+  }
+
+  /// Returns `GetFileInfo` attributes for a path. Only the keys surfaced by the
+  /// device are present.
+  mutating func fileInfo(_ path: String) throws -> [String: String] {
+    let response = try exchange(operation: .getFileInfo, payload: Self.cString(path))
+    if response.operation == .status {
+      try validateStatus(response, allowed: [0])
+    }
+    guard response.operation == .data else {
+      throw NativeUSBInstaller.Error.afc("get file info returned an unexpected response")
+    }
+    let tokens = response.payload.split(separator: 0x00).compactMap {
+      $0.isEmpty ? nil : String(data: Data($0), encoding: .utf8)
+    }
+    var result: [String: String] = [:]
+    var index = 0
+    while index + 1 < tokens.count {
+      result[tokens[index]] = tokens[index + 1]
+      index += 2
+    }
+    return result
+  }
+
+  /// Reads an entire file into memory via `FileRefOpen` + repeated `FileRefRead`.
+  mutating func readFileContents(_ path: String) throws -> Data {
+    var openPayload = Data()
+    // Mode 1 = O_RDONLY.
+    Self.appendLittleEndian(UInt64(1), to: &openPayload)
+    openPayload.append(Self.cString(path))
+    let openResponse = try exchange(operation: .fileOpen, payload: openPayload)
+    guard openResponse.operation == .fileOpenResult, openResponse.payload.count == 8 else {
+      throw NativeUSBInstaller.Error.afc("file open (read) returned an unexpected response")
+    }
+    let handle = Self.littleEndianUInt64(openResponse.payload, at: 0)
+    guard handle != 0 else {
+      throw NativeUSBInstaller.Error.afc("file open (read) returned an invalid handle")
+    }
+    defer {
+      var closePayload = Data()
+      Self.appendLittleEndian(handle, to: &closePayload)
+      _ = try? exchange(operation: .fileClose, payload: closePayload)
+    }
+
+    var result = Data()
+    let chunk: UInt64 = 1 * 1_024 * 1_024
+    while true {
+      var readPayload = Data()
+      Self.appendLittleEndian(handle, to: &readPayload)
+      Self.appendLittleEndian(chunk, to: &readPayload)
+      let response = try exchange(operation: .read, payload: readPayload)
+      if response.operation == .status {
+        guard response.payload.count == 8 else {
+          throw NativeUSBInstaller.Error.afc("file read returned an invalid status response")
+        }
+        let code = Self.littleEndianUInt64(response.payload, at: 0)
+        // 0x0e = END_OF_DATA.
+        if code == 0x0e || code == 0 { break }
+        throw NativeUSBInstaller.Error.afc("file read failed with status \(code)")
+      }
+      guard response.operation == .data else {
+        throw NativeUSBInstaller.Error.afc("file read returned an unexpected response")
+      }
+      if response.payload.isEmpty { break }
+      result.append(response.payload)
+    }
+    return result
   }
 
   mutating func makeDirectory(_ path: String, allowExisting: Bool) throws {

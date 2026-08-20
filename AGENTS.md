@@ -68,7 +68,10 @@ Do not include timeline estimates in planning documents. Use ordered dependencie
 - Do not add Zupersign as a fallback.
 - Disable signing timestamps for iOS distribution output.
 - Use the App Store Connect Build Upload APIs instead of `altool` or Transporter.
-- Use a pinned `pymobiledevice3` integration for the first modern wireless transport proof, while keeping the transport replaceable.
+- Keep the device transport fully native in `DeviceKit` (CoreDevice/USBMux over the
+  lockdown, AFC, installation-proxy, and syslog services). Do not introduce a Python,
+  `pymobiledevice3`, or host-tool dependency for pairing, install, diagnostics, or
+  release. Keep the transport replaceable.
 - Treat pairing records and signing material as credentials.
 
 ## Security Rules
@@ -147,6 +150,6 @@ verify any surface change with the skill-creator validation before releasing.
 
 ## External References
 
-The engineering handover lists the currently relevant xtool, App Store release, App Store Connect, `apple-codesign`, and `pymobiledevice3` references. Consult those sources when changing corresponding behavior, but verify current source and API schemas because external implementations evolve.
+The native device transport reimplements the CoreDevice/USBMux protocols in Swift (see `Sources/DeviceKit/`); `pymobiledevice3` is consulted only as a reference, never invoked at runtime. The engineering handover lists the currently relevant xtool, App Store release, App Store Connect, and `apple-codesign` references. Consult those sources when changing corresponding behavior, but verify current source and API schemas because external implementations evolve.
 
 When copying or adapting source, preserve license requirements and record provenance in the implementation notes and repository notices.

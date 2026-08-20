@@ -14,6 +14,7 @@ struct CoreDeviceHelperCommand: ParsableCommand {
       CoreDevicePairCommand.self,
       CoreDeviceLaunchCommand.self,
       CoreDeviceNetworkRunCommand.self,
+      CoreDeviceNetworkCrashCommand.self,
     ]
   )
 }
@@ -133,5 +134,57 @@ struct CoreDeviceNetworkRunCommand: ParsableCommand {
       {"status":"ok","operation":"run-network","pid":\(pid)}
       """
     print(output)
+  }
+}
+
+struct CoreDeviceNetworkCrashCommand: ParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "crash-network",
+    abstract: "Pull and print the newest crash report over the native CoreDevice network tunnel."
+  )
+
+  @Option(name: .customLong("udid"), help: "Target device UDID.")
+  var udid: String
+
+  @Option(name: .customLong("pairing-dir"), help: "Pairing record directory.")
+  var pairingDirectory: String
+
+  @Option(name: .customLong("filter"), help: "Substring to match crash-report file names.")
+  var filter: String?
+
+  @Option(name: .customLong("discovery-timeout"), help: "Maximum seconds for discovery.")
+  var discoveryTimeout: Double = 15
+
+  func run() throws {
+    let client = CrashReportNetworkClient(
+      pairingDirectory: URL(fileURLWithPath: pairingDirectory, isDirectory: true),
+      udid: udid,
+      discoveryTimeoutSeconds: discoveryTimeout,
+      progress: { message in
+        FileHandle.standardError.write(Data("\(message)\n".utf8))
+      }
+    )
+    let report = try client.latestParsedReport(nameFilter: filter)
+    // Emit the parsed report on stdout as JSON so the invoking `device crash`
+    // can render it; diagnostics go to stderr.
+    print(try crashReportJSON(report))
+  }
+
+  private func crashReportJSON(_ report: CrashReport) throws -> String {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    let data = try encoder.encode(report)
+    guard let text = String(data: data, encoding: .utf8) else {
+      throw CrashReportJSONError.encoding
+    }
+    return text
+  }
+}
+
+enum CrashReportJSONError: Error, CustomStringConvertible {
+  case encoding
+
+  var description: String {
+    "The crash report could not be serialized to JSON."
   }
 }

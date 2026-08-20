@@ -142,6 +142,53 @@ public struct NativeCoreDeviceRunner: Sendable {
     return pid
   }
 
+  /// Pulls the newest crash report over the native network tunnel and returns
+  /// the parsed report. On macOS the network path requires the privileged TUN
+  /// helper, so it runs through `coredevice-helper crash-network` under the same
+  /// explicit `--sudo` boundary as the network run. On Linux it stays in-process.
+  public func pullNetworkCrash(
+    udid: String,
+    nameFilter: String?,
+    discoveryTimeoutSeconds: Double
+  ) throws -> CrashReport {
+    var arguments = ["coredevice-helper", "crash-network"]
+    arguments += ["--udid", udid]
+    arguments += ["--pairing-dir", pairingDirectory.path]
+    if let nameFilter {
+      arguments += ["--filter", nameFilter]
+    }
+    arguments += ["--discovery-timeout", seconds(discoveryTimeoutSeconds)]
+
+    #if os(Linux)
+      let runner = try CrashReportNetworkClient(
+        pairingDirectory: pairingDirectory,
+        udid: udid,
+        discoveryTimeoutSeconds: discoveryTimeoutSeconds,
+        progress: { print($0) }
+      )
+      return try runner.latestParsedReport(nameFilter: nameFilter)
+    #else
+      let timeout = discoveryTimeoutSeconds + 60
+      let result = try runHelper(
+        arguments: arguments, phase: "network crash pull", timeout: timeout, udid: udid)
+      guard let data = result.stdout.data(using: .utf8) else {
+        throw Error.operationFailed(
+          "network crash pull",
+          Self.redact(detail: "helper did not return UTF-8 output", udid: udid))
+      }
+      let report: CrashReport
+      do {
+        report = try JSONDecoder().decode(CrashReport.self, from: data)
+      } catch {
+        throw Error.operationFailed(
+          "network crash pull",
+          Self.redact(
+            detail: "helper returned an unexpected result: \(result.stdout)", udid: udid))
+      }
+      return report
+    #endif
+  }
+
   private func runHelper(
     arguments: [String], phase: String, timeout: Double, udid: String?
   ) throws -> ProcessRunner.Result {

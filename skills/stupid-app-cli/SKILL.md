@@ -270,6 +270,13 @@ When a workflow fails, in order:
 4. If the pairing record is missing or stale, re-run `device pair --usb`.
 5. Check the release manifest and `release status --live` before re-uploading;
    do not reuse a build number that already exists.
+6. Inspect a device crash report with `stupid-app device crash` — pass a local
+   `--path <file>.ips` or `--udid <phone-udid>` to pull the newest matching
+   report directly from the phone over USB (no host tool), optionally `--json`.
+   Add `--network` to pull a wireless device over the CoreDevice tunnel (needs
+   `--sudo` on macOS for the privileged TUN). It prints the termination
+   namespace/reason, exception, and app-specific detail in one pass, and flags
+   watchdog/CPU/resource terminations (e.g. `SIGKILL` from excessive logging).
 
 Detailed clean-host setup and recovery procedures live in
 `docs/clean-host-setup.md` (Linux/WSL) and `docs/macos-clean-host-setup.md`

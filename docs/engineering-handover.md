@@ -757,14 +757,19 @@ Initial direction:
 
 - Use `usbmuxd` and libimobiledevice-compatible tooling for initial USB trust and pairing.
 - Store pairing records as credentials.
-- Use a pinned `pymobiledevice3` integration for modern CoreDevice remote pairing,
-  network installation, and launch until the remaining native protocol stack is qualified. The
-  native usbmux plist client now owns USB auto-discovery and exposes pair-record access,
-  `Connect`, fresh lockdown pairing, lockdown session TLS, wireless enablement, service
-  startup, AFC staging, installation proxy, and exact installed-bundle verification. The
-  native OpenSSL 3 TLS-PSK/`CDTunnel`
-  connection is also implemented independently in `DeviceKit`; launch and network
-  orchestration still use the helper.
+- The transport is fully native in `DeviceKit`; `pymobiledevice3` is no longer a
+  runtime dependency and is consulted only as a reference. The native usbmux plist
+  client owns USB auto-discovery, pair-record access, `Connect`, fresh lockdown
+  pairing, lockdown session TLS, wireless enablement, service startup, AFC staging,
+  installation proxy, and exact installed-bundle verification. The native
+  OpenSSL 3 TLS-PSK/`CDTunnel` connection is also implemented independently in
+  `DeviceKit`; launch and network orchestration still use the privileged helper.
+- Diagnostic features (crash/`.ips` reports, live syslog/consle, installed-build
+  lookup, app-container file copy) are built on the same native lockdown services
+  that the install/launch path already uses, so they behave identically on macOS and
+  Linux. No host tool (`devicectl`/Xcode) is required; `devicectl` is only an optional
+  macOS accelerator. An indexed `lldb` attach is best-effort on Linux rather than a
+  first-class parity target.
 - Include timeout, cancellation, and process cleanup inside the CLI rather than requiring operator scripts.
 - Do not require LLDB attachment for a successful run.
 - Make the deployment transport replaceable so a future Raspberry Pi or LAN agent can receive a development-signed IPA from the WSL or another Linux build host.
@@ -913,9 +918,13 @@ The line ranges below were verified against these local snapshots:
 
 - xtool commit `ee31b666bb1dc324c26183b92d11bab96d0af355` at `~/environments/external/xtool`.
 - App Store Connect OpenAPI specification commit `7ca338b02ceba330ba3dbe40b350f6ef1459da5c` at `~/environments/external/App-Store-Connect-OpenAPI-Spec`.
-- `pymobiledevice3` version `8.2.1`, with a locally installed reference copy under `~/.local/lib/python3.12/site-packages/pymobiledevice3`.
+- `pymobiledevice3` revision `8.2.1` (readable reference only) at `~/environments/external/pymobiledevice3`.
 
-The local Python installation is only a readable reference. The project must pin and verify its own `pymobiledevice3` distribution rather than depending on that path. `apple-platform-rs` is not currently checked out locally; fetch a pinned revision into an ignored `third-party/` directory before Gate 1 and record its revision and MPL-2.0 license obligations.
+The native transport in `DeviceKit` is the source of truth for device protocol behavior;
+`pymobiledevice3` is consulted only when a wire behavior is otherwise ambiguous. No product
+command depends on Python at runtime. `apple-platform-rs` is not currently checked out
+locally; fetch a pinned revision into an ignored `third-party/` directory as needed and
+record its revision and license obligations.
 
 When external source moves, prefer the named type or function over the recorded line range and update this index after validating the new revision.
 
@@ -927,7 +936,7 @@ When external source moves, prefer the named type or function over the recorded 
 | Gate 1: distribution signing | `ASCKey.swift`, certificate/profile operations, release script certificate/profile functions, `apple-codesign` source | Distribution identity/profile manager, entitlement reconciliation, signed IPA |
 | Gate 2: Build Upload | OpenAPI `buildUploads` schemas, release script build-number/polling/manifest functions | Direct upload client, exact-build resolver, release manifest |
 | Gate 3: development signing | xtool device/certificate/profile provisioning operations | Development identity/profile flow and USB-installable IPA |
-| Gate 4: wireless transport | `PyMobileDevice3NetworkBridge.swift`, Termux handoff, pinned `pymobiledevice3` source | Pair, discover, tunnel, install, launch with bounded cleanup |
+| Gate 4: wireless transport | native `DeviceKit` CoreDevice tunnel, remote pairing, SRP, mDNS, install, launch | Pair, discover, tunnel, install, launch with bounded cleanup |
 | Gate 5: product CLI | `XTool.swift`, `NewCommand.swift`, `PackSchema.swift`, process helpers | Stable command surface, typed config, diagnostics, tests and docs |
 
 ### xtool Package Boundaries And Dependencies
@@ -1183,28 +1192,15 @@ Classic device-operation references:
 - `Sources/XKit/Installation/AppInstaller.swift:92-203` coordinates progress, timeout, retry, and post-install verification.
 - `Sources/XKit/Installation/DDIMounter.swift` is compiled out and contains a Linux failure path. Do not make it a version 1 dependency.
 
-The first modern wireless implementation should use the Python bridge rather than porting CoreDevice protocols immediately:
-
-- `Sources/XKit/Integration/PyMobileDevice3NetworkBridge.swift:9-90` writes and runs a temporary Python helper with timeout handling.
-- `PyMobileDevice3NetworkBridge.swift:92-493` contains the generated Python implementation.
-- Lines 102-117 import the exact `pymobiledevice3` modules used for USB bootstrap, remote pairing, tunnels, installation, and launch.
-- Lines 152-239 attempt CoreDevice bootstrap from USB and create remote pairing records.
-- Lines 241-346 build and score remote-pairing candidates through mDNS and saved records.
-- Lines 356-478 establish the tunnel, install through `InstallationProxyService`, and launch through `AppServiceService`.
-- Lines 136-149 and 403-445 contain Termux-specific path, UID, and IPv6 route hacks. Generalize or remove these for standard Linux.
-- `Sources/XKit/Integration/IntegratedInstaller.swift:303-445` shows where native installation falls back to this bridge.
-- `Sources/XToolSupport/DevCommand.swift:1390-1700` shows full build/install/launch orchestration, but should not be copied as one command.
-
-Relevant pinned `pymobiledevice3` modules to inspect directly:
-
-- `pymobiledevice3/lockdown.py` for usbmux lockdown creation.
-- `pymobiledevice3/bonjour.py` for `_remotepairing._tcp.local` browsing.
-- `pymobiledevice3/pair_records.py` for pairing-record persistence.
-- `pymobiledevice3/remote/tunnel_service.py` for CoreDevice tunnel and remote-pairing services.
-- `pymobiledevice3/remote/remote_service_discovery.py` for RSD connections.
-- `pymobiledevice3/remote/core_device/app_service.py` for application launch.
-- `pymobiledevice3/services/installation_proxy.py` for local IPA installation.
-- `pymobiledevice3/tunneld/` for the existing long-running tunnel daemon architecture.
+The first modern wireless implementation used a temporary Python helper
+(`Sources/XKit/Integration/PyMobileDevice3NetworkBridge.swift`) as a proof while the
+native protocol stack was ported. That bridge and the pinned `pymobiledevice3`
+distribution have been **removed**; no product command invokes Python. The transport is
+fully native in `DeviceKit` (`NativeCoreDeviceRunner`, `NativeNetworkRunner`,
+`CoreDeviceTunnelService`, `USBMuxClient`, `LockdownPairer`/SRP, and the privileged
+`coredevice-helper` subcommand). Consult the pymobiledevice3 source history only as a
+readable reference when a wire behavior is ambiguous; keep the native implementation as
+the source of truth.
 
 Operational evidence is in `~/environments/external/xtool/THREE_DEVICE_TERMUX_IOS_HANDOFF.md`:
 
@@ -1284,7 +1280,6 @@ Strong adaptation candidates:
 - xtool's ASC JWT generator and generated public API models.
 - xtool's RSA key and certificate parsing primitives after modern validation is added.
 - The release script's distribution certificate/profile, exact build-number, polling, and manifest concepts.
-- The xtool `pymobiledevice3` bridge as the first wireless protocol integration.
 - `apple-codesign` as a pinned signing kernel after the TestFlight proof gate.
 
 Code paths to exclude:
@@ -1954,3 +1949,17 @@ Execute the remaining work in this order:
    packaging, and a run/install/launch path. The M4 macOS-hosted Darwin-tool relocation
    and the `sdk export --host arm64-apple-macosx` toolset staging are related building
    blocks; decide whether macOS-target SDK export can reuse them or needs its own bundle.
+6. Build native device diagnostics on the existing `DeviceKit` service layer per
+   `docs/native-diagnostics.md`: `device crash`, `device console` (filtered
+   syslog), `device apps` (installed build), and `device fs` (container copy).
+   These turn a physical-device launch-crash diagnosis into a two-command loop,
+   behaving identically on macOS and Linux with no host tool
+   (`devicectl`/Xcode/`pymobiledevice3`) dependency. `stupid-app device crash`
+   is implemented: it parses local `.ips` or pulls the newest report from a
+   `--udid` device over USB (native lockdown + AFC crash-report service) or the
+   wireless CoreDevice tunnel (`--network`, privileged on macOS via `--sudo`,
+   in-process on Linux), handles both JSON and legacy `cpu_resource`/`jetsam`
+   reports, and classifies watchdog/CPU/resource terminations. Both the USB and
+   the wireless crash pulls were verified against real crash reports from a
+   crashing on-device sample app (a `cpu_resource` CPU-limit kill and a SIGTRAP
+   fatal-error crash). The `console`/`apps`/`fs` commands are next.
