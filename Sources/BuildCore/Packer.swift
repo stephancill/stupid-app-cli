@@ -10,6 +10,7 @@ import SDKCore
 /// - Tools resolve through injected configuration rather than hard-coded paths.
 /// - Unsupported resources are rejected during planning, never silently copied.
 /// - Ephemeral build output and persistent bundle output are separate roots.
+/// - Synthetic packages and SwiftPM scratch data persist across invocations.
 ///
 /// The SDK input is host-mode-selected: when a usable Xcode with an iPhoneOS SDK is
 /// present, build in place through Xcode's `swift`, its iPhoneOS SDK, and its own
@@ -44,7 +45,8 @@ public struct Packer: Sendable {
   public var sdkInput: SDKInput
   public var sdkVersion: @Sendable () throws -> String
   public var buildConfiguration: BuildConfiguration
-  public var scratchRoot: URL
+  public var buildCacheRoot: URL
+  public var builderCacheRoot: URL
 
   public init(
     projectRoot: URL,
@@ -56,7 +58,8 @@ public struct Packer: Sendable {
     sdkInput: SDKInput? = nil,
     sdkVersion: (@Sendable () throws -> String)? = nil,
     buildConfiguration: BuildConfiguration = .debug,
-    scratchRoot: URL? = nil
+    buildCacheRoot: URL? = nil,
+    builderCacheRoot: URL? = nil
   ) {
     self.projectRoot = projectRoot
     self.plan = plan
@@ -70,7 +73,7 @@ public struct Packer: Sendable {
       self.sdkVersion = sdkVersion
     } else {
       switch input {
-      case let .xcodeInPlace(installation):
+      case .xcodeInPlace(let installation):
         switch plan.platform {
         case .device:
           self.sdkVersion = { @Sendable in installation.iphoneosSDKVersion }
@@ -83,7 +86,7 @@ public struct Packer: Sendable {
             return simulatorVersion
           }
         }
-      case let .importedBundle(sdkID):
+      case .importedBundle(let sdkID):
         let resolvedSDKID = sdkID
         let resolvedTriple = targetTriple
         let resolvedSwift = swiftPath
@@ -94,7 +97,11 @@ public struct Packer: Sendable {
       }
     }
     self.buildConfiguration = buildConfiguration
-    self.scratchRoot = scratchRoot ?? FileManager.default.temporaryDirectory
+    self.buildCacheRoot =
+      buildCacheRoot
+      ?? projectRoot.appendingPathComponent(
+        ".build/stupid-app", isDirectory: true)
+    self.builderCacheRoot = builderCacheRoot ?? Self.defaultBuilderCacheRoot(for: projectRoot)
   }
 
   // MARK: - Orchestration
@@ -104,13 +111,14 @@ public struct Packer: Sendable {
   /// Returns the `.app` bundle URL.
   public func pack() throws -> URL {
     let sdkVersion = try self.sdkVersion()
-    let session = scratchRoot.appendingPathComponent("stupid-app-build-\(UUID().uuidString)")
+    let session = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "stupid-app-build-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: session, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: session) }
 
     // Build the app product and assemble the unsigned .app.
     let appBuildDir = try buildProduct(
-      plan.product, isExtension: false, sessionRoot: session, sdkVersion: sdkVersion)
+      plan.product, isExtension: false, sdkVersion: sdkVersion)
     let appDir = session.appendingPathComponent("\(plan.product).app", isDirectory: true)
     try FileManager.default.createDirectory(at: appDir, withIntermediateDirectories: true)
     try assembleApp(into: appDir, fromBuildBin: appBuildDir)
@@ -121,7 +129,7 @@ public struct Packer: Sendable {
       try FileManager.default.createDirectory(at: pluginsDir, withIntermediateDirectories: true)
       for extensionPlan in plan.extensions {
         let extensionBuildDir = try buildProduct(
-          extensionPlan.product, isExtension: true, sessionRoot: session, sdkVersion: sdkVersion)
+          extensionPlan.product, isExtension: true, sdkVersion: sdkVersion)
         let appexDir = pluginsDir.appendingPathComponent(
           "\(extensionPlan.product).appex", isDirectory: true)
         try FileManager.default.createDirectory(at: appexDir, withIntermediateDirectories: true)
@@ -146,16 +154,42 @@ public struct Packer: Sendable {
   /// with the `_NSExtensionMain` entry point and `libextension`, as the App Store
   /// requires.
   private func buildProduct(
-    _ product: String, isExtension: Bool, sessionRoot: URL, sdkVersion: String
+    _ product: String, isExtension: Bool, sdkVersion: String
   ) throws -> URL {
-    let builderDir = sessionRoot.appendingPathComponent("\(product)-builder", isDirectory: true)
-    let scratch = sessionRoot.appendingPathComponent(".build-\(product)", isDirectory: true)
+    let builderDir = builderDirectory(for: product)
+    let scratch = buildScratchDirectory(for: product)
     try writeSyntheticPackage(
       into: builderDir, product: product, sdkVersion: sdkVersion, isExtension: isExtension)
     try build(builderDir: builderDir, scratch: scratch)
-    return scratch
+    return
+      scratch
       .appendingPathComponent(targetTriple, isDirectory: true)
       .appendingPathComponent(buildConfiguration.rawValue, isDirectory: true)
+  }
+
+  func builderDirectory(for product: String) -> URL {
+    builderCacheRoot
+      .appendingPathComponent(targetTriple, isDirectory: true)
+      .appendingPathComponent("\(product)-builder", isDirectory: true)
+  }
+
+  func buildScratchDirectory(for product: String) -> URL {
+    buildCacheRoot
+      .appendingPathComponent("scratch", isDirectory: true)
+      .appendingPathComponent(targetTriple, isDirectory: true)
+      .appendingPathComponent(product, isDirectory: true)
+  }
+
+  private static func defaultBuilderCacheRoot(for projectRoot: URL) -> URL {
+    let userCache =
+      FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+      ?? FileManager.default.temporaryDirectory
+    let canonicalProjectPath = projectRoot.standardizedFileURL.resolvingSymlinksInPath().path
+    let projectKey = SHA256.hex(data: Data(canonicalProjectPath.utf8)).prefix(16)
+    return
+      userCache
+      .appendingPathComponent("stupid-app/builders", isDirectory: true)
+      .appendingPathComponent(String(projectKey), isDirectory: true)
   }
 
   // MARK: - Synthetic package
@@ -170,7 +204,7 @@ public struct Packer: Sendable {
     try FileManager.default.createDirectory(at: sourcesDir, withIntermediateDirectories: true)
 
     // An empty C source ensures SwiftPM emits the wrapper executable target.
-    try Data().write(to: sourcesDir.appendingPathComponent("stub.c"))
+    try Self.writeGeneratedFile(Data(), to: sourcesDir.appendingPathComponent("stub.c"))
 
     let linkerFlags = Self.linkerSettings(
       deploymentTarget: plan.deploymentTarget,
@@ -178,6 +212,7 @@ public struct Packer: Sendable {
       platformName: plan.platform.linkerPlatformName,
       isExtension: isExtension
     )
+    let rootPackageIdentity = Self.packageIdentity(for: projectRoot)
     let package = """
       // swift-tools-version: 6.0
       import PackageDescription
@@ -187,20 +222,35 @@ public struct Packer: Sendable {
               .iOS("\(plan.deploymentTarget)")
           ],
           dependencies: [
-              .package(name: "RootPackage", path: "\(projectRoot.path)")
+              .package(path: "\(projectRoot.path)")
           ],
           targets: [
               .executableTarget(
                   name: "\(targetName)",
                   dependencies: [
-                      .product(name: "\(product)", package: "RootPackage"),
+                      .product(name: "\(product)", package: "\(rootPackageIdentity)"),
                   ],
                   linkerSettings: \(linkerFlags)
               )
           ]
       )
       """
-    try Data(package.utf8).write(to: packageDir.appendingPathComponent("Package.swift"))
+    try Self.writeGeneratedFile(
+      Data(package.utf8), to: packageDir.appendingPathComponent("Package.swift"))
+  }
+
+  static func writeGeneratedFile(_ data: Data, to destination: URL) throws {
+    if let existing = try? Data(contentsOf: destination), existing == data {
+      return
+    }
+    try data.write(to: destination)
+  }
+
+  static func packageIdentity(for packageRoot: URL) -> String {
+    let name = packageRoot.standardizedFileURL.lastPathComponent
+    return name.lowercased().hasSuffix(".git")
+      ? String(name.dropLast(4)).lowercased()
+      : name.lowercased()
   }
 
   /// Build configuration inline; SwiftPM location is per-package, so the builder dir
@@ -209,7 +259,7 @@ public struct Packer: Sendable {
     let swift: String
     var arguments: [String]
     switch sdkInput {
-    case let .xcodeInPlace(installation):
+    case .xcodeInPlace(let installation):
       // Xcode in place: build against Xcode's SDK with Xcode's toolchain `swift` and
       // Xcode's own linker. The explicit `--sdk`/`--triple` replace the `--swift-sdk`
       // bundle so no artifact SDK is registered or materialized.
@@ -233,7 +283,7 @@ public struct Packer: Sendable {
         "--triple", targetTriple,
         "--disable-automatic-resolution",
       ]
-    case let .importedBundle(sdkID):
+    case .importedBundle(let sdkID):
       guard plan.platform == .device else {
         throw BuildError.simulatorRequiresXcode
       }
@@ -427,7 +477,7 @@ public struct Packer: Sendable {
   /// IPA would otherwise be rejected during processing.
   private func resolveBuildSystemMetadata() throws -> BuildSystemMetadata {
     switch sdkInput {
-    case let .xcodeInPlace(installation):
+    case .xcodeInPlace(let installation):
       switch plan.platform {
       case .device:
         return BuildSystemMetadata(
@@ -445,7 +495,7 @@ public struct Packer: Sendable {
           xcodeBuild: installation.build
         )
       }
-    case let .importedBundle(sdkID):
+    case .importedBundle(let sdkID):
       guard plan.platform == .device else {
         throw BuildError.simulatorRequiresXcode
       }

@@ -17,7 +17,7 @@ struct PackerModeATests {
     }
 
     let root = try testProjectRoot()
-    defer { try? FileManager.default.removeItem(at: root) }
+    defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
 
     let config = AppConfig(
       version: 1,
@@ -40,10 +40,18 @@ struct PackerModeATests {
       sdkInput: .xcodeInPlace(installation),
       buildConfiguration: .debug
     )
+    defer { try? FileManager.default.removeItem(at: packer.builderCacheRoot) }
 
     let appURL = try packer.pack()
     #expect(
       FileManager.default.fileExists(atPath: appURL.appendingPathComponent(plan.product).path))
+    let scratch = packer.buildScratchDirectory(for: plan.product)
+    #expect(FileManager.default.fileExists(atPath: scratch.path))
+    let marker = scratch.appendingPathComponent("reuse-marker")
+    try Data().write(to: marker)
+
+    _ = try packer.pack()
+    #expect(FileManager.default.fileExists(atPath: marker.path))
 
     let info = try MachOInspector.inspect(at: appURL.appendingPathComponent(plan.product))
     #expect(info.isMachO)
@@ -55,9 +63,10 @@ struct PackerModeATests {
     #expect(info.sdkVersion?.hasPrefix(installation.iphoneosSDKVersion) == true)
 
     // Build-system keys come from Xcode in place, with no invented BuildMachineOSBuild.
-    let mergedInfo = try PropertyListSerialization.propertyList(
-      from: Data(contentsOf: appURL.appendingPathComponent("Info.plist")),
-      format: nil) as? [String: Any]
+    let mergedInfo =
+      try PropertyListSerialization.propertyList(
+        from: Data(contentsOf: appURL.appendingPathComponent("Info.plist")),
+        format: nil) as? [String: Any]
     #expect(mergedInfo?["DTPlatformName"] as? String == "iphoneos")
     #expect(mergedInfo?["DTPlatformVersion"] as? String == installation.iphoneosSDKVersion)
     #expect(mergedInfo?["DTSDKName"] as? String == "iphoneos\(installation.iphoneosSDKVersion)")
@@ -77,7 +86,7 @@ struct PackerModeATests {
     }
 
     let root = try testProjectRoot()
-    defer { try? FileManager.default.removeItem(at: root) }
+    defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
 
     let config = AppConfig(
       version: 1,
@@ -108,6 +117,7 @@ struct PackerModeATests {
       sdkInput: .xcodeInPlace(installation),
       buildConfiguration: .debug
     )
+    defer { try? FileManager.default.removeItem(at: packer.builderCacheRoot) }
     let appURL = try packer.pack()
 
     let info = try MachOInspector.inspect(at: appURL.appendingPathComponent(plan.product))
@@ -116,16 +126,20 @@ struct PackerModeATests {
     #expect(info.platform == "ios-simulator")
     #expect(info.sdkVersion?.hasPrefix(installation.iphoneSimulatorSDKVersion!) == true)
 
-    let mergedInfo = try PropertyListSerialization.propertyList(
-      from: Data(contentsOf: appURL.appendingPathComponent("Info.plist")),
-      format: nil) as? [String: Any]
+    let mergedInfo =
+      try PropertyListSerialization.propertyList(
+        from: Data(contentsOf: appURL.appendingPathComponent("Info.plist")),
+        format: nil) as? [String: Any]
     #expect(mergedInfo?["DTPlatformName"] as? String == "iphonesimulator")
-    #expect(mergedInfo?["DTSDKName"] as? String == "iphonesimulator\(installation.iphoneSimulatorSDKVersion!)")
+    #expect(
+      mergedInfo?["DTSDKName"] as? String
+        == "iphonesimulator\(installation.iphoneSimulatorSDKVersion!)")
   }
 
   private func testProjectRoot() throws -> URL {
-    let root = FileManager.default.temporaryDirectory
+    let container = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    let root = container.appendingPathComponent("ModeApp", isDirectory: true)
     try FileManager.default.createDirectory(
       at: root, withIntermediateDirectories: true)
 

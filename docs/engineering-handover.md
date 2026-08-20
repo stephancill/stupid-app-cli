@@ -575,6 +575,11 @@ Correct known xtool weaknesses while extracting this design:
 - Resolve tools through injected configuration rather than hard-coded macOS paths.
 - Reject unsupported resources instead of copying them as if compiled.
 - Keep generated and persistent release files in separate directories.
+- Preserve SwiftPM incremental state across CLI invocations: generated synthetic packages
+  live at stable, project-keyed paths in the user cache (outside the root package tree),
+  while their scratch directories live under `.build/stupid-app/scratch/`. Generated
+  manifests and stubs are rewritten only when their content changes; UUID temporary
+  directories are limited to unsigned bundle assembly and are removed afterward.
 - Emit the App Store-required build-system Info.plist keys (`DTPlatformName`,
   `DTPlatformVersion`, `DTSDKName`, `DTXcode`, `DTXcodeBuild`, `DTCompiler`) from the
   SDK export manifest, and never emit `BuildMachineOSBuild` on Linux.

@@ -16,6 +16,40 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
 
+## 2026-08-20 - Persistent SwiftPM incremental build cache
+
+### Summary
+
+- Fixed `Packer` discarding all SwiftPM compilation state after every invocation. The
+  generated synthetic package and `--scratch-path` previously lived inside a UUID
+  temporary session that was deleted after bundle assembly, making every `build`, `run`,
+  and `release archive` a cold build.
+- SwiftPM scratch data now persists per target/product under
+  `.build/stupid-app/scratch/`. Synthetic builder packages persist outside the root
+  package tree in a project-keyed user-cache directory, preserving a stable package path
+  without making the builder a descendant of its own local dependency.
+- Generated `Package.swift` and `stub.c` inputs are written only when content changes, so
+  unchanged builds do not invalidate cache inputs through modification-time churn.
+- Corrected the generated local-package reference to use SwiftPM's canonical path
+  identity. Builder directories retain the distinct `<product>-builder` basename so the
+  builder and dependency cannot have the same package identity when a scaffold directory
+  matches its product name.
+
+### Verification
+
+- Added `PackerCacheTests` for deterministic cache paths, external builder placement,
+  package identity derivation, and unchanged generated-file modification times.
+- Strengthened `PackerModeATests` to use the normal scaffold shape (project directory and
+  product both named `ModeApp`) and to perform a second pack while proving a marker in the
+  scratch directory survives.
+- A generated app was built, installed, and launched twice on the preferred simulator.
+  The cold run completed in 32.58 seconds; the unchanged warm run completed in 8.36
+  seconds and relaunched successfully.
+- `swift format lint --strict` passes for the changed Swift files. `swift test` passes all
+  249 tests across 46 suites (one optional asset-catalog differential test skipped),
+  `swift build -c release` passes, and `git diff --check` passes. Existing unrelated
+  compiler and OpenSSL deployment-target warnings remain.
+
 ## 2026-08-20 - Release 0.0.5
 
 `stupid-app 0.0.5` ships the native crash-report inspection and pull (`device
