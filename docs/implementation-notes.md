@@ -110,6 +110,14 @@ crash`), usable over a local file, USB, or the wireless CoreDevice tunnel. Binar
 published to the GitHub release as versionless `stupid-app-macos-arm64` so the
 README install command (releases/latest) stays stable.
 
+## 2026-08-20 - Release 0.0.6
+
+`stupid-app 0.0.6` preserves the SwiftPM incremental build cache across `build`,
+`run`, and `release archive` invocations, eliminating cold builds on every run,
+and fixes wireless `run --network` device resolution to key off the UDID while
+dropping the unused discovery/install/launch timeout flags. Binary published to
+the GitHub release as versionless `stupid-app-macos-arm64`.
+
 ## 2026-08-20 - `device crash --network` verified on a physical iPhone over the wireless tunnel
 
 ### Summary
