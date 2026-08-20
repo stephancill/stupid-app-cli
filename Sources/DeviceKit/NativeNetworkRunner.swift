@@ -57,7 +57,8 @@ public struct NativeNetworkRunner: Sendable {
   }
 
   public func installAndLaunch() throws -> Int64 {
-    let identifiers = try RemotePairing.pairedIdentifiers(in: pairingDirectory)
+    let identifiers =
+      try RemotePairing.resolveIdentifiers(forRequestedUdid: udid, in: pairingDirectory)
     guard !identifiers.isEmpty else { throw Error.noRemoteRecord }
 
     let advertisements = try RemotepairingDiscovery().browse(timeout: discoveryTimeoutSeconds)

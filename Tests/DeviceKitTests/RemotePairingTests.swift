@@ -81,6 +81,56 @@ struct RemotePairingTests {
     #expect(Set(identifiers) == Set(["AAA", "BBB"]))
   }
 
+  @Test("saved UDID mapping persists identifier to device UDID atomically")
+  func udidMappingSaveLoad() throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    try RemotePairing.saveUdidMapping(
+      identifier: "AAA", udid: "udid-1", in: directory)
+    try RemotePairing.saveUdidMapping(
+      identifier: "BBB", udid: "udid-2", in: directory)
+
+    #expect(RemotePairing.remoteIdentifiers(forUdid: "udid-1", in: directory) == ["AAA"])
+    #expect(RemotePairing.remoteIdentifiers(forUdid: "udid-2", in: directory) == ["BBB"])
+    #expect(RemotePairing.remoteIdentifiers(forUdid: "unknown", in: directory).isEmpty)
+    let permissions =
+      (try? FileManager.default.attributesOfItem(
+        atPath: RemotePairing.udidMappingURL(in: directory).path)[.posixPermissions] as? Int) ?? 0
+    #expect(permissions & 0o777 == 0o600)
+  }
+
+  @Test("resolution filters to the requested UD ID when a mapping exists")
+  func resolveIdentifiersPrefersMapping() throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    try Data([0x01]).write(to: directory.appendingPathComponent("remote_AAA.plist"))
+    try Data([0x01]).write(to: directory.appendingPathComponent("remote_BBB.plist"))
+    try RemotePairing.saveUdidMapping(identifier: "BBB", udid: "udid-2", in: directory)
+
+    let resolved = try RemotePairing.resolveIdentifiers(
+      forRequestedUdid: "udid-2", in: directory)
+    #expect(resolved == ["BBB"])
+  }
+
+  @Test("resolution falls back to all records when no mapping file exists")
+  func resolveIdentifiersFallsBackWithoutMapping() throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    try Data([0x01]).write(to: directory.appendingPathComponent("remote_AAA.plist"))
+
+    let resolved = try RemotePairing.resolveIdentifiers(
+      forRequestedUdid: "udid-1", in: directory)
+    #expect(resolved == ["AAA"])
+  }
+
   @Test("pair-verify ChaCha20-Poly1305 wire format round-trips without the nonce")
   func chachaRoundTrip() throws {
     let key = Data(repeating: 0x5A, count: 32)

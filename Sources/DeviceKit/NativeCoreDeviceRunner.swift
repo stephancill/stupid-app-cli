@@ -119,8 +119,9 @@ public struct NativeCoreDeviceRunner: Sendable {
     bundleID: String,
     udid: String,
     ipa: URL,
-    discoveryTimeoutSeconds: Double,
-    installTimeoutSeconds: Double
+    discoveryTimeoutSeconds: Double = 15,
+    installTimeoutSeconds: Double = 300,
+    launchTimeoutSeconds: Double = 60
   ) throws -> Int64 {
     var arguments = ["coredevice-helper", "run-network"]
     arguments += ["--udid", udid]

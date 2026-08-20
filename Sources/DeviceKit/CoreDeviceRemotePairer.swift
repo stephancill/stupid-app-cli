@@ -89,6 +89,7 @@ public struct CoreDeviceRemotePairer: Sendable {
       throw Error.recordWriteFailed("the device identifier is not a safe file name")
     }
     try persist(record, identifier: identifier)
+    try RemotePairing.saveUdidMapping(identifier: identifier, udid: udid, in: pairingDirectory)
     progress?("Stored the CoreDevice remote pairing record.")
   }
 

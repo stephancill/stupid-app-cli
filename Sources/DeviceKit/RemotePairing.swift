@@ -122,6 +122,73 @@ public enum RemotePairing {
     pairingDirectory.appendingPathComponent("remote_\(identifier).plist")
   }
 
+  // MARK: - UDID mapping
+
+  /// A JSON file mapping each remote-pairing identifier to the device UDID it
+  /// was paired from. Written at pair time so wireless runs can resolve the
+  /// requested `--udid` to exactly the matching remote record, instead of
+  /// guessing across every record on the network (which is ambiguous when
+  /// several Apple devices advertise).
+  public static let udidMappingFileName = "remote_udid.json"
+
+  static func udidMappingURL(in pairingDirectory: URL) -> URL {
+    pairingDirectory.appendingPathComponent(Self.udidMappingFileName)
+  }
+
+  /// Loads the persisted `identifier -> udid` mapping, or an empty dictionary.
+  static func loadUdidMapping(in pairingDirectory: URL) -> [String: String] {
+    let url = udidMappingURL(in: pairingDirectory)
+    guard
+      let data = try? Data(contentsOf: url),
+      let object = try? JSONSerialization.jsonObject(with: data),
+      let entries = object as? [String: String]
+    else {
+      return [:]
+    }
+    return entries
+  }
+
+  /// Atomically upserts `udid` into the mapping for `identifier`, preserving any
+  /// previously persisted entries for other devices on this host.
+  static func saveUdidMapping(
+    identifier: String, udid: String, in pairingDirectory: URL
+  ) throws {
+    var entries = loadUdidMapping(in: pairingDirectory)
+    entries[identifier] = udid
+    let data = try JSONSerialization.data(withJSONObject: entries, options: [.sortedKeys])
+    try FileManager.default.createDirectory(
+      at: pairingDirectory, withIntermediateDirectories: true)
+    try data.write(to: udidMappingURL(in: pairingDirectory), options: .atomic)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o600],
+      ofItemAtPath: udidMappingURL(in: pairingDirectory).path)
+  }
+
+  /// Resolves the remote-pairing record identifiers that belong to a requested
+  /// device UDID. When no persisted mapping is present (pre-mapping records), it
+  /// returns the empty set so callers fall back to scanning every record.
+  static func remoteIdentifiers(forUdid udid: String, in pairingDirectory: URL) -> [String] {
+    loadUdidMapping(in: pairingDirectory).compactMap { identifier, mappedUDID in
+      mappedUDID == udid ? identifier : nil
+    }
+  }
+
+  /// Returns the remote-pairing identifiers to attempt for a requested UDID.
+  /// When a persisted UDID mapping exists, only the identifiers recorded for that
+  /// exact device are returned, so wireless runs do not race across other Apple
+  /// devices on the network. When no mapping file is present (records created
+  /// before mappings were added), it falls back to every saved identifier so
+  /// older records remain usable.
+  static func resolveIdentifiers(
+    forRequestedUdid udid: String, in pairingDirectory: URL
+  ) throws -> [String] {
+    guard FileManager.default.fileExists(atPath: udidMappingURL(in: pairingDirectory).path) else {
+      return try pairedIdentifiers(in: pairingDirectory)
+    }
+    let identifiers = remoteIdentifiers(forUdid: udid, in: pairingDirectory)
+    return identifiers.isEmpty ? try pairedIdentifiers(in: pairingDirectory) : identifiers
+  }
+
   // MARK: - Host identifier
 
   /// Reproduces pymobiledevice3's `generate_host_id()`: an uppercase UUIDv3

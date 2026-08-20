@@ -49,17 +49,6 @@ struct RunCommand: AsyncParsableCommand {
     help: "usbmuxd address (Unix socket or numeric HOST:PORT) used for USB operations.")
   var usbmuxAddress: String?
 
-  @Option(
-    name: .customLong("discovery-timeout"), help: "Maximum seconds allowed for device discovery.")
-  var discoveryTimeout: Double = 15
-
-  @Option(
-    name: .customLong("install-timeout"), help: "Maximum seconds allowed for installation.")
-  var installTimeout: Double = 300
-
-  @Option(name: .customLong("launch-timeout"), help: "Maximum seconds allowed for app launch.")
-  var launchTimeout: Double = 60
-
   @Option(name: .customLong("home"), help: "Credential store directory.")
   var home: String?
 
@@ -88,8 +77,7 @@ struct RunCommand: AsyncParsableCommand {
     let nativeRunner = NativeCoreDeviceRunner(
       sudoPath: sudoPath,
       pairingDirectory: pairingDirectory,
-      usbmuxAddress: usbmuxAddress,
-      launchTimeoutSeconds: launchTimeout
+      usbmuxAddress: usbmuxAddress
     )
     try nativeRunner.validateEnvironment(requirePrivileges: true)
 
@@ -129,7 +117,8 @@ struct RunCommand: AsyncParsableCommand {
     guard let teamID = identity.teamID else {
       throw RunError.identityMissingTeam
     }
-    guard let profileURL = try locateProfile(home: context.homeURL, bundleID: config.bundleID) else {
+    guard let profileURL = try locateProfile(home: context.homeURL, bundleID: config.bundleID)
+    else {
       throw RunError.profileMissing(config.bundleID)
     }
 
@@ -158,11 +147,14 @@ struct RunCommand: AsyncParsableCommand {
       print("Packaged \(output.ipaURL.path)")
       print("IPA SHA-256: \(try SHA256.file(at: output.ipaURL))")
     } else {
-      let extensions = try plan.extensions.map { extensionPlan -> DeepSigningPipeline.ExtensionInput in
-        let appexURL = unsignedApp
+      let extensions = try plan.extensions.map {
+        extensionPlan -> DeepSigningPipeline.ExtensionInput in
+        let appexURL =
+          unsignedApp
           .appendingPathComponent("PlugIns/\(extensionPlan.product).appex", isDirectory: true)
-        guard let extensionProfileURL = try locateProfile(
-          home: context.homeURL, bundleID: extensionPlan.bundleID)
+        guard
+          let extensionProfileURL = try locateProfile(
+            home: context.homeURL, bundleID: extensionPlan.bundleID)
         else {
           throw RunError.profileMissing(extensionPlan.bundleID)
         }
@@ -205,7 +197,6 @@ struct RunCommand: AsyncParsableCommand {
       let installer = NativeUSBInstaller(
         usbmuxAddress: usbmuxAddress,
         pairingDirectory: credentialHome.appendingPathComponent("pairing", isDirectory: true),
-        timeoutSeconds: installTimeout,
         progress: { print($0) }
       )
       guard let targetUDID = try resolveTargetUDID(discovery: discovery) else {
@@ -217,8 +208,7 @@ struct RunCommand: AsyncParsableCommand {
       let nativeRunner = NativeCoreDeviceRunner(
         sudoPath: sudoPath,
         pairingDirectory: credentialHome.appendingPathComponent("pairing", isDirectory: true),
-        usbmuxAddress: usbmuxAddress,
-        launchTimeoutSeconds: launchTimeout
+        usbmuxAddress: usbmuxAddress
       )
       let pid = try nativeRunner.launchUSB(bundleID: config.bundleID, udid: targetUDID)
       print("Launched \(config.bundleID) (pid \(pid)).")
@@ -231,9 +221,7 @@ struct RunCommand: AsyncParsableCommand {
         let pid = try nativeRunner.runNetwork(
           bundleID: config.bundleID,
           udid: udid,
-          ipa: ipaURL,
-          discoveryTimeoutSeconds: discoveryTimeout,
-          installTimeoutSeconds: installTimeout
+          ipa: ipaURL
         )
         print("Installed and launched \(config.bundleID) (pid \(pid)).")
       #else
@@ -242,9 +230,6 @@ struct RunCommand: AsyncParsableCommand {
           udid: udid,
           ipa: ipaURL,
           bundleID: config.bundleID,
-          discoveryTimeoutSeconds: discoveryTimeout,
-          installTimeoutSeconds: installTimeout,
-          launchTimeoutSeconds: launchTimeout,
           progress: { print($0) }
         )
         print("Installing and launching on the selected device over the network...")
@@ -331,7 +316,8 @@ struct RunCommand: AsyncParsableCommand {
     // extension, then the containing app seals the signed appex.
     let pluginsDir = appURL.appendingPathComponent("PlugIns", isDirectory: true)
     if FileManager.default.fileExists(atPath: pluginsDir.path),
-      let appexes = try? FileManager.default.contentsOfDirectory(atPath: pluginsDir.path) {
+      let appexes = try? FileManager.default.contentsOfDirectory(atPath: pluginsDir.path)
+    {
       for appex in appexes.sorted()
       where appex.hasSuffix(".appex") {
         try adHocSignSingle(

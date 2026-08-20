@@ -163,7 +163,7 @@ a `SIGKILL` from excessive logging is surfaced directly.
 ## run
 
 ```text
-stupid-app run [--usb|--network|--simulator] [--udid <udid>] [--sdk-id <id>] [--swift <path>] [--sudo <path>] [--usbmux <addr>] [--discovery-timeout <sec>] [--install-timeout <sec>] [--launch-timeout <sec>] [--home <dir>]
+stupid-app run [--usb|--network|--simulator] [--udid <udid>] [--sdk-id <id>] [--swift <path>] [--sudo <path>] [--usbmux <addr>] [--home <dir>]
 ```
 
 Builds, signs once (Apple Development), packages, installs, and launches.
@@ -173,8 +173,8 @@ Builds, signs once (Apple Development), packages, installs, and launches.
   (device must be paired via `device pair --usb` beforehand).
 - `--simulator` — macOS Xcode-present only; builds for the simulator SDK,
   ad-hoc signs, boots, installs, launches via `simctl`.
-- `--udid` auto-selects when omitted. Timeouts default to 15s discovery,
-  300s install, 60s launch. Requires privileged helper access for network runs.
+- `--udid` auto-selects when omitted. Requires privileged helper access for
+  network runs.
 
 ## simulators
 

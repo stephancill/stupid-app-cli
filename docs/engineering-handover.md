@@ -1272,7 +1272,6 @@ These local projects are useful private references for fixtures and failure mode
 | `~/environments/personal/pus/stupid-social` | `Package.swift`, `xtool.yml`, `Info.plist`, `.release/release-manifest.json` | Best simple extension-free project shape and release-manifest comparison candidate |
 | `~/environments/personal/pus/stupid-authenticator` | `xtool.yml`, app/extension entitlements, `docs/implementation-notes.md:23-38` | Future per-bundle profile, capability, entitlement, and versioning requirements |
 | `~/environments/personal/pus/stupid-widgets/stupid-widgets` | `xtool.yml`, widget entitlements, extension plist and metadata | Unsupported Apple build-tool outputs such as App Intents metadata and extension packaging |
-| `~/environments/personal/pus/stupid-torrent-client` | `scripts/release.sh`, `.env.example`, simple package shape | Earlier release-script evolution; treat its checked-in script as a prototype, not the canonical reference |
 
 Known-good Xcode-produced release artifacts may be used locally for differential signature inspection, but they are secret-bearing operational data. Never add them to fixtures. Create sanitized synthetic certificate/profile/signature fixtures for committed tests.
 
@@ -1536,7 +1535,13 @@ credential directory.
 `run --network --udid <udid>` discovers and deduplicates remote-pairing candidates,
 forces a TCP tunnel, validates the selected device through RSD, installs and verifies
 the exact bundle through InstallationProxy, launches through AppService, and tears the
-stack down in one process lifetime.
+stack down in one process lifetime. Pair time writes a `remote_udid.json` mapping in
+the credential directory (identifier -> device UDID) so a wireless run resolves the
+requested `--udid` to exactly the matching remote record instead of racing across
+every Apple device advertising on the network; records created before the mapping
+gracefully fall back to all saved identifiers. `stupid-app run` no longer exposes
+`--discovery-timeout`/`--install-timeout`/`--launch-timeout` and uses the sensible
+built-in defaults instead.
 
 The remote-pair bootstrap is now native too: `device pair --usb` runs a privileged
 `coredevice-helper pair-usb` subcommand that establishes the CoreDevice USB tunnel and

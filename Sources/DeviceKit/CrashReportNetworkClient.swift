@@ -53,7 +53,8 @@ public struct CrashReportNetworkClient: Sendable {
   /// over the wireless tunnel and returns it parsed. The tunnel is kept alive for
   /// the duration of the read.
   public func latestParsedReport(nameFilter: String?) throws -> CrashReport {
-    let identifiers = try RemotePairing.pairedIdentifiers(in: pairingDirectory)
+    let identifiers =
+      try RemotePairing.resolveIdentifiers(forRequestedUdid: udid, in: pairingDirectory)
     guard !identifiers.isEmpty else { throw Error.noRemoteRecord }
 
     let advertisements = try RemotepairingDiscovery().browse(timeout: discoveryTimeoutSeconds)

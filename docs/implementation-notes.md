@@ -50,6 +50,59 @@ The current project plan and architecture live in `docs/engineering-handover.md`
   `swift build -c release` passes, and `git diff --check` passes. Existing unrelated
   compiler and OpenSSL deployment-target warnings remain.
 
+## 2026-08-20 - Resolve wireless `run --network` by device UDID; drop unused run timeouts
+
+### Summary
+
+Wireless runs could land on the wrong Apple device when several iPhones
+advertise on the same network. Pair time now writes a `remote_udid.json` mapping
+(remote-pair identifier -> device UDID), and `run --network` / `device crash --network`
+resolve the requested `--udid` to exactly the matching remote record instead of
+guessing across every candidate. `stupid-app run` also dropped
+`--discovery-timeout` / `--install-timeout` / `--launch-timeout` in favor of the
+sensible built-in defaults.
+
+### What changed
+
+- `RemotePairing` gained `remote_udid.json` persistence: `saveUdidMapping` writes
+  atomically with mode `0600`, `remoteIdentifiers(forUdid:)` filters by device UDID,
+  and `resolveIdentifiers(forRequestedUdid:in:)` returns only matching identifiers
+  when a mapping file exists and otherwise falls back to all saved identifiers for
+  pre-mapping records.
+- `CoreDeviceRemotePairer.pair(udid:)` now writes the mapping after storing the
+  remote record.
+- `NativeNetworkRunner.installAndLaunch` and `CrashReportNetworkClient
+  .latestParsedReport` now resolve identifiers via
+  `RemotePairing.resolveIdentifiers(forRequestedUdid:in:)`, so the candidate list is
+  filtered to the requested device's record.
+- `runCommand` no longer defines the three timeout options; USB install, network run,
+  and crash pull use the `DeviceKit` defaults (discovery 15s, install 300s, launch 60s).
+- `NativeCoreDeviceRunner.runNetwork` keeps its timeout parameters (with defaults), so
+  the privileged-helper boundary is unchanged internally.
+
+### Why
+
+With multiple Apple devices advertising on the LAN, a wireless run previously built
+candidates as a cross product of every saved identifier with every discovered address;
+the first tunnel established often resolved to a different device and the run failed
+with "the tunnel resolved a different device". Mapping the requested device UDID to its
+remote record at pair time collapses the candidate set to the correct device. The run
+timeouts were removed because no user needed to tune them.
+
+### Verification
+
+- Added `RemotePairingTests` cases for mapping save/load, atomic mode `0600`,
+  UDID-filtered resolution, and graceful fallback when no mapping exists.
+- Full `swift test` passes (all suites pass); `swift build` and `swift format`
+  are clean.
+
+### Notes
+
+- Pre-mapping records fall back to scanning all saved identifiers (non-credential
+  introspection); re-running `device pair --usb` refreshes the mapping.
+- The mapping file is a per-host credential-store artifact; it holds only the device
+  UDID, which already appears in the `--udid` flag.
+
 ## 2026-08-20 - Release 0.0.5
 
 `stupid-app 0.0.5` ships the native crash-report inspection and pull (`device
@@ -170,7 +223,7 @@ paired iPhone over USB via `stupid-app run --usb`, and forced a crash:
 - **Uncaught Swift fatal error** → `CrashTester-2026-08-20-…ips` (bug type 309,
   `EXC_BREAKPOINT`, termination `SIGNAL 5`). `device crash` printed the correct
   summary and JSON.
-- **stderr log-flood** (reproducing the earlier torrent bug) → iOS killed it with a
+- **stderr log-flood** (reproducing an earlier log-flood launch failure) → iOS killed it with a
   `cpu_resource` report (bug type 202, `Event: cpu usage`). `device crash
   --udid … --filter cpu_resource` now prints `Termination: CPU_RESOURCE — cpu
   usage` and classifies it as a watchdog/resource-limit termination.
@@ -4283,8 +4336,8 @@ support; the profile-gated pass-through is that generalization.
 
 ### Summary
 
-Three findings from migrating `stupid-authenticator`, `stupid-social`, and
-`stupid-torrent-client` to the CLI were fed back as product improvements (CLI `0.0.4`):
+Three findings from migrating `stupid-authenticator` and `stupid-social` to the CLI
+were fed back as product improvements (CLI `0.0.4`):
 
 1. **Optional source entitlements.** `EntitlementDeriver.derive` now accepts a `URL?`
    source. `AppConfig.resolvedEntitlementsURL` returns nil when `entitlementsPath` is
@@ -4305,7 +4358,7 @@ Three findings from migrating `stupid-authenticator`, `stupid-social`, and
 
 ### Why
 
-The real apps hit the absent-entitlements wall (torrent had no entitlements), a
+The real apps hit the absent-entitlements wall (one app had no entitlements), a
 mid-poll-kill duplicate upload confused the rerun, and every repo hand-maintained the
 app + extension `CFBundleVersion` bump with a local `bump-build` helper. These changes
 close those three workflow gaps.
