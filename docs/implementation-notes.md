@@ -16,6 +16,13 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
 
+## 2026-08-20 - Release 0.0.5
+
+`stupid-app 0.0.5` ships the native crash-report inspection and pull (`device
+crash`), usable over a local file, USB, or the wireless CoreDevice tunnel. Binary
+published to the GitHub release as versionless `stupid-app-macos-arm64` so the
+README install command (releases/latest) stays stable.
+
 ## 2026-08-20 - `device crash --network` verified on a physical iPhone over the wireless tunnel
 
 ### Summary
