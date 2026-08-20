@@ -55,38 +55,6 @@ Without this step the CLI works identically; the skill only adds agent guidance.
 - **macOS:** Apple Silicon macOS 14+ — build against Xcode's SDK in place, or from an
   imported SDK bundle (Xcode-absent mode), including a simulator run loop.
 
-## Package layout
-
-- `Sources/SDKCore` — cross-platform primitives: SHA-256 wrapper (`swift-crypto`),
-  the SDK export manifest model, host triple / Swift version probing, and safe archive
-  listing/validation.
-- `Sources/ProjectCore` — the typed `stupid-app.yml` schema and project generator.
-- `Sources/BuildCore` — SwiftPM planning, unsigned `.app` assembly (including
-  `PlugIns/*.appex` extensions from the `extensions:` config), SDK-version
-  discovery, native app-icon generation and `Assets.car` writing (`swift-png`), and
-  Mach-O inspection.
-- `Sources/CLZFSE` — Apple's pinned BSD-3-Clause LZFSE reference implementation used
-  for compressed native asset-catalog payloads.
-- `Sources/ASCKit` — App Store Connect ES256 JWT, HTTP client, and bundle-ID /
-  certificate / profile / Build Upload operations; permission-hardened credential
-  storage; the release manifest.
-- `Sources/SigningKit` — provisioning-profile CMS parsing, entitlement derivation
-  (including App Groups), native shallow and deep (extension) signing and
-  verification, pinned public Apple signing trust, and IPA packaging.
-- `Sources/DeviceKit` — native usbmux discovery, pair-record access, lockdown session
-  TLS, AFC staging, installation proxy, bounded native USB installation, mDNS DNS-SD,
-  remote-pairing Pair-Verify, the SRP-3072 Pair-Setup bootstrap, CoreDevice
-  tunnel/run integration, and the native cancellable OpenSSL 3
-  TLS-PSK/`CDTunnel` connection.
-- `Sources/ProductCore` — product-level environment diagnostics used by `doctor`.
-- `Sources/stupid-app` — the cross-platform CLI.
-- `docs/sdk-export-format.md` — the SDK bundle archive and manifest specification.
-- `docs/engineering-handover.md` — the maintained engineering source of truth.
-- `docs/implementation-notes.md` — the chronological engineering log.
-- `docs/clean-host-setup.md` — clean-host setup and recovery procedures.
-- `docs/macos-clean-host-setup.md` — macOS setup and recovery.
-- `skills/stupid-app-cli/` — agent-facing CLI usage skill distributed with the binary.
-
 ## Commands
 
 ```text
@@ -145,9 +113,42 @@ files when run in a project directory.
 
 CoreDevice tunneling requires `/dev/net/tun` and `CAP_NET_ADMIN` on Linux (a `utun`
 kernel-control socket on macOS). The CLI never elevates implicitly: run an
-already-privileged helper or pass an explicit `--sudo` path. Production setup should
-install the helper root-owned and grant only that exact command in sudoers. Pairing
-records are stored under the permission-hardened credential directory.
+already-privileged controlled helper or pass an explicit `--sudo` path. Production
+updates of the helper must be deployed in a controlled, audited manner.
+
+Pairing records are stored under the permission-hardened credential directory.
+
+## Package layout
+
+- `Sources/SDKCore` — cross-platform primitives: SHA-256 wrapper (`swift-crypto`),
+  the SDK export manifest model, host triple / Swift version probing, and safe archive
+  listing/validation.
+- `Sources/ProjectCore` — the typed `stupid-app.yml` schema and project generator.
+- `Sources/BuildCore` — SwiftPM planning, unsigned `.app` assembly (including
+  `PlugIns/*.appex` extensions from the `extensions:` config), SDK-version
+  discovery, native app-icon generation and `Assets.car` writing (`swift-png`), and
+  Mach-O inspection.
+- `Sources/CLZFSE` — Apple's pinned BSD-3-Clause LZFSE reference implementation used
+  for compressed native asset-catalog payloads.
+- `Sources/ASCKit` — App Store Connect ES256 JWT, HTTP client, and bundle-ID /
+  certificate / profile / Build Upload operations; permission-hardened credential
+  storage; the release manifest.
+- `Sources/SigningKit` — provisioning-profile CMS parsing, entitlement derivation
+  (including App Groups), native shallow and deep (extension) signing and
+  verification, pinned public Apple signing trust, and IPA packaging.
+- `Sources/DeviceKit` — native usbmux discovery, pair-record access, lockdown session
+  TLS, AFC staging, installation proxy, bounded native USB installation, mDNS DNS-SD,
+  remote-pairing Pair-Verify, the SRP-3072 Pair-Setup bootstrap, CoreDevice
+  tunnel/run integration, and the native cancellable OpenSSL 3
+  TLS-PSK/`CDTunnel` connection.
+- `Sources/ProductCore` — product-level environment diagnostics used by `doctor`.
+- `Sources/stupid-app` — the cross-platform CLI.
+- `docs/sdk-export-format.md` — the SDK bundle archive and manifest specification.
+- `docs/engineering-handover.md` — the maintained engineering source of truth.
+- `docs/implementation-notes.md` — the chronological engineering log.
+- `docs/clean-host-setup.md` — clean-host setup and recovery procedures.
+- `docs/macos-clean-host-setup.md` — macOS setup and recovery.
+- `skills/stupid-app-cli/` — agent-facing CLI usage skill distributed with the binary.
 
 ## Export (macOS)
 
