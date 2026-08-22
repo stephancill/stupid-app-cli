@@ -16,6 +16,43 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
 
+## 2026-08-22 - EntitlementDeriver Expands Keychain AppIdentifierPrefix And Honors Team Wildcard
+
+### Summary
+
+- `EntitlementDeriver` now recurses through source entitlements and replaces the Xcode
+  build token `$(AppIdentifierPrefix)` with the concrete `<teamID>.` prefix. The CLI signs
+  on its own and does not run Xcode's build-setting expansion, so the literal token was
+  previously passed through into the signed entitlements verbatim.
+- The array reconciliation no longer requires a rigid `Set.isSubset` equality. A profile
+  authorization like `TEAM.*` now wildcard-matches any requested `<teamID>.<suffix>`
+  group, mirroring how codesigning interprets a team keychain-access-group wildcard.
+- `runDevelopment`/`runDistribution` profile reuse behavior is unchanged: an existing
+  profile for a bundle ID is still reused by name, so provisioning a physical device after
+  the first workflow requires a distinct `--profile-name` (then placing that profile where
+  the signer looks) until a real property-based selection is added.
+
+### Why
+
+- The rebuild's development profile authorizes `TEAM.*` keychain access, while the project
+  sources keep a precise `$(AppIdentifierPrefix)<bundle>.` group. Xcode expands the token;
+  `stupid-app` did not, so device signing failed with "keychain-access-groups value
+  mismatch".
+
+### Verification
+
+- `swift test --filter EntitlementDeriverTests` passed; new test
+  `keychainAccessGroupsWildcard` asserts the token expands to the prefixed groups and that
+  they reconcile against a `TEAM.*` profile.
+- `swift build -c release` succeeded; installed binary re-ran the physical-device signing
+  and the app packaged, installed, and was verified on-device.
+
+### Follow-Up
+
+- Multiple physical devices still require per-device profile regeneration; a property/
+  device-target selection in `signing setup` would remove the manual
+  copy-onto-the-canonical-profile step.
+
 ## 2026-08-22 - Release 0.0.7
 
 `stupid-app 0.0.7` invalidates persistent SwiftPM product scratches when the package

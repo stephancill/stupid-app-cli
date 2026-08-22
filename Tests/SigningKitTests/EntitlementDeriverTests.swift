@@ -138,4 +138,43 @@ struct EntitlementDeriverTests {
       )
     }
   }
+
+  @Test("keychain access groups expand AppIdentifierPrefix and match a team wildcard")
+  func keychainAccessGroupsWildcard() throws {
+    let tmps = FileManager.default.temporaryDirectory
+      .appendingPathComponent("deriver-keychain-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: tmps, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tmps) }
+
+    let source = tmps.appendingPathComponent("App.entitlements")
+    try writePlist([
+      "keychain-access-groups": [
+        "$(AppIdentifierPrefix)net.stupidtech.widgets",
+        "$(AppIdentifierPrefix)net.stupidtech.widgets.extension",
+      ]
+    ], to: source)
+
+    // The development profile authorizes the team-wide wildcard group plus com.apple.token.
+    let profile = MobileProvisionParser.ProvisioningProfile(plist: [
+      "Entitlements": [
+        "keychain-access-groups": ["TEAM123.*", "com.apple.token"],
+        "application-identifier": "TEAM123.net.stupidtech.widgets",
+        "com.apple.developer.team-identifier": "TEAM123",
+        "get-task-allow": false,
+      ]
+    ])
+
+    let derived = try EntitlementDeriver.derive(
+      sourceURL: source,
+      configuration: .distribution,
+      bundleID: "net.stupidtech.widgets",
+      profile: profile,
+      teamID: "TEAM123"
+    )
+    // The token expands to the concrete team-prefixed group, not a literal $(...).
+    #expect((derived["keychain-access-groups"] as? [String]) == [
+      "TEAM123.net.stupidtech.widgets",
+      "TEAM123.net.stupidtech.widgets.extension",
+    ])
+  }
 }

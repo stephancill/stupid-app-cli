@@ -70,6 +70,12 @@ public enum EntitlementDeriver {
         derived["application-identifier"] = applicationIdentifier
         derived["com.apple.developer.team-identifier"] = teamID
 
+        // Expand the Xcode build token to the concrete team prefix. This pipeline signs
+        // on its own and does not run an Xcode build-setting expansion, so a literal
+        // `$(AppIdentifierPrefix)` in keychain-access-groups would otherwise be signed
+        // verbatim.
+        derived = expandBuildPrefix(in: derived, teamID: teamID)
+
         // Reconcile: every requested entitlement must be authorized by the profile.
         let profileEntitlements = profile.entitlements
         for (key, value) in derived {
@@ -91,15 +97,43 @@ public enum EntitlementDeriver {
                     throw Error.notAuthorizedByProfile("\(key) value mismatch")
                 }
             } else if let profileArray = profileValue as? [Any], let valueArray = value as? [Any] {
-                let left = (profileArray as? [String]).map { Set($0) }
-                let right = (valueArray as? [String]).map { Set($0) }
-                if let left, let right, !right.isSubset(of: left) {
-                    throw Error.notAuthorizedByProfile("\(key) value mismatch")
+                let profileStrings = profileArray as? [String] ?? []
+                let valueStrings = valueArray as? [String] ?? []
+                let missing = valueStrings.filter { candidate in
+                    !profileStrings.contains { isAuthorized(pattern: $0, value: candidate) }
+                }
+                if !missing.isEmpty {
+                    throw Error.notAuthorizedByProfile("\(key) value mismatch: \(missing)")
                 }
             }
         }
 
         return derived
+    }
+
+    /// Recursively replaces `$(AppIdentifierPrefix)` with `<teamID>.` so entitlement
+    /// arrays reference the real keychain access group rather than an unexpanded token.
+    private static func expandBuildPrefix(in plist: [String: Any], teamID: String) -> [String: Any] {
+        let prefix = "$(AppIdentifierPrefix)"
+        func expand(_ value: Any) -> Any {
+            if let string = value as? String {
+                return string.replacingOccurrences(of: prefix, with: teamID + ".")
+            }
+            if let array = value as? [Any] {
+                return array.map(expand)
+            }
+            return value
+        }
+        return plist.mapValues(expand)
+    }
+
+    /// Returns true when `pattern` equals `value`, or `pattern` ends in `.*` and
+    /// `value` is prefixed by `pattern` without the trailing wildcard. This mirrors how
+    /// codesigning treats a profile keychain-access-group like `TEAM.*`.
+    private static func isAuthorized(pattern: String, value: String) -> Bool {
+        if pattern == value { return true }
+        guard pattern.hasSuffix(".*") else { return false }
+        return value.hasPrefix(pattern.dropLast(2))
     }
 
     /// Writes the final entitlement dictionary as an XML plist.
