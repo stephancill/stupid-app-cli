@@ -158,9 +158,12 @@ public struct Packer: Sendable {
   ) throws -> URL {
     let builderDir = builderDirectory(for: product)
     let scratch = buildScratchDirectory(for: product)
+    try Self.invalidateScratchIfPackageLayoutChanged(
+      scratch, packageLayoutHash: plan.packageLayoutHash)
     try writeSyntheticPackage(
       into: builderDir, product: product, sdkVersion: sdkVersion, isExtension: isExtension)
     try build(builderDir: builderDir, scratch: scratch)
+    try Self.recordPackageLayout(plan.packageLayoutHash, in: scratch)
     return
       scratch
       .appendingPathComponent(targetTriple, isDirectory: true)
@@ -178,6 +181,23 @@ public struct Packer: Sendable {
       .appendingPathComponent("scratch", isDirectory: true)
       .appendingPathComponent(targetTriple, isDirectory: true)
       .appendingPathComponent(product, isDirectory: true)
+  }
+
+  static func invalidateScratchIfPackageLayoutChanged(
+    _ scratch: URL, packageLayoutHash: String
+  ) throws {
+    guard FileManager.default.fileExists(atPath: scratch.path) else { return }
+    let marker = scratch.appendingPathComponent(".stupid-app-package-layout")
+    let cachedHash = try? String(contentsOf: marker, encoding: .utf8)
+    if cachedHash != packageLayoutHash {
+      try FileManager.default.removeItem(at: scratch)
+    }
+  }
+
+  static func recordPackageLayout(_ packageLayoutHash: String, in scratch: URL) throws {
+    try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+    try Data(packageLayoutHash.utf8).write(
+      to: scratch.appendingPathComponent(".stupid-app-package-layout"), options: .atomic)
   }
 
   private static func defaultBuilderCacheRoot(for projectRoot: URL) -> URL {

@@ -19,6 +19,7 @@ struct PackerCacheTests {
       product: "CacheApp",
       deploymentTarget: "17.0",
       bundleID: "net.example.cache-app",
+      packageLayoutHash: "layout-v1",
       infoPlist: [:],
       resources: [],
       iconPath: nil,
@@ -64,5 +65,28 @@ struct PackerCacheTests {
 
     let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
     #expect(attributes[.modificationDate] as? Date == preservedDate)
+  }
+
+  @Test("invalidates scratch only when the package layout changes")
+  func packageLayoutInvalidation() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    let scratch = root.appendingPathComponent("scratch", isDirectory: true)
+    try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let cachedObject = scratch.appendingPathComponent("cached-object")
+    try Data().write(to: cachedObject)
+
+    try Packer.invalidateScratchIfPackageLayoutChanged(scratch, packageLayoutHash: "layout-v1")
+    #expect(!FileManager.default.fileExists(atPath: scratch.path))
+
+    try Packer.recordPackageLayout("layout-v1", in: scratch)
+    try Data().write(to: cachedObject)
+    try Packer.invalidateScratchIfPackageLayoutChanged(scratch, packageLayoutHash: "layout-v1")
+    #expect(FileManager.default.fileExists(atPath: cachedObject.path))
+
+    try Packer.invalidateScratchIfPackageLayoutChanged(scratch, packageLayoutHash: "layout-v2")
+    #expect(!FileManager.default.fileExists(atPath: scratch.path))
   }
 }

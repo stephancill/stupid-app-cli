@@ -53,6 +53,24 @@ struct PackerModeATests {
     _ = try packer.pack()
     #expect(FileManager.default.fileExists(atPath: marker.path))
 
+    try FileManager.default.removeItem(
+      at: root.appendingPathComponent("Sources/ModeApp/RemovedView.swift"))
+    let updatedPlan = try Planner(
+      projectRoot: root, config: config, swiftPath: installation.toolchainSwiftURL.path
+    ).makePlan()
+    #expect(updatedPlan.packageLayoutHash != plan.packageLayoutHash)
+    let updatedPacker = Packer(
+      projectRoot: root,
+      plan: updatedPlan,
+      config: config,
+      swiftPath: installation.toolchainSwiftURL.path,
+      sdkID: "stupid-app-ios",
+      sdkInput: .xcodeInPlace(installation),
+      buildConfiguration: .debug
+    )
+    _ = try updatedPacker.pack()
+    #expect(!FileManager.default.fileExists(atPath: marker.path))
+
     let info = try MachOInspector.inspect(at: appURL.appendingPathComponent(plan.product))
     #expect(info.isMachO)
     #expect(info.cpuArchitecture == "arm64")
@@ -171,6 +189,16 @@ struct PackerModeATests {
     }
     """.write(
       to: sources.appendingPathComponent("ModeApp.swift"),
+      atomically: true, encoding: .utf8)
+
+    try """
+    import SwiftUI
+
+    struct RemovedView: View {
+        var body: some View { Text("removed") }
+    }
+    """.write(
+      to: sources.appendingPathComponent("RemovedView.swift"),
       atomically: true, encoding: .utf8)
 
     try """

@@ -16,6 +16,39 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
 
+## 2026-08-22 - Release 0.0.7
+
+`stupid-app 0.0.7` invalidates persistent SwiftPM product scratches when the package
+source layout changes, so adding, deleting, or renaming source files no longer requires
+manual cache cleanup. Unchanged projects retain warm incremental builds.
+
+## 2026-08-22 - Topology-Aware SwiftPM Scratch Invalidation
+
+### Summary
+
+- Fixed persistent `stupid-app` SwiftPM scratch directories retaining deleted source-file
+  paths. After a source was removed, SwiftPM reused its cached target source-list command
+  and failed while rebuilding `<Target>.build/sources` because the deleted path remained a
+  declared input. Device and simulator builds had independent stale scratches, so manual
+  cleanup had to be repeated for each target triple.
+- `Planner` now hashes the normalized SwiftPM target layout reported by `swift package
+  describe`: target/module paths, source and resource paths, and target/product
+  dependencies. `Packer` records the hash in each product scratch after a successful build.
+- Before building, a changed hash removes only that product's scratch directory. An
+  unchanged hash preserves the warm incremental cache, and a pre-fix scratch with no marker
+  is invalidated once on upgrade.
+
+### Verification
+
+- Added a cache-policy unit test proving legacy and changed layouts invalidate while an
+  unchanged layout preserves cached files.
+- Extended the real Xcode-in-place packer test to build with an extra Swift source, perform
+  an unchanged warm rebuild, delete the source, re-plan, and build successfully without
+  manual scratch cleanup.
+- `swift test` passes all 250 tests across 46 suites (one optional asset-catalog differential
+  test skipped), and `swift build -c release` passes. Existing unrelated source-fixture,
+  compiler, and OpenSSL deployment-target warnings remain.
+
 ## 2026-08-20 - Persistent SwiftPM incremental build cache
 
 ### Summary

@@ -109,6 +109,7 @@ public struct Planner: Sendable {
             product: library.name,
             deploymentTarget: deploymentTarget,
             bundleID: config.bundleID,
+            packageLayoutHash: root.packageLayoutHash,
             infoPlist: infoPlist,
             resources: resources,
             iconPath: config.iconPath,
@@ -251,6 +252,7 @@ public struct BuildPlan: Sendable {
     public var product: String
     public var deploymentTarget: String
     public var bundleID: String
+    public var packageLayoutHash: String
     public var infoPlist: [String: Sendable]
     public var resources: [Resource]
     public var iconPath: String?
@@ -302,6 +304,28 @@ private extension PackageDump {
     var iosDeploymentTarget: String? {
         platforms?.first { $0.name == "ios" }?.version
     }
+
+    var packageLayoutHash: String {
+        var targetDescriptions: [String] = []
+        for target in (targets ?? []).sorted(by: { $0.name < $1.name }) {
+            targetDescriptions += [
+                "target:\(target.name)",
+                "module:\(target.moduleType)",
+                "path:\(target.path ?? "")",
+            ]
+            targetDescriptions += (target.sources ?? []).sorted().map { "source:\($0)" }
+            targetDescriptions += (target.resources ?? []).map(\.path).sorted().map {
+                "resource:\($0)"
+            }
+            targetDescriptions += (target.targetDependencies ?? []).sorted().map {
+                "target-dependency:\($0)"
+            }
+            targetDescriptions += (target.productDependencies ?? []).sorted().map {
+                "product-dependency:\($0)"
+            }
+        }
+        return SHA256.hex(data: Data(targetDescriptions.joined(separator: "\u{0}").utf8))
+    }
 }
 
 private struct PackageDump: Decodable {
@@ -352,6 +376,8 @@ private struct PackageDump: Decodable {
     struct Target: Decodable {
         let name: String
         let moduleType: String
+        let path: String?
+        let sources: [String]?
         let productDependencies: [String]?
         let targetDependencies: [String]?
         let resources: [Resource]?

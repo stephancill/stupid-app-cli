@@ -579,7 +579,11 @@ Correct known xtool weaknesses while extracting this design:
   live at stable, project-keyed paths in the user cache (outside the root package tree),
   while their scratch directories live under `.build/stupid-app/scratch/`. Generated
   manifests and stubs are rewritten only when their content changes; UUID temporary
-  directories are limited to unsigned bundle assembly and are removed afterward.
+  directories are limited to unsigned bundle assembly and are removed afterward. Each
+  product scratch records a hash of the current SwiftPM target/source/resource/dependency
+  layout. A changed layout (including added, removed, or renamed source files) invalidates
+  only that product scratch before building; unchanged layouts retain the warm cache. A
+  legacy scratch without a layout marker is invalidated once rather than trusted.
 - Emit the App Store-required build-system Info.plist keys (`DTPlatformName`,
   `DTPlatformVersion`, `DTSDKName`, `DTXcode`, `DTXcodeBuild`, `DTCompiler`) from the
   SDK export manifest, and never emit `BuildMachineOSBuild` on Linux.
