@@ -86,6 +86,14 @@ groups. ASC credentials may also come from environment
 variables `ASC_API_KEY_ID`, `ASC_API_ISSUER_ID`, `ASC_API_KEY_PATH`, and
 `DEVELOPER_TEAM_ID`.
 
+Development setup reconciles the profile set instead of reusing a stale one: if
+no profile provisions the requested `--udid`, it creates a replacement that also
+provisions every previously provisioned device and retires the stale remote
+profiles only after the replacement is stored and validated. Profiles are stored
+at a canonical `<kind>/<bundle-id>.mobileprovision` path and located by content
+(bundle + kind), so re-runs on a new phone don't need the manual delete/rename/
+copy dance. `--profile-name` is a display-name prefix, not the full name.
+
 On macOS, reuse what Xcode already manages instead of minting credentials:
 
 ```bash
@@ -187,13 +195,20 @@ stupid-app run --usb [--udid <udid>] [--usbmux /var/run/usbmuxd]
 
 Builds a debug app, derives development entitlements (`get-task-allow=true`),
 signs once with the stored Apple Development identity, packages, installs, and
-launches. Prefer `--usbmux` explicitly when the socket is non-standard. Under
+launches. Before building, `run` resolves the target device and preflights every
+development profile (app + extensions) against that device's UDID, team, and
+bundle ID, so a stale or wrong profile fails loudly with re-provisioning
+instructions instead of after an expensive build. Prefer `--usbmux` explicitly
+when the socket is non-standard. Under
 WSL USBIP the MTU-patched `usbmuxd` service must be running or large installs
 stall. The device must be unlocked during install.
 
 ### 4. Pair once, then run wirelessly
 
 ```bash
+# Inspect what the host knows about its devices (USB + saved network pairings):
+stupid-app device list
+
 # Requires USB. Confirm the on-device Trust dialog; raise --timeout if it
 # expires (e.g. --timeout 180) before the dialog is answered.
 stupid-app device pair --usb [--timeout 180]

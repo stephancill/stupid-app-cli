@@ -83,7 +83,13 @@ struct RunCommand: AsyncParsableCommand {
 
     let context = try ASCContext.resolve(home: home, purpose: "run")
 
-    // 1. Build the unsigned app (debug configuration).
+    // Resolve the development identity and team before any expensive work so a missing
+    // profile or wrong target surfaces with an actionable message up front.
+    let identity = try IdentityManager(store: context.credentialStore).loadDevelopment()
+    guard let teamID = identity.teamID else {
+      throw RunError.identityMissingTeam
+    }
+
     let mode = HostSDKMode.detect()
     let toolchain = BuildToolchain.resolve(
       swiftPath: swiftPath,
@@ -94,6 +100,42 @@ struct RunCommand: AsyncParsableCommand {
     let resolvedSwift = toolchain.swiftPath
     let planner = Planner(projectRoot: projectRoot, config: config, swiftPath: resolvedSwift)
     let plan = try planner.makePlan()
+
+    // Locate every development profile before building so a stale or missing profile is
+    // caught before the expensive SwiftPM build.
+    let appProfileURL = try ProfileStore.requireFound(
+      home: context.homeURL, kind: .development, bundleID: config.bundleID)
+    var extensionProfileURLs: [String: URL] = [:]
+    for extensionPlan in plan.extensions {
+      extensionProfileURLs[extensionPlan.bundleID] = try ProfileStore.requireFound(
+        home: context.homeURL, kind: .development, bundleID: extensionPlan.bundleID)
+    }
+
+    // Resolve the target device before building and preflight the profiles against it.
+    let targetUDID: String
+    if usb {
+      let discovery = USBMuxClient(address: usbmuxAddress)
+      guard let resolved = try resolveTargetUDID(discovery: discovery) else {
+        throw RunError.deviceSelection(0)
+      }
+      targetUDID = resolved
+    } else if let udid {
+      targetUDID = udid
+    } else {
+      throw RunError.networkDeviceRequired
+    }
+
+    let appProfile = try MobileProvisionParser.parse(at: appProfileURL)
+    try ProfilePreflight.validate(
+      appProfile, kind: .development, teamID: teamID, bundleID: config.bundleID,
+      deviceUDID: targetUDID)
+    for (bundleID, url) in extensionProfileURLs {
+      try ProfilePreflight.validate(
+        MobileProvisionParser.parse(at: url), kind: .development, teamID: teamID,
+        bundleID: bundleID, deviceUDID: targetUDID)
+    }
+
+    // 1. Build the unsigned app (debug configuration).
     if case .importedBundle = toolchain.sdkInput {
       guard SDKVersion.isInstalled(sdkID: sdkID, swiftPath: resolvedSwift) else {
         throw SDKVersion.Error.sdkNotInstalled(sdkID)
@@ -112,17 +154,7 @@ struct RunCommand: AsyncParsableCommand {
     let unsignedApp = try packer.pack()
     print("Assembled unsigned \(unsignedApp.path)")
 
-    // 2. Load the development identity and device development profile.
-    let identity = try IdentityManager(store: context.credentialStore).loadDevelopment()
-    guard let teamID = identity.teamID else {
-      throw RunError.identityMissingTeam
-    }
-    guard let profileURL = try locateProfile(home: context.homeURL, bundleID: config.bundleID)
-    else {
-      throw RunError.profileMissing(config.bundleID)
-    }
-
-    // 3. Sign with development entitlements and package the IPA. Deep projects sign
+    // 2. Sign with development entitlements and package the IPA. Deep projects sign
     // each nested extension first, then the app in deep mode.
     let ipaDir =
       projectRoot
@@ -134,7 +166,7 @@ struct RunCommand: AsyncParsableCommand {
           unsignedApp: unsignedApp,
           identity: identity,
           teamID: teamID,
-          profileURL: profileURL,
+          profileURL: appProfileURL,
           sourceEntitlementsURL: AppConfig.resolvedEntitlementsURL(
             entitlementsPath: config.entitlementsPath, projectRoot: projectRoot),
           configuration: .development,
@@ -152,10 +184,7 @@ struct RunCommand: AsyncParsableCommand {
         let appexURL =
           unsignedApp
           .appendingPathComponent("PlugIns/\(extensionPlan.product).appex", isDirectory: true)
-        guard
-          let extensionProfileURL = try locateProfile(
-            home: context.homeURL, bundleID: extensionPlan.bundleID)
-        else {
+        guard let extensionProfileURL = extensionProfileURLs[extensionPlan.bundleID] else {
           throw RunError.profileMissing(extensionPlan.bundleID)
         }
         return DeepSigningPipeline.ExtensionInput(
@@ -174,7 +203,7 @@ struct RunCommand: AsyncParsableCommand {
           unsignedApp: unsignedApp,
           identity: identity,
           teamID: teamID,
-          profileURL: profileURL,
+          profileURL: appProfileURL,
           sourceEntitlementsURL: AppConfig.resolvedEntitlementsURL(
             entitlementsPath: config.entitlementsPath, projectRoot: projectRoot),
           configuration: .development,
@@ -191,48 +220,40 @@ struct RunCommand: AsyncParsableCommand {
       print("IPA SHA-256: \(try SHA256.file(at: deepOutput.ipaURL))")
     }
 
-    // 4. Determine the target device.
+    // 3. Install and launch on the selected target.
     if usb {
-      let discovery = USBMuxClient(address: usbmuxAddress)
+      print("Installing \(config.bundleID) on the selected device over USB...")
       let installer = NativeUSBInstaller(
         usbmuxAddress: usbmuxAddress,
-        pairingDirectory: credentialHome.appendingPathComponent("pairing", isDirectory: true),
+        pairingDirectory: pairingDirectory,
         progress: { print($0) }
       )
-      guard let targetUDID = try resolveTargetUDID(discovery: discovery) else {
-        throw RunError.deviceSelection(0)
-      }
-      print("Installing on the selected device over USB...")
       try installer.install(ipa: ipaURL, bundleID: config.bundleID, udid: targetUDID)
       print("Installed.")
-      let nativeRunner = NativeCoreDeviceRunner(
+      let launcher = NativeCoreDeviceRunner(
         sudoPath: sudoPath,
-        pairingDirectory: credentialHome.appendingPathComponent("pairing", isDirectory: true),
+        pairingDirectory: pairingDirectory,
         usbmuxAddress: usbmuxAddress
       )
-      let pid = try nativeRunner.launchUSB(bundleID: config.bundleID, udid: targetUDID)
+      let pid = try launcher.launchUSB(bundleID: config.bundleID, udid: targetUDID)
       print("Launched \(config.bundleID) (pid \(pid)).")
-    } else if let udid {
+    } else {
+      print("Installing and launching \(config.bundleID) on the selected device over the network...")
       #if os(macOS)
-        // macOS utun creation requires root; the network path owns the TUN
-        // inside the privileged helper through the same explicit --sudo boundary
-        // as the USB launch.
-        print("Installing and launching on the selected device over the network...")
         let pid = try nativeRunner.runNetwork(
           bundleID: config.bundleID,
-          udid: udid,
+          udid: targetUDID,
           ipa: ipaURL
         )
         print("Installed and launched \(config.bundleID) (pid \(pid)).")
       #else
         let networkRunner = NativeNetworkRunner(
-          pairingDirectory: credentialHome.appendingPathComponent("pairing", isDirectory: true),
-          udid: udid,
+          pairingDirectory: pairingDirectory,
+          udid: targetUDID,
           ipa: ipaURL,
           bundleID: config.bundleID,
           progress: { print($0) }
         )
-        print("Installing and launching on the selected device over the network...")
         let pid = try networkRunner.installAndLaunch()
         print("Installed and launched \(config.bundleID) (pid \(pid)).")
       #endif
@@ -362,17 +383,6 @@ struct RunCommand: AsyncParsableCommand {
     }
     return FileManager.default.homeDirectoryForCurrentUser
       .appendingPathComponent(".stupid-app/credentials", isDirectory: true)
-  }
-
-  private func locateProfile(home: URL, bundleID: String) throws -> URL? {
-    let candidates = [
-      home.appendingPathComponent("profiles/\(bundleID) Development.mobileprovision"),
-      home.appendingPathComponent("profiles/\(bundleID).mobileprovision"),
-    ]
-    for url in candidates where FileManager.default.fileExists(atPath: url.path) {
-      return url
-    }
-    return nil
   }
 }
 

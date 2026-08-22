@@ -117,4 +117,39 @@ struct ASCOperationsTests {
         let id = try ASCOperations.decodeCreatedResourceID(Data(json.utf8), resource: "profiles create")
         #expect(id == "profile-42")
     }
+
+    @Test("decodes a profile list with a bundled bundle identifier")
+    func decodeProfileList() throws {
+        let json = """
+        {
+          "data": [
+            {
+              "type": "profiles",
+              "id": "profile-1",
+              "attributes": {
+                "name": "net.example.app Development",
+                "profileType": "IOS_APP_DEVELOPMENT",
+                "profileState": "ACTIVE",
+                "expirationDate": "2027-08-01T12:00:00.000Z"
+              },
+              "relationships": {
+                "bundleId": { "data": { "type": "bundleIds", "id": "bundle-9" } }
+              }
+            }
+          ],
+          "included": [
+            {
+              "type": "bundleIds",
+              "id": "bundle-9",
+              "attributes": { "identifier": "net.example.app" }
+            }
+          ]
+        }
+        """
+        let summaries = try ASCOperations.decodeProfileList(Data(json.utf8))
+        #expect(summaries.count == 1)
+        #expect(summaries[0].id == "profile-1")
+        #expect(summaries[0].bundleIdentifier == "net.example.app")
+        #expect(summaries[0].state == "ACTIVE")
+    }
 }

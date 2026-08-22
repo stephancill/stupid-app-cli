@@ -6,9 +6,57 @@ import Foundation
 struct DeviceCommand: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "device",
-    abstract: "Manage local device pairing and diagnostics.",
-    subcommands: [DevicePairCommand.self, DeviceCrashCommand.self]
+    abstract: "Manage local device pairing, diagnostics, and inventory.",
+    subcommands: [DeviceListCommand.self, DevicePairCommand.self, DeviceCrashCommand.self]
   )
+}
+
+struct DeviceListCommand: AsyncParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "list",
+    abstract: "List locally known devices (USB and saved network pairing records)."
+  )
+
+  @Option(name: .customLong("usbmux"), help: "usbmuxd address (unix socket or HOST:PORT).")
+  var usbmuxAddress: String?
+
+  @Option(name: .customLong("home"), help: "Credential store directory.")
+  var home: String?
+
+  mutating func run() throws {
+    let homeURL =
+      home.map { URL(fileURLWithPath: $0) }
+      ?? FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent(".stupid-app/credentials", isDirectory: true)
+
+    print("USB devices:")
+    do {
+      let discovery = USBMuxClient(address: usbmuxAddress)
+      let udids = try discovery.usbDeviceUDIDs()
+      if udids.isEmpty {
+        print("  (none connected)")
+      } else {
+        for udid in udids { print("  \(udid)") }
+      }
+    } catch {
+      print("  (unavailable: \(error))")
+    }
+
+    print("Saved network pairing records:")
+    let pairingDirectory = homeURL.appendingPathComponent("pairing", isDirectory: true)
+    let saved = (try? RemotePairing.savedPairings(in: pairingDirectory)) ?? []
+    if saved.isEmpty {
+      print("  (none)")
+    } else {
+      for record in saved {
+        if let udid = record.udid {
+          print("  \(record.identifier) -> \(udid)")
+        } else {
+          print("  \(record.identifier) -> (unmapped; re-run `stupid-app device pair --usb`)")
+        }
+      }
+    }
+  }
 }
 
 struct DevicePairCommand: AsyncParsableCommand {

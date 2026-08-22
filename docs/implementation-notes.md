@@ -16,6 +16,85 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
 
+The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
+
+## 2026-08-22 - Release 0.0.8: Content-Addressed Profiles, Reconcile, Preflight, And Device Inventory
+
+`stupid-app 0.0.8` ships the provisioning/deployment hardening described in the same-day
+"Content-Addressed Profiles, Reconcile, And Preflight" entry and verifies it end to end:
+- Content-based profile storage/lookup (`ProfileStore`) removes filename-only collisions.
+- `signing setup --kind development` reconciles and union-provisions devices (no manual
+  delete/rename/copy for a new phone).
+- `run` preflights development profiles against the target before building.
+- Strict network-device resolution (no guessing across other devices), a fix to
+  `RemotePairing.pairedIdentifiers` (ignore `remote_udid.json`), and a new
+  `stupid-app device list`.
+- Verified live with a sample app (`net.stupidtech.runtimecheck`): registered, provisioned,
+  then built/signed/installed/verified over the network.
+
+## 2026-08-22 - Content-Addressed Profiles, Reconcile, And Preflight
+
+### Summary
+
+- Provisioning profiles are now stored at a canonical content-addressed path,
+  `profiles/<development|distribution>/<bundle-id>.mobileprovision`, and located by
+  decoded content (`application-identifier` bundle + `get-task-allow` kind) rather than
+  by file name (`SigningKit.ProfileStore`). `locate` also scans the legacy flat
+  `profiles/*.mobileprovision` layout and accepts any file whose content matches, so the
+  filename-only lookup and the manual delete/rename/copy of profiles are gone. `run` and
+  `release archive` now use `ProfileStore.requireFound` instead of their own name-based
+  candidates.
+- `signing setup --kind development` reconciles the profile set for the requested
+  `--udid`: it lists development profiles by bundle, reuses one that already provisions
+  the device, otherwise creates a replacement provisioning the union of every previously
+  provisioned device plus the new one, validates it locally, stores it, and only then
+  retires the stale remote profiles. This removes the manual delete-and-regenerate and
+  alternate-`--profile-name` dance for provisioning a second device.
+- `--profile-name` is now a genuine display-name prefix (`<prefix> <bundle-id> <kind>`)
+  rather than the full name, so an app and its extension never collide on a shared name.
+  Replacement profiles also receive a collision-free `... <n>` suffix.
+- `run` resolves the target device and preflights every development profile (app and
+  extensions) against that device UDID, team, bundle ID, and profile kind
+  (`SigningKit.ProfilePreflight`) before the SwiftPM build, so a stale or mismatched
+  profile fails fast with actionable re-provisioning instructions instead of after a
+  build/sign/install attempt.
+- Network-device resolution no longer guesses: `RemotePairing.resolveIdentifiers` requires
+  an exact UDID-to-mapping and throws `noMappedRecord` (with re-pair instructions)
+  instead of scanning every saved record when a mapping is missing.
+- `ASCOperations.listProfiles(profileType:)` decodes profiles with their resolved
+  `bundleId` identifier (via `include=bundleId`) for reconcile, and
+  `createDevelopmentProfileUnion` provisions many devices in one profile.
+- Fixed a latent finder bug surfaced by the new `device list`: `RemotePairing.pairedIdentifiers`
+  matched any `remote_*` file, so the `remote_udid.json` mapping itself was misread as a
+  pairing identifier (`udid`). It now requires the `.plist` suffix and ignores the mapping.
+
+### Why
+
+Deploying to a physical iPhone surfaced that profile selection and reuse were name- and
+therefore collision-prone (former `run`/`release archive` filename candidates), profile
+reuse-by-name required manual deletion and an alternate name to register a new phone, and
+the stale-profile `ApplicationVerificationFailed` cycle forced repeated manual
+regeneration. Content-based location, reconcile-and-replace, and pre-build preflight turn
+those into deterministic, fail-fast operations.
+
+### Verification
+
+- `swift test` passes 258 tests across 47 suites (added `ProfileStoreTests`/preflight
+  cases, a `decodeProfileList` case, and the remote-pairing no-fallback cases).
+- `swift build -c release build` and debug build pass; help output reflects the
+  `--profile-name` prefix semantics.
+- `git diff --check` passes. Formatting was kept consistent with the repository's
+  4-space style (no project `.swift-format` config is present).
+- End-to-end sample-app verification (non-wallet): `stupid-app new SampleRuntime`
+  (`net.stupidtech.runtimecheck`), `signing setup --kind development --udid <device>`
+  registered the bundle and created a boundary-replacement development profile stored at
+  `profiles/development/net.stupidtech.runtimecheck.mobileprovision`; `run --network
+  --udid <device>` passed the new preflight/profile-locate, signed/compiled unsigned, and
+  installed and verified the app over the network. Network launch remains the documented
+  device limitation (the peer does not offer `com.apple.coredevice.appservice` on this
+  tunnel; tap the icon to open), and the release-binary network step needs the
+  grant `~/.local/bin/stupid-app coredevice-helper` (the debug binary's path is granted).
+
 ## 2026-08-22 - EntitlementDeriver Expands Keychain AppIdentifierPrefix And Honors Team Wildcard
 
 ### Summary
@@ -49,9 +128,10 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 
 ### Follow-Up
 
-- Multiple physical devices still require per-device profile regeneration; a property/
-  device-target selection in `signing setup` would remove the manual
-  copy-onto-the-canonical-profile step.
+- Multiple physical devices now reconcile automatically (see the same-day
+  "Content-Addressed Profiles, Reconcile, And Preflight" entry): development setup
+  union-provisions new devices into a replacement profile, and `run` preflights the
+  target device before building.
 
 ## 2026-08-22 - Release 0.0.7
 

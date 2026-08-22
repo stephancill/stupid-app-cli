@@ -453,7 +453,139 @@ public struct ASCOperations: Sendable {
         )
     }
 
-    /// Downloads the decrypted provisioning profile content for a profile resource.
+    /// A lightweight summary of a provisioning profile resource, including its bundle
+    /// identifier (from the included `bundleId` relationship).
+    public struct ProfileSummary: Sendable, Equatable {
+        public var id: String
+        public var name: String
+        public var profileType: String?
+        public var state: String?
+        public var expirationDate: Date?
+        public var bundleIdentifier: String?
+
+        public init(
+            id: String, name: String, profileType: String? = nil, state: String? = nil,
+            expirationDate: Date? = nil, bundleIdentifier: String? = nil
+        ) {
+            self.id = id
+            self.name = name
+            self.profileType = profileType
+            self.state = state
+            self.expirationDate = expirationDate
+            self.bundleIdentifier = bundleIdentifier
+        }
+    }
+
+    /// Lists profiles of one type with their bundle identifier resolved from the
+    /// included `bundleId` relationship. Used to reconcile existing profiles by bundle
+    /// rather than by display name.
+    public func listProfiles(profileType: ProfileType) throws -> [ProfileSummary] {
+        let response = try client.request(
+            method: .get,
+            path: "profiles",
+            query: [
+                URLQueryItem(name: "filter[profileType]", value: profileType.rawValue),
+                URLQueryItem(name: "include", value: "bundleId"),
+                URLQueryItem(name: "fields[profiles]", value: "name,profileType,profileState,expirationDate"),
+                URLQueryItem(name: "fields[bundleIds]", value: "identifier"),
+            ]
+        )
+        return try Self.decodeProfileList(response.data)
+    }
+
+    /// Decodes a `ProfilesResponse` with an included `bundleId` relationship into
+    /// summaries keyed by bundle expression. Pure for hermetic tests.
+    public static func decodeProfileList(_ data: Data) throws -> [ProfileSummary] {
+        struct Envelope: Decodable {
+            struct Resource: Decodable {
+                let id: String
+                struct Attributes: Decodable {
+                    let name: String
+                    let profileType: String?
+                    let profileState: String?
+                    let expirationDate: Date?
+                }
+                struct Relationships: Decodable {
+                    struct Link: Decodable {
+                        struct DataRef: Decodable { let id: String }
+                        let data: DataRef?
+                    }
+                    let bundleId: Link?
+                }
+                let attributes: Attributes
+                let relationships: Relationships?
+            }
+            struct Included: Decodable {
+                let id: String
+                let type: String
+                struct Attributes: Decodable { let identifier: String? }
+                let attributes: Attributes?
+            }
+            struct RelRef: Decodable {
+                struct Data: Decodable { let id: String }
+                let data: Data
+            }
+            let data: [Resource]
+            let included: [Included]?
+        }
+        let json = JSONDecoder()
+        json.dateDecodingStrategy = .formatted(Self.ascDateFormatter)
+        guard let envelope = try? json.decode(Envelope.self, from: data) else {
+            throw ASCError.malformedPayload("profiles list")
+        }
+        let bundleIdentifierByID = Dictionary(
+            uniqueKeysWithValues: (envelope.included ?? []).compactMap { (included) -> (String, String)? in
+                guard
+                    included.type == "bundleIds",
+                    let identifier = included.attributes?.identifier
+                else { return nil }
+                return (included.id, identifier)
+            })
+        return envelope.data.map { resource in
+            let bundleIdentifier: String?
+            if let id = resource.relationships?.bundleId?.data?.id {
+                bundleIdentifier = bundleIdentifierByID[id]
+            } else {
+                bundleIdentifier = nil
+            }
+            return ProfileSummary(
+                id: resource.id,
+                name: resource.attributes.name,
+                profileType: resource.attributes.profileType,
+                state: resource.attributes.profileState,
+                expirationDate: resource.attributes.expirationDate,
+                bundleIdentifier: bundleIdentifier
+            )
+        }
+    }
+
+    /// App Store Connect returns dates as RFC 3339 strings with fractional seconds.
+    private static let ascDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSXXXXX"
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        return formatter
+    }()
+
+    /// Creates a development profile for a bundle and certificate that provisions the
+    /// union of the given device resources. Returns the new profile's id and content.
+    public func createDevelopmentProfileUnion(
+        name: String,
+        bundleIDResourceID: String,
+        certificateID: String,
+        deviceIDs: [String]
+    ) throws -> (id: String, content: Data) {
+        let id = try createProfile(
+            name: name,
+            profileType: .development,
+            bundleIDResourceID: bundleIDResourceID,
+            certificateID: certificateID,
+            deviceIDs: deviceIDs)
+        return (id, try downloadProfile(id: id))
+    }
+
+    /// Returns the decrypted provisioning profile content for a profile resource.
     public func downloadProfile(id: String) throws -> Data {
         let response = try client.request(method: .get, path: "profiles/\(id)")
         let data = response.data

@@ -35,7 +35,7 @@ struct SigningSetupCommand: AsyncParsableCommand {
     @Option(name: .customLong("bundle-id"), help: "Exact bundle identifier to provision (repeatable).")
     var bundleIDs: [String] = []
 
-    @Option(name: .customLong("profile-name"), help: "Provisioning profile name prefix (defaults to bundle ID).")
+    @Option(name: .customLong("profile-name"), help: "Profile display-name prefix (e.g. your name); the full name is '<prefix> <bundle-id> <Development|AppStore>'.")
     var profileName: String?
 
     @Option(name: .customLong("udid"), help: "Physical device UDID (development setup).")
@@ -190,22 +190,23 @@ struct SigningSetupCommand: AsyncParsableCommand {
             print("Minted distribution certificate \(certificateID)")
         }
 
-        // 3. Ensure an IOS_APP_STORE profile for the bundle ID + certificate.
-        let profileName = self.profileName ?? "\(bundleID) AppStore"
+// 3. Ensure an IOS_APP_STORE profile for the bundle ID + certificate.
+        let baseProfileName = "\(bundleID) AppStore"
+        let profileName = appliedProfileName(baseProfileName)
+        let existingNames = try Set(
+            (try operations.listProfiles(profileType: .appStore)).map(\.name))
         var profileID: String? = try operations.findProfile(name: profileName)
         if let profileID, let content = try? operations.downloadProfile(id: profileID) {
-            // Gate 1 accepts an existing profile keyed to the certificate; deeper
-            // validation is added in the signing verification step.
             print("Reusing profile \(profileID) (\(profileName))")
-            try storeProfile(content, profileName: profileName, home: context.homeURL)
+            try storeCanonical(content, kind: .distribution, bundleID: bundleID, home: context.homeURL)
         } else {
             profileID = try operations.createAppStoreProfile(
-                name: profileName,
+                name: uniqueProfileName(base: profileName, taken: existingNames),
                 bundleIDResourceID: bundleResourceID,
                 certificateID: certificateID
             )
             let content = try operations.downloadProfile(id: profileID!)
-            try storeProfile(content, profileName: profileName, home: context.homeURL)
+            try storeCanonical(content, kind: .distribution, bundleID: bundleID, home: context.homeURL)
             print("Created profile \(profileID!) (\(profileName))")
         }
         print("Distribution signing setup complete.")
@@ -269,23 +270,67 @@ struct SigningSetupCommand: AsyncParsableCommand {
             print("Minted development certificate \(certificateID)")
         }
 
-        // 3. Ensure an IOS_APP_DEVELOPMENT profile for the bundle ID + certificate +
-        // the selected device only (version 1 does not attach every device).
-        let profileName = self.profileName ?? "\(bundleID) Development"
-        var profileID: String? = try operations.findProfile(name: profileName, profileType: .development)
-        if let profileID, let content = try? operations.downloadProfile(id: profileID) {
-            print("Reusing profile \(profileID) (\(profileName))")
-            try storeProfile(content, profileName: profileName, home: context.homeURL)
+        // 3. Ensure an IOS_APP_DEVELOPMENT profile for the bundle ID + certificate that
+        // provisions the requested device, reconciling the profile set so stale
+        // device lists never force a manual delete/recreate round-trip.
+        let baseProfileName = "\(bundleID) Development"
+        let profileName = appliedProfileName(baseProfileName)
+        let existing = try operations.listProfiles(profileType: .development)
+            .filter { $0.bundleIdentifier == bundleID }
+        let existingNames = Set(existing.map(\.name))
+
+        // Map the registered devices (UDID -> resource id) so every device we provision
+        // can be referenced by id.
+        let registered = try operations.listDevices()
+        let deviceResourceIDByUDID = Dictionary(
+            uniqueKeysWithValues: registered.compactMap { device in
+                device.udid.map { ($0, device.id) }
+            })
+        func resourceID(for udid: String) throws -> String {
+            guard let id = deviceResourceIDByUDID[udid] else {
+                throw SigningSetupError.deviceNotRegistered(udid)
+            }
+            return id
+        }
+
+        // Reuse a candidate that already provisions this device.
+        var reusableContent: Data?
+        var allProvisionedUDIDs = Set<String>()
+        var toDelete: [String] = []
+        for summary in existing where reusableContent == nil {
+            guard let content = try? operations.downloadProfile(id: summary.id) else { continue }
+            let provisioned = (try? MobileProvisionParser.parse(content))?.provisionedDevices ?? []
+            allProvisionedUDIDs.formUnion(provisioned)
+            if provisioned.contains(deviceUDID) {
+                reusableContent = content
+            }
+            toDelete.append(summary.id)
+        }
+
+        if let reusableContent {
+            print("Reusing profile for \(bundleID) (already provisions \(deviceUDID))")
+            try storeCanonical(reusableContent, kind: .development, bundleID: bundleID, home: context.homeURL)
         } else {
-            profileID = try operations.createDevelopmentProfile(
-                name: profileName,
+            // Create a replacement provisioning the union of all previously provisioned
+            // devices plus the newly requested one, validate it locally, then retire the
+            // stale remote profiles only after the replacement is stored.
+            allProvisionedUDIDs.insert(deviceUDID)
+            let deviceIDs = try allProvisionedUDIDs.map(resourceID(for:))
+            let newName = uniqueProfileName(base: profileName, taken: existingNames)
+            let created = try operations.createDevelopmentProfileUnion(
+                name: newName,
                 bundleIDResourceID: bundleResourceID,
                 certificateID: certificateID,
-                deviceID: device.id
-            )
-            let content = try operations.downloadProfile(id: profileID!)
-            try storeProfile(content, profileName: profileName, home: context.homeURL)
-            print("Created profile \(profileID!) (\(profileName))")
+                deviceIDs: deviceIDs)
+            let parsed = try MobileProvisionParser.parse(created.content)
+            guard parsed.provisionedDevices.contains(deviceUDID) else {
+                throw SigningSetupError.profileProvisionsWrongDevices(bundleID, deviceUDID)
+            }
+            try storeCanonical(created.content, kind: .development, bundleID: bundleID, home: context.homeURL)
+            for staleID in toDelete {
+                try? operations.deleteProfile(id: staleID)
+            }
+            print("Created replacement profile \(newName) provisioning \(deviceIDs.count) device(s); retired \(toDelete.count) stale profile(s).")
         }
         print("Development signing setup complete.")
     }
@@ -466,8 +511,9 @@ struct SigningSetupCommand: AsyncParsableCommand {
         print("Imported \(kind.rawValue) identity from Xcode (\(chosen.commonName))")
 
         // Copy the original signed profile bytes so the embedded profile is unchanged.
-        let profileName = kind == .distribution ? "\(bundleID) AppStore" : "\(bundleID) Development"
-        let stored = try copyProfile(from: profileURL, profileName: profileName, home: homeURL)
+        let profileKind: ProfileKind = kind == .distribution ? .distribution : .development
+        let stored = try copyToCanonicalProfile(
+            from: profileURL, kind: profileKind, bundleID: bundleID, home: homeURL)
         print("Stored provisioning profile for \(bundleID) at \(stored.path)")
 
         if certificateID == nil {
@@ -503,24 +549,37 @@ struct SigningSetupCommand: AsyncParsableCommand {
         Crypto.SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
-    /// Copies a `.mobileprovision` file into the store's `profiles/` directory at the
-    /// deterministic path used by `run` and `release archive`.
-    private func copyProfile(from source: URL, profileName: String, home: URL) throws -> URL {
-        let profilesDir = home.appendingPathComponent("profiles", isDirectory: true)
-        try FileManager.default.createDirectory(at: profilesDir, withIntermediateDirectories: true)
-        let url = profilesDir.appendingPathComponent("\(profileName).mobileprovision")
-        try FileManager.default.copyItem(at: source, to: url)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    /// Copies a `.mobileprovision` file into the store at the content-addressed canonical
+    /// path used by `run` and `release archive`.
+    private func copyToCanonicalProfile(from source: URL, kind: ProfileKind, bundleID: String, home: URL) throws -> URL {
+        guard let data = try? Data(contentsOf: source) else {
+            throw SigningSetupError.profileCopyFailed(source.path)
+        }
+        return try storeCanonical(data, kind: kind, bundleID: bundleID, home: home)
+    }
+
+    /// Stores a downloaded profile at its canonical `<kind>/<bundleID>` path and prints
+    /// the location.
+    @discardableResult
+    private func storeCanonical(_ data: Data, kind: ProfileKind, bundleID: String, home: URL) throws -> URL {
+        let url = try ProfileStore.store(data, home: home, kind: kind, bundleID: bundleID)
+        print("Profile stored at \(url.path)")
         return url
     }
 
-    private func storeProfile(_ data: Data, profileName: String, home: URL) throws {
-        let profilesDir = home.appendingPathComponent("profiles", isDirectory: true)
-        try FileManager.default.createDirectory(at: profilesDir, withIntermediateDirectories: true)
-        let url = profilesDir.appendingPathComponent("\(profileName).mobileprovision")
-        try data.write(to: url, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-        print("Profile stored at \(url.path)")
+    /// Applies the user-provided `--profile-name` as a prefix to the derived base name,
+    /// so app and extension profiles never collide on a shared display name.
+    private func appliedProfileName(_ base: String) -> String {
+        profileName.map { "\($0) \(base)" } ?? base
+    }
+
+    /// Returns `base`, or `base <n>` for the first `n >= 2` not present in `taken`, so a
+    /// replacement profile never collides with an existing one on App Store Connect.
+    private func uniqueProfileName(base: String, taken: Set<String>) -> String {
+        if !taken.contains(base) { return base }
+        var n = 2
+        while taken.contains("\(base) \(n)") { n += 1 }
+        return "\(base) \(n)"
     }
 }
 
@@ -533,6 +592,9 @@ enum SigningSetupError: Error, CustomStringConvertible {
     case noXcodeIdentity(String)
     case teamIDMissingFromIdentity
     case noXcodeProfile(String, String)
+    case deviceNotRegistered(String)
+    case profileProvisionsWrongDevices(String, String)
+    case profileCopyFailed(String)
 
     var description: String {
         switch self {
@@ -552,6 +614,12 @@ enum SigningSetupError: Error, CustomStringConvertible {
             return "The selected Keychain identity has no Team ID in its common name; provide one via `credentials add --team-id` and rerun."
         case let .noXcodeProfile(bundleID, kind):
             return "No '\(kind)' provisioning profile for '\(bundleID)' is installed for the selected identity. Generate one in Xcode and rerun."
+        case let .deviceNotRegistered(udid):
+            return "The device '\(udid)' is not registered with App Store Connect. Run `stupid-app devices add --udid \(udid)` first."
+        case let .profileProvisionsWrongDevices(bundleID, udid):
+            return "The newly created profile for '\(bundleID)' does not provision the requested device '\(udid)'. Check the developer portal profile and rerun."
+        case let .profileCopyFailed(path):
+            return "Could not copy the provisioning profile from '\(path)'."
         }
     }
 }

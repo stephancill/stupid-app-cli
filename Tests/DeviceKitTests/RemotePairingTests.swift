@@ -76,6 +76,8 @@ struct RemotePairingTests {
     try Data([0x01]).write(to: directory.appendingPathComponent("remote_AAA.plist"))
     try Data([0x01]).write(to: directory.appendingPathComponent("remote_BBB.plist"))
     try Data([0x01]).write(to: directory.appendingPathComponent("other.plist"))
+    // The mapping file is not a pairing record and must be ignored.
+    try Data("{}".utf8).write(to: directory.appendingPathComponent("remote_udid.json"))
 
     let identifiers = try RemotePairing.pairedIdentifiers(in: directory)
     #expect(Set(identifiers) == Set(["AAA", "BBB"]))
@@ -117,8 +119,8 @@ struct RemotePairingTests {
     #expect(resolved == ["BBB"])
   }
 
-  @Test("resolution falls back to all records when no mapping file exists")
-  func resolveIdentifiersFallsBackWithoutMapping() throws {
+  @Test("resolution fails loudly when no mapping file exists instead of guessing")
+  func resolveIdentifiersFailsWithoutMapping() throws {
     let directory = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -126,9 +128,41 @@ struct RemotePairingTests {
 
     try Data([0x01]).write(to: directory.appendingPathComponent("remote_AAA.plist"))
 
-    let resolved = try RemotePairing.resolveIdentifiers(
-      forRequestedUdid: "udid-1", in: directory)
-    #expect(resolved == ["AAA"])
+    #expect(throws: RemotePairing.Error.noMappedRecord("udid-1")) {
+      _ = try RemotePairing.resolveIdentifiers(forRequestedUdid: "udid-1", in: directory)
+    }
+  }
+
+  @Test("resolution fails when the requested UDID has no mapping, even with a mapping file")
+  func resolveIdentifiersFailsForUnmappedUdid() throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    try Data([0x01]).write(to: directory.appendingPathComponent("remote_AAA.plist"))
+    try RemotePairing.saveUdidMapping(identifier: "AAA", udid: "udid-1", in: directory)
+
+    #expect(throws: RemotePairing.Error.noMappedRecord("udid-9")) {
+      _ = try RemotePairing.resolveIdentifiers(forRequestedUdid: "udid-9", in: directory)
+    }
+  }
+
+  @Test("savedPairings reports each record and its mapped UDID")
+  func savedPairings() throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    try Data([0x01]).write(to: directory.appendingPathComponent("remote_AAA.plist"))
+    try Data([0x01]).write(to: directory.appendingPathComponent("remote_BBB.plist"))
+    try RemotePairing.saveUdidMapping(identifier: "BBB", udid: "udid-2", in: directory)
+
+    let pairings = try RemotePairing.savedPairings(in: directory)
+    let byID = Dictionary(uniqueKeysWithValues: pairings.map { ($0.identifier, $0.udid) })
+    #expect(byID["AAA"].flatMap { $0 } == nil)
+    #expect(byID["BBB"].flatMap { $0 } == "udid-2")
   }
 
   @Test("pair-verify ChaCha20-Poly1305 wire format round-trips without the nonce")

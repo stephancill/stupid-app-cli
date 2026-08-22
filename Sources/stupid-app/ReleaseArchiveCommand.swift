@@ -90,9 +90,8 @@ struct ReleaseArchiveCommand: AsyncParsableCommand {
     guard let teamID = identity.teamID else {
       throw ReleaseArchiveError.identityMissingTeam
     }
-    guard let profileURL = try locateProfile(home: context.homeURL, bundleID: config.bundleID) else {
-      throw ReleaseArchiveError.profileMissing(config.bundleID)
-    }
+    let profileURL = try ProfileStore.requireFound(
+      home: context.homeURL, kind: .distribution, bundleID: config.bundleID)
 
     // 3. Sign and package the IPA. Deep projects (with extensions) sign each nested
     // bundle first with its own profile, then the app in deep mode.
@@ -119,11 +118,8 @@ profileURL: profileURL,
       let extensions = try plan.extensions.map { extensionPlan -> DeepSigningPipeline.ExtensionInput in
         let appexURL = unsignedApp
           .appendingPathComponent("PlugIns/\(extensionPlan.product).appex", isDirectory: true)
-        guard let extensionProfileURL = try locateProfile(
-          home: context.homeURL, bundleID: extensionPlan.bundleID)
-        else {
-          throw ReleaseArchiveError.profileMissing(extensionPlan.bundleID)
-        }
+        let extensionProfileURL = try ProfileStore.requireFound(
+          home: context.homeURL, kind: .distribution, bundleID: extensionPlan.bundleID)
         return DeepSigningPipeline.ExtensionInput(
           appexBundle: appexURL,
           identity: identity,
@@ -159,17 +155,6 @@ profileURL: profileURL,
     }
 
     print("Native signature passed the project-owned post-sign verifier.")
-  }
-
-  private func locateProfile(home: URL, bundleID: String) throws -> URL? {
-    let candidates = [
-      home.appendingPathComponent("profiles/\(bundleID) AppStore.mobileprovision"),
-      home.appendingPathComponent("profiles/\(bundleID).mobileprovision"),
-    ]
-    for url in candidates where FileManager.default.fileExists(atPath: url.path) {
-      return url
-    }
-    return nil
   }
 }
 

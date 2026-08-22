@@ -106,7 +106,10 @@ The single provisioning command. Options:
 - `--kind <distribution|development>` — repeatable; defaults to both kinds.
 - `--bundle-id <id>` — repeatable; defaults to the bundle ID in `stupid-app.yml`
   when run in a project directory.
-- `--profile-name <name>` — profile name prefix (defaults to bundle ID).
+- `--profile-name <prefix>` — profile display-name prefix; the full profile name is
+  `<prefix> <bundle-id> <Development|AppStore>`, so app and extension profiles never
+  collide on a shared name. Omit it and the derived `<bundle-id> Development|AppStore`
+  name is used.
 - `--udid <udid>` — physical device UDID; development setup runs only when given.
 - `--device-name <name>` — device display name for registration.
 - `--import-key <pem>` / `--import-cert <pem>` / `--cert-id <id>` — import an
@@ -131,9 +134,14 @@ Lists or registers App Store Connect devices. `--name` defaults to `iPhone`.
 ## device
 
 ```text
+stupid-app device list [--usbmux <addr>] [--home <dir>]
 stupid-app device pair --usb [--udid <udid>] [--sudo <path>] [--usbmux <addr>] [--timeout <sec>] [--replace-lockdown-record] [--home <dir>]
 stupid-app device crash [--path <file>] [--udid <udid>] [--filter <name>] [--network] [--sudo <path>] [--json] [--home <dir>]
 ```
+
+`device list` prints the locally known devices: USB-attached UDIDs (best-effort via
+usbmuxd) and each saved network pairing record with its device UDID when a mapping
+exists, surfacing unmapped records that still need a fresh `device pair --usb`.
 
 `device pair` bootstraps lockdown trust natively and then CoreDevice remote pairing over
 USB. `--usbmux` accepts a Unix socket or `HOST:PORT`. `--timeout` defaults to 30

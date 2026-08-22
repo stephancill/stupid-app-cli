@@ -98,19 +98,17 @@ public enum RemotePairing {
 
   /// Discovers identifiers of saved remote pairing records in a pairing
   /// directory, mirroring pymobiledevice3's `iter_remote_paired_identifiers`.
+  /// Only `remote_<identifier>.plist` files count; the `remote_udid.json` mapping
+  /// file is intentionally not a pairing record.
   static func pairedIdentifiers(in pairingDirectory: URL) throws -> [String] {
     let contents = try FileManager.default.contentsOfDirectory(
       at: pairingDirectory, includingPropertiesForKeys: nil)
     var identifiers: [String] = []
     for url in contents {
       let name = url.lastPathComponent
-      guard name.hasPrefix("remote_") else { continue }
+      guard name.hasPrefix("remote_"), name.hasSuffix(".plist") else { continue }
       let remainder = String(name.dropFirst("remote_".count))
-      let identifier =
-        remainder.hasSuffix(".plist")
-        ? String(remainder.dropLast(".plist".count))
-        : remainder.split(separator: ".", omittingEmptySubsequences: false).first.map(String.init)
-          ?? remainder
+      let identifier = String(remainder.dropLast(".plist".count))
       if !identifier.isEmpty {
         identifiers.append(identifier)
       }
@@ -174,19 +172,46 @@ public enum RemotePairing {
   }
 
   /// Returns the remote-pairing identifiers to attempt for a requested UDID.
-  /// When a persisted UDID mapping exists, only the identifiers recorded for that
-  /// exact device are returned, so wireless runs do not race across other Apple
-  /// devices on the network. When no mapping file is present (records created
-  /// before mappings were added), it falls back to every saved identifier so
-  /// older records remain usable.
+  ///
+  /// Resolution is exact: a matching UDID-to-record mapping is required, and the
+  /// function throws rather than guessing across other saved records. The previous
+  /// scan-every-record fallback reintroduced the wrong-device ambiguity it was meant to
+  /// remove, so pre-mapping records must be migrated with a fresh
+  /// `stupid-app device pair --usb` instead of silently racing other devices.
   static func resolveIdentifiers(
     forRequestedUdid udid: String, in pairingDirectory: URL
   ) throws -> [String] {
     guard FileManager.default.fileExists(atPath: udidMappingURL(in: pairingDirectory).path) else {
-      return try pairedIdentifiers(in: pairingDirectory)
+      throw Error.noMappedRecord(udid)
     }
     let identifiers = remoteIdentifiers(forUdid: udid, in: pairingDirectory)
-    return identifiers.isEmpty ? try pairedIdentifiers(in: pairingDirectory) : identifiers
+    guard !identifiers.isEmpty else {
+      throw Error.noMappedRecord(udid)
+    }
+    return identifiers
+  }
+
+  // MARK: - Local pairing inventory
+
+  /// One saved remote-pairing record, with its device UDID when a persisted mapping
+  /// exists (`remote_udid.json`). Used by `stupid-app device list` to show the local
+  /// device inventory and to surface records that still need a fresh pair to map them.
+  public struct SavedPairing: Sendable, Equatable {
+    public var identifier: String
+    public var udid: String?
+
+    public init(identifier: String, udid: String?) {
+      self.identifier = identifier
+      self.udid = udid
+    }
+  }
+
+  /// Lists saved remote-pairing records in a pairing directory with their resolved
+  /// device UDID (nil when the record predates the `remote_udid.json` mapping).
+  public static func savedPairings(in pairingDirectory: URL) throws -> [SavedPairing] {
+    let mapping = loadUdidMapping(in: pairingDirectory)
+    let identifiers = try pairedIdentifiers(in: pairingDirectory)
+    return identifiers.map { SavedPairing(identifier: $0, udid: mapping[$0]) }
   }
 
   // MARK: - Host identifier
@@ -224,6 +249,7 @@ public enum RemotePairing {
     case timedOut
     case invalidResponse(String)
     case pairing(String)
+    case noMappedRecord(String)
 
     public var description: String {
       switch self {
@@ -239,6 +265,8 @@ public enum RemotePairing {
         return "The remote-pairing response is invalid: \(detail)."
       case .pairing(let detail):
         return "Remote pairing failed: \(detail)."
+      case .noMappedRecord(let udid):
+        return "No remote-pairing record maps to device '\(udid)'. Re-run `stupid-app device pair --usb --udid <udid> --sudo <path>` to pair this device."
       }
     }
   }

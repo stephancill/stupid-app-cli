@@ -479,7 +479,7 @@ stupid-app release status
 ```
 
 implemented so far: `new`, `sdk export`, `sdk import`, `build`, `credentials add`,
-`signing setup --kind distribution|development`, `devices`, `run --usb`,
+`signing setup --kind distribution|development`, `devices`, `device list`, `run --usb`,
 `device pair --usb`, `run --network`, `run --simulator`, `simulators`,
 `release archive`, `release upload --wait`, `release new-build`, `release bump`,
 `release status`, and
@@ -676,6 +676,21 @@ Developer Portal association remains a manual prerequisite the profile-authoriza
 enforces. AutoFill Credential Provider ships enabled for the app and its credential-provider
 extension via the `AUTOFILL_CREDENTIAL_PROVIDER` capability, driving the
 `com.apple.developer.authentication-services.autofill-credential-provider` entitlement.
+
+**Profile storage and reconciliation (resolved):** provisioning profiles are stored at a
+canonical content-addressed path, `profiles/<development|distribution>/<bundle-id>.mobileprovision`,
+and located by decoded content (bundle ID + kind) rather than by display name
+(`SigningKit.ProfileStore`). `locate` also scans the legacy flat `profiles/*.mobileprovision`
+layout and accepts any file whose decoded content matches, so the filename-only collisions and
+the manual delete-and-recopy dance are gone. `signing setup --kind development` reconciles the
+profile set for the requested `--udid`: it reuses a candidate that already provisions the device,
+otherwise it creates a replacement that also provisions every previously provisioned device
+(union), validates it locally, stores it, and only then retires the stale remote profiles.
+`--profile-name` is a display prefix, not the full name, so app and extension profiles
+never collide. `run` resolves the target device and preflights every development profile
+(app + extensions) against that UDID, team, bundle, and profile kind before the SwiftPM build
+(`SigningKit.ProfilePreflight`), so stale or mismatched profiles fail fast with re-provisioning
+instructions instead of after a build.
 
 ### Signing Engine
 
