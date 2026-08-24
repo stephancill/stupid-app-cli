@@ -171,7 +171,7 @@ a `SIGKILL` from excessive logging is surfaced directly.
 ## run
 
 ```text
-stupid-app run [--usb|--network|--simulator] [--udid <udid>] [--sdk-id <id>] [--swift <path>] [--sudo <path>] [--usbmux <addr>] [--home <dir>]
+stupid-app run [--usb|--network|--simulator|--mac] [--udid <udid>] [--sdk-id <id>] [--swift <path>] [--sudo <path>] [--usbmux <addr>] [--home <dir>]
 ```
 
 Builds, signs once (Apple Development), packages, installs, and launches.
@@ -181,6 +181,10 @@ Builds, signs once (Apple Development), packages, installs, and launches.
   (device must be paired via `device pair --usb` beforehand).
 - `--simulator` — macOS Xcode-present only; builds for the simulator SDK,
   ad-hoc signs, boots, installs, launches via `simctl`.
+- `--mac` — Apple Silicon macOS only; builds the ordinary `arm64-apple-ios`
+  app, development-signs it for this Mac's provisioning UDID, creates the
+  `Wrapper/<app>.app` + `WrappedBundle` compatibility layout, registers it with
+  LaunchServices, and launches it. No Xcode project or TestFlight upload is used.
 - `--udid` auto-selects when omitted. Requires privileged helper access for
   network runs.
 

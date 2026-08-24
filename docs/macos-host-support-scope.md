@@ -18,6 +18,10 @@ path) and Gate M1 (work area 2, the simulator run loop) are implemented: the Xco
 locator, host-SDK-mode detection, the in-place packer path, the mode-aware SDK-version
 resolution, the `doctor` host-mode check, the `arm64-apple-ios-simulator` target, and
 `run --simulator`/`simulators` via `simctl` all landed and were verified on this Mac.
+Local iOS compatibility execution is also implemented: `run --mac` uses the ordinary
+device build/signing pipeline, packages the app in macOS's `Wrapper`/`WrappedBundle`
+layout, registers it with LaunchServices, and launches it through UIKitSystem without an
+Xcode project, Xcode install service, or TestFlight.
 Gate M3 (the shared device stack) is now ported: work area 5 (utun backend in `CTUN`
 via the `com.apple.net.utun_control` kernel-control socket, with macOS-aware 4-byte
 protocol-family framing in both C tunnel relays), work area 6 (Darwin process-group
@@ -62,6 +66,14 @@ The following decisions were confirmed with the project owner on 2026-08-18:
    support early. The shared macOS device-stack work (TUN, process cleanup) is proven
    once in Xcode-present mode and reused by Xcode-absent mode.
 
+Local compatibility clarification:
+
+- **Local iOS-on-Mac runs are not a native Mac target.** `run --mac` keeps the
+  `arm64-apple-ios` binary and real development signing. The local Mac provisioning UDID
+  must be present in every app/extension profile. `stupid-app` creates and registers the
+  compatibility wrapper directly; it does not generate an Xcode project or call Xcode's
+  privileged installer.
+
 A follow-up clarification on 2026-08-18 confirmed five more decisions:
 
 5. **Mode B Darwin tools: pinned LLVM build.** The Xcode-absent bundle carries a pinned
@@ -97,6 +109,7 @@ stupid-app new AcceptanceApp
 cd AcceptanceApp
 stupid-app build
 stupid-app run --simulator [--udid <sim-udid>]   # Xcode-present only
+stupid-app run --mac
 stupid-app credentials add
 stupid-app signing setup --kind development
 stupid-app device pair --usb

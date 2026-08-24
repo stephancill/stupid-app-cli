@@ -71,6 +71,7 @@ stupid-app device pair --usb        Pair lockdown natively, then bootstrap CoreD
 stupid-app run --usb                Build, sign, install, and launch over USB
 stupid-app run --network --udid ... Build, sign, install, and launch over the network
 stupid-app run --simulator [--udid] Build, sign, install, and launch in a simulator (Xcode-present)
+stupid-app run --mac                Build, sign, install, and launch as an iPhone/iPad app on this Mac
 stupid-app simulators               List simulator runtimes and devices
 stupid-app release archive          Build, sign (once, no timestamps), package the IPA
 stupid-app release upload --wait    Upload the IPA and wait for internal TestFlight
@@ -100,6 +101,9 @@ stupid-app signing setup --kind distribution --from-xcode
   `credentials add`.
 - Development provisioning runs only when `--udid` is provided (a physical device must
   be registered); otherwise it is skipped with a note.
+- `run --mac` uses the Apple Silicon Mac's provisioning UDID. Provision the app and every
+  extension for that UDID first, then the command creates the iOS compatibility wrapper,
+  registers it with LaunchServices, and launches it without an Xcode project or TestFlight.
 - `--from-xcode` (macOS only) imports an existing Keychain identity and the exact
   Xcode-managed provisioning profile for the bundle instead of minting new credentials.
 

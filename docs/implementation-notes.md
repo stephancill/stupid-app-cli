@@ -18,6 +18,38 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
 
+## 2026-08-24 - Local iOS App Run On Apple Silicon Mac
+
+### Summary
+
+- Added `stupid-app run --mac` for the same "Designed for iPhone/iPad" environment Xcode
+  exposes locally, without generating or consuming an Xcode project and without TestFlight.
+- Kept the ordinary `arm64-apple-ios` product and existing one-pass Apple Development
+  signing pipeline. The Mac's provisioning UDID must be authorized by every bundle profile.
+- Reproduced macOS's compatibility install format directly: an outer app containing
+  `Wrapper/<iOS app>.app` and a relative `WrappedBundle` link, registered with
+  LaunchServices before launch through UIKitSystem.
+- Rejected an initial Xcode install-service attempt. The underlying InstallCoordination
+  service correctly denied the unentitled CLI, so no private entitlement or Xcode installer
+  dependency remains.
+
+### Verification
+
+- `swift test --filter MacCompatibilityRunnerTests` passed destination parsing coverage.
+- The full 261-test CLI run completed with two timing-sensitive cancellation failures;
+  `ProcessRunnerTests` (4 tests) and `CoreDeviceTLSConnectionTests` (7 tests) both passed
+  immediately when rerun in isolation. `swift build -c release` and `git diff --check` passed.
+- The bundled CLI skill passed `quick_validate.py`.
+- A development-signed deep iOS wallet built through the existing packer, signed its Safari
+  extension leaf-first, installed in the compatibility wrapper, and launched under UIKitSystem.
+- LaunchServices reported the outer bundle as platform iOS and registered the nested Safari
+  Web Extension under its production identity.
+
+### Follow-Up
+
+- Run the full suite and clean-host acceptance workflow. Exercise Safari provider/native
+  messaging and authenticated signing on Mac before claiming complete wallet behavior.
+
 ## 2026-08-22 - Release 0.0.8: Content-Addressed Profiles, Reconcile, Preflight, And Device Inventory
 
 `stupid-app 0.0.8` ships the provisioning/deployment hardening described in the same-day

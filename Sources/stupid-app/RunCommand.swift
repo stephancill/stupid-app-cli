@@ -26,6 +26,11 @@ struct RunCommand: AsyncParsableCommand {
     name: .customLong("simulator"), help: "Build, install, and launch on a local simulator.")
   var simulator = false
 
+  @Flag(
+    name: .customLong("mac"),
+    help: "Build, install, and launch as an iPhone/iPad app on this Apple Silicon Mac.")
+  var mac = false
+
   @Option(
     name: .customLong("udid"),
     help: "Target device or simulator UDID (auto-selected when omitted).")
@@ -53,7 +58,7 @@ struct RunCommand: AsyncParsableCommand {
   var home: String?
 
   mutating func run() async throws {
-    let transports = [usb, network, simulator].filter { $0 }.count
+    let transports = [usb, network, simulator, mac].filter { $0 }.count
     guard transports == 1 else {
       throw RunError.unsupportedTransport
     }
@@ -74,12 +79,18 @@ struct RunCommand: AsyncParsableCommand {
 
     let credentialHome = credentialHomeURL()
     let pairingDirectory = credentialHome.appendingPathComponent("pairing", isDirectory: true)
-    let nativeRunner = NativeCoreDeviceRunner(
-      sudoPath: sudoPath,
-      pairingDirectory: pairingDirectory,
-      usbmuxAddress: usbmuxAddress
-    )
-    try nativeRunner.validateEnvironment(requirePrivileges: true)
+    let nativeRunner: NativeCoreDeviceRunner?
+    if mac {
+      nativeRunner = nil
+    } else {
+      let runner = NativeCoreDeviceRunner(
+        sudoPath: sudoPath,
+        pairingDirectory: pairingDirectory,
+        usbmuxAddress: usbmuxAddress
+      )
+      try runner.validateEnvironment(requirePrivileges: true)
+      nativeRunner = runner
+    }
 
     let context = try ASCContext.resolve(home: home, purpose: "run")
 
@@ -113,7 +124,14 @@ struct RunCommand: AsyncParsableCommand {
 
     // Resolve the target device before building and preflight the profiles against it.
     let targetUDID: String
-    if usb {
+    if mac {
+      let device = try MacCompatibilityRunner.localDevice()
+      if let udid, udid != device.identifier {
+        throw RunError.localMacMismatch
+      }
+      targetUDID = device.identifier
+      print("Using \(device.name) as an iPhone/iPad compatibility destination.")
+    } else if usb {
       let discovery = USBMuxClient(address: usbmuxAddress)
       guard let resolved = try resolveTargetUDID(discovery: discovery) else {
         throw RunError.deviceSelection(0)
@@ -160,6 +178,7 @@ struct RunCommand: AsyncParsableCommand {
       projectRoot
       .appendingPathComponent(".build/arm64-apple-ios/debug", isDirectory: true)
     var ipaURL: URL
+    var signedAppURL: URL
     if plan.extensions.isEmpty {
       let output = try SigningPipeline.signAndPackage(
         input: .init(
@@ -175,6 +194,7 @@ struct RunCommand: AsyncParsableCommand {
           ipaOutputDirectory: ipaDir
         ))
       ipaURL = output.ipaURL
+      signedAppURL = output.appBundle
       print("Signed \(output.appBundle.path)")
       print("Packaged \(output.ipaURL.path)")
       print("IPA SHA-256: \(try SHA256.file(at: output.ipaURL))")
@@ -214,6 +234,7 @@ struct RunCommand: AsyncParsableCommand {
         extensions: extensions
       )
       ipaURL = deepOutput.ipaURL
+      signedAppURL = deepOutput.appBundle
       print("Signed \(deepOutput.appBundle.path)")
       for result in deepOutput.extensions { print("Signed nested extension \(result.bundleID)") }
       print("Packaged \(deepOutput.ipaURL.path)")
@@ -221,7 +242,12 @@ struct RunCommand: AsyncParsableCommand {
     }
 
     // 3. Install and launch on the selected target.
-    if usb {
+    if mac {
+      print(
+        "Installing \(config.bundleID) in this Mac's iPhone/iPad compatibility environment...")
+      let installedURL = try MacCompatibilityRunner.installAndLaunch(appURL: signedAppURL)
+      print("Installed and launched \(config.bundleID) at \(installedURL.path).")
+    } else if usb {
       print("Installing \(config.bundleID) on the selected device over USB...")
       let installer = NativeUSBInstaller(
         usbmuxAddress: usbmuxAddress,
@@ -238,8 +264,10 @@ struct RunCommand: AsyncParsableCommand {
       let pid = try launcher.launchUSB(bundleID: config.bundleID, udid: targetUDID)
       print("Launched \(config.bundleID) (pid \(pid)).")
     } else {
-      print("Installing and launching \(config.bundleID) on the selected device over the network...")
+      print(
+        "Installing and launching \(config.bundleID) on the selected device over the network...")
       #if os(macOS)
+        guard let nativeRunner else { throw RunError.unsupportedTransport }
         let pid = try nativeRunner.runNetwork(
           bundleID: config.bundleID,
           udid: targetUDID,
@@ -395,11 +423,12 @@ enum RunError: Error, CustomStringConvertible {
   case simulatorSigningFailed(String)
   case simulatorNotFound(String)
   case noSimulatorDevice
+  case localMacMismatch
 
   var description: String {
     switch self {
     case .unsupportedTransport:
-      return "Select exactly one deployment transport: --usb, --network, or --simulator."
+      return "Select exactly one deployment transport: --usb, --network, --simulator, or --mac."
     case .identityMissingTeam:
       return
         "The stored development identity has no team ID. Re-run `stupid-app signing setup --kind development`."
@@ -420,6 +449,8 @@ enum RunError: Error, CustomStringConvertible {
     case .noSimulatorDevice:
       return
         "No simulator device is available. Install a runtime or run `stupid-app simulators` to list them."
+    case .localMacMismatch:
+      return "The supplied --udid does not identify this Mac. Omit --udid when using --mac."
     }
   }
 }

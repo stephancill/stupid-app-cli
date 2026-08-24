@@ -24,7 +24,12 @@ runtimes/devices and `stupid-app run --simulator [--udid <id>]` builds for
  through `simctl`. The macOS device stack (Gate M3) is now ported: a native `utun`
  backend in `CTUN` (kernel-control socket), macOS-aware 4-byte framing in both C tunnel
  relays, Darwin process-group cleanup in `ProcessRunner` (posix_spawn group leader), and
- macOS `doctor` checks. `device pair --usb` and `run --usb` are physically qualified on a
+ macOS `doctor` checks. Apple Silicon local compatibility execution is implemented as
+ `stupid-app run --mac`: it retains the ordinary `arm64-apple-ios` build and development
+ profiles, creates the `Wrapper/<app>.app` plus `WrappedBundle` install shape, registers
+ it with LaunchServices, and launches through UIKitSystem without an Xcode project,
+ Xcode install service, Catalyst/native Mac target, or TestFlight. `device pair --usb`
+ and `run --usb` are physically qualified on a
  Mac against a connected iPhone; `run --network` runs through a new privileged
  `coredevice-helper run-network` subcommand and the three unplugged install-and-launch
  runs are now solid on this Mac. The earlier AppService launch intermittency was an
@@ -480,7 +485,7 @@ stupid-app release status
 
 implemented so far: `new`, `sdk export`, `sdk import`, `build`, `credentials add`,
 `signing setup --kind distribution|development`, `devices`, `device list`, `run --usb`,
-`device pair --usb`, `run --network`, `run --simulator`, `simulators`,
+`device pair --usb`, `run --network`, `run --simulator`, `run --mac`, `simulators`,
 `release archive`, `release upload --wait`, `release new-build`, `release bump`,
 `release status`, and
 `doctor`. `release new-build` queries App Store Connect for the most recently uploaded
@@ -1658,6 +1663,12 @@ requirement is still open. Summary:
   boots/installs/launches through `xcrun simctl`. Verified on this Mac: the app built,
   signed, installed, and launched (pid returned) on both a booted device and a
   shutdown device that was booted on demand, with no residual processes.
+- **Local iOS-on-Mac run.** Implemented: `run --mac` reads the Apple Silicon Mac's
+  provisioning UDID from `system_profiler`, preflights the app and extension development
+  profiles against it, reuses the ordinary iOS build/deep-sign pipeline, creates the
+  compatibility wrapper, registers it with LaunchServices, and launches the iOS process
+  through UIKitSystem. A deep wallet app launched and its Safari Web Extension appeared
+  in the LaunchServices plugin record. This is not a native macOS target or Catalyst.
 - **Gate M2: macOS-produced release.** A distribution IPA built on macOS passes
   `codesign --verify --strict`, processes to `VALID`/TestFlight readiness, and installs
   through TestFlight. Qualified on this Mac (2026-08-18): `release archive` produced a

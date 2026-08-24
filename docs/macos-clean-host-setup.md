@@ -79,7 +79,22 @@ stupid-app run --simulator [--udid <sim-udid>]
 Requires a simulator runtime and a bootable device; missing runtimes surface as
 actionable diagnostics.
 
-### 5. Pairing records
+### 5. Local iPhone/iPad app run (optional)
+
+On Apple Silicon, register the Mac's Provisioning UDID as an iOS development device and
+create profiles for every configured bundle, then run locally:
+
+```bash
+system_profiler SPHardwareDataType
+stupid-app signing setup --kind development --udid <mac-provisioning-udid>
+stupid-app run --mac
+```
+
+The command retains the `arm64-apple-ios` product, creates the compatibility wrapper,
+registers it with LaunchServices, and launches through UIKitSystem. It uses no Xcode
+project, Xcode install service, or TestFlight upload.
+
+### 6. Pairing records
 
 `stupid-app device pair --usb` uses the built-in `/var/run/usbmuxd` (no MTU patch or
 daemon provisioning is needed on macOS). It performs native lockdown pairing and the
@@ -89,7 +104,7 @@ can skip straight to network runs.
 
 Verification: `stupid-app doctor` reports the pairing-records check as `PASS`.
 
-### 6. Privilege boundary for utun
+### 7. Privilege boundary for utun
 
 macOS creates `utun` interfaces through a kernel-control socket that requires root
 (`com.apple.net.utun_control` returns `EPERM` unprivileged). The CLI never elevates
@@ -109,7 +124,7 @@ stupid-app run --network --udid <udid> --sudo /usr/bin/sudo
 For a proof host using the debug binary, the sudoers grant must be scoped to the current
 build path after every rebuild. Do not grant a broad `NOPASSWD: ALL`.
 
-### 7. Health check
+### 8. Health check
 
 ```bash
 stupid-app doctor
@@ -137,6 +152,7 @@ validated path. The intended order:
 ```bash
 stupid-app run --network --udid <udid> --sudo /usr/bin/sudo   # Mode A
 stupid-app run --simulator [--udid <sim-udid>]                # Mode A
+stupid-app run --mac                                           # Apple Silicon
 stupid-app release archive
 stupid-app release upload --wait
 stupid-app release status

@@ -1,6 +1,6 @@
 ---
 name: stupid-app-cli
-description: Operate the stupid-app CLI for iOS development without Xcode. Use when the user wants to create, build, sign, install, launch, or release a SwiftPM/SwiftUI iOS app on a Mac or Linux host — including scaffold a project (`stupid-app new`), export/import the iOS Swift SDK bundle (`sdk export`/`sdk import`), provision App Store Connect credentials, signing identities, and profiles (`credentials add`, `signing setup`), build an unsigned .app (`build`), register devices (`devices`), pair an iPhone (`device pair`), build/sign/install/launch over USB or the network (`run --usb`, `run --network`) or a simulator (`run --simulator`, `simulators`), or produce and upload a distribution IPA (`release archive`, `release upload`, `release status`, `release new-build`, `release bump`). Also use to diagnose the environment with `stupid-app doctor` or recover a host that fails to run, install, or upload.
+description: Operate the stupid-app CLI for iOS development without Xcode projects. Use when the user wants to create, build, sign, install, launch, or release a SwiftPM/SwiftUI iOS app on a Mac or Linux host — including scaffold a project (`stupid-app new`), export/import the iOS Swift SDK bundle (`sdk export`/`sdk import`), provision App Store Connect credentials, signing identities, and profiles (`credentials add`, `signing setup`), build an unsigned .app (`build`), register devices (`devices`), pair an iPhone (`device pair`), build/sign/install/launch over USB or the network (`run --usb`, `run --network`), a simulator (`run --simulator`, `simulators`), or locally as an iPhone/iPad app on Apple Silicon Mac (`run --mac`), or produce and upload a distribution IPA (`release archive`, `release upload`, `release status`, `release new-build`, `release bump`). Also use to diagnose the environment with `stupid-app doctor` or recover a host that fails to run, install, or upload.
 ---
 
 # stupid-app CLI
@@ -234,7 +234,20 @@ stupid-app run --simulator [--udid <udid>]
 Xcode-present-only. Lists runtimes/devices and builds for the simulator SDK,
 ad-hoc signs, boots, installs, and launches via `simctl`.
 
-### 6. Distribution release
+### 6. Apple Silicon Mac compatibility run
+
+```bash
+# Obtain the local provisioning UDID from System Information, then provision once:
+stupid-app signing setup --kind development --udid <mac-provisioning-udid>
+stupid-app run --mac
+```
+
+This builds the ordinary iOS device binary, signs the app and every extension with
+Mac-authorized development profiles, creates macOS's `Wrapper/<app>.app` plus
+`WrappedBundle` compatibility layout, registers it with LaunchServices, and launches
+it through UIKitSystem. It does not generate an Xcode project or upload to TestFlight.
+
+### 7. Distribution release
 
 ```bash
 stupid-app release bump                 # increment build across app + extensions
