@@ -232,7 +232,13 @@ stupid-app run --simulator [--udid <udid>]
 ```
 
 Xcode-present-only. Lists runtimes/devices and builds for the simulator SDK,
-ad-hoc signs, boots, installs, and launches via `simctl`.
+ad-hoc signs, boots, installs, and launches via `simctl`. Simulator ad-hoc
+signing embeds a sanitized entitlement override: `keychain-access-groups` and
+profile-gated capabilities such as `autofill-credential-provider` are dropped
+(they make SpringBoard reject the launch), while
+`com.apple.security.application-groups` is preserved for the shared container.
+Simulator Keychain access groups are unavailable by design without a
+development identity.
 
 ### 6. Apple Silicon Mac compatibility run
 
@@ -242,10 +248,11 @@ stupid-app signing setup --kind development --udid <mac-provisioning-udid>
 stupid-app run --mac
 ```
 
-This builds the ordinary iOS device binary, signs the app and every extension with
-Mac-authorized development profiles, creates macOS's `Wrapper/<app>.app` plus
-`WrappedBundle` compatibility layout, registers it with LaunchServices, and launches
-it through UIKitSystem. It does not generate an Xcode project or upload to TestFlight.
+For a containing app without extensions, this builds and signs the ordinary iOS device
+binary, creates macOS's `Wrapper/<app>.app` plus `WrappedBundle` compatibility layout,
+registers it with LaunchServices, and launches it through UIKitSystem. Extension-bearing
+apps require Apple's privately entitled InstallCoordination/MobileInstallation path, so
+`run --mac` fails before build; use Xcode or TestFlight for those apps.
 
 ### 7. Distribution release
 

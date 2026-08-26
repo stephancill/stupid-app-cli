@@ -18,6 +18,138 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
 
+## 2026-08-27 - Simulator Launch Rejection From Profile-Gated Entitlements
+
+### Summary
+
+- `stupid-app run --simulator` produced a deep app (plugin-bearing) whose launch was
+  denied by SpringBoard with "Security policy issue" (launchd POSIX 163). The code
+  signature verified (`codesign --verify --deep --strict`), so the rejection came from
+  the embedded entitlements, not the seal.
+- Bisected on an iOS 26.3 simulator: `com.apple.security.application-groups` alone
+  launches and the nested `.appex` still registers with PlugInKit; the
+  `com.apple.developer.authentication-services.autofill-credential-provider`
+  entitlement alone (with or without the extension) makes SpringBoard reject the launch,
+  because an ad-hoc signature cannot satisfy a profile-gated capability.
+- Added `RunCommand.SimulatorEntitlements.sanitize`: the ad-hoc simulator signing
+  override now drops `keychain-access-groups`, `$(AppIdentifierPrefix)` tokens, and
+  profile-gated capabilities (`autofill-credential-provider`) while preserving
+  `com.apple.security.application-groups` for the shared container.
+- Added `Tests/StupidAppTests/SimulatorEntitlementsTests.swift` (keychain-groups drop,
+  autofill drop, `$(AppIdentifierPrefix)` removal, unrelated entitlements preserved,
+  empty-source no-op).
+
+### Verification
+
+- `swift test` passes (268 tests in 49 suites, including the new suite).
+- Installing and launching `stupid-app run --simulator` on the two booted iOS 26.3
+  simulators now succeeds (pid returned) with the sanitized entitlements embedded, and
+  `pkd` registers the bundled `tech.stupid.StupidAuthenticator.autofill` plugin.
+
+### Note
+
+- Simulator Keychain remains App-Group-limited by design: without a team
+  (`application-identifier`), keychain access groups cannot be resolved on the
+  simulator (`errSecMissingEntitlement`), and embedding a team-less keychain group in an
+  ad-hoc build is exactly the kind of SpringBoard launch rejection handled above. This
+  is a simulator/tooling limitation, not an app or signing-pipeline bug; real Keychain
+  behaviour is validated by signed physical-device runs and TestFlight.
+
+## 2026-08-24 - run --mac Supports Nested Safari Extension
+
+### Summary
+
+- Reversed the earlier extension-bearing rejection: `run --mac` now installs containing apps with
+  nested `.appex` extensions instead of failing before profile lookup or build.
+- Added `MacCompatibilityRunner.enumerateNestedAppExtensions` (lists `PlugIns/*.appex` under the
+  staged wrapper) and `registerNestedAppExtensions`, which registers each nested extension with
+  PlugInKit via the public `pluginkit -a` after the existing LaunchServices (`lsregister`)
+  registration. A `pluginkit` warning is loud but non-fatal because the containing-wrapper
+  LaunchServices registration already elects nested extensions and Safari can still run them.
+- Removed the `validateInstallSupport` fail-fast guard, its call in `RunCommand`, and the
+  `extensionsRequireAppleInstaller` error. The `pluginkit` binary is a public tool that carries no
+  private entitlement, so no second build or signing authority is introduced.
+- Replaced the extension-rejection unit test with nested-appex enumeration coverage.
+
+### Why
+
+- Direct LaunchServices registration of the compatibility wrapper is sufficient for macOS PlugInKit
+  and Safari to register and run a nested iOS Safari Web Extension. On-Mac verification showed the
+  extension Enabled and running a live background page after `run --mac`. The earlier conclusion
+  that extension installation unconditionally requires Apple's privately entitled
+  InstallCoordination/`.XCInstall` path was too strong for the Safari Web Extension case: the
+  public LaunchServices + `pluginkit` route serves the extension's web content (provider, content
+  scripts, background page, EIP-6963 announce). It cannot serve native messaging: Safari cannot
+  spawn the iOS appex plugin (`Launchd job spawn failed`) because the register path does not create
+  the launchd/RBS plugin registration that only the entitled installer (Xcode/TestFlight)
+  provides. Connect/approval/signing therefore require TestFlight (or an Xcode-installed build) on
+  the Mac, or the iOS simulator/device.
+
+### Verification
+
+- `run --mac` on an extension-bearing wallet staged the wrapper, printed
+  `Registered 1 nested app extension(s) with PlugInKit: StupidWalletSafari.appex`, installed the
+  containing app in the compatibility environment, and launched it (observed running from the
+  per-app wrapper container).
+- `pluginkit -m` lists the nested appex from the `run --mac` staging path.
+- macOS Safari shows `co.za.stephancill.stupid-wallet.extension` Enabled with a running background
+  page (`safari-web-extension://` base URL) and background content event listeners, matching the
+  current manifest version.
+- Reproducing a connect on Safari Technology Preview surfaced the raw native error: Safari routes
+  the message but cannot spawn the plugin (`RBSLaunchRequest … Launch failed … Launchd job spawn
+  failed` trying to launch `co.za.stephancill.stupid-wallet.extension`); the handler never runs.
+  Neither the plain application ID nor the Team-ID-prefixed application ID changes this.
+- `swift build` succeeded; `swift test` passed 263 tests in 48 suites; `stupid-app doctor` reported
+  zero failures and zero warnings in the wallet project.
+
+### Follow-Up
+
+- `run --mac` supports the extension's web content on the Mac but cannot deliver native messaging;
+  the full connect/approval/signing flow requires TestFlight (or an Xcode-installed build) on the
+  Mac, or the iOS simulator/device. This entry proves registration and launch of the nested
+  extension's web content via `run --mac`.
+
+
+
+### Summary
+
+- Corrected `run --mac` to reject extension-bearing apps before profile lookup or build.
+- Retained direct compatibility-wrapper installation for containing apps without extensions.
+- Removed temporary profile diagnostics from the run path.
+- Removed the rejected Mac-profile, OSX embedded-profile, 16 KiB CodeDirectory, and CMS
+  signing-time experiments. Device and distribution signing retain their previously qualified iOS
+  profiles, `embedded.mobileprovision`, 4 KiB code pages, and timestamp-free CMS shape.
+
+### Why
+
+- LaunchServices registration is not equivalent to iOS app installation for nested extensions.
+  Safari rejected a correctly signed and Mac-provisioned extension because no MobileInstallation
+  record had been created for it.
+- Xcode performs that registration through `IDEInstallService` and InstallCoordination. macOS
+  rejected a direct CLI connection because the process lacks Apple's private
+  `com.apple.private.InstallCoordination.allowed` entitlement. The helper additionally carries
+  the private `InstallLocalProvisioned` MobileInstallation permission.
+- `xcodebuild test` can broker the entitled path only for a test-host product that Xcode modifies
+  and signs. It cannot install an arbitrary already signed app without violating the CLI's
+  one-signing-pass and no-second-build-source invariants.
+
+### Verification
+
+- Unified logging distinguished Xcode's successful `.XCInstall` transaction, including separate
+  app and PlugInKit placeholders, from the CLI's entitlement rejection.
+- `xcodebuild test` on a Designed for iPad/iPhone destination invoked the entitled helper;
+  ordinary `xcodebuild install` only performed the build-system install action and did not.
+- `swift test` passed 262 tests in 48 suites, including extension rejection while retaining
+  app-only acceptance; one optional asset-catalog differential test was skipped.
+- The release build succeeded, `doctor` completed with zero failures and warnings, and invoking
+  that release binary's `run --mac` in an extension-bearing project returned the new error before
+  profile lookup, build, signing, or installation.
+
+### Follow-Up
+
+- Use Xcode or TestFlight for extension-bearing iOS-on-Mac verification unless Apple exposes a
+  supported arbitrary-app installation API that preserves the existing signing pipeline.
+
 ## 2026-08-24 - Local iOS App Run On Apple Silicon Mac
 
 ### Summary

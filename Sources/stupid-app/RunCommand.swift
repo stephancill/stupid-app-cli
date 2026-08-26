@@ -19,7 +19,8 @@ struct RunCommand: AsyncParsableCommand {
   var usb = false
 
   @Flag(
-    name: .customLong("network"), help: "Install and launch through a CoreDevice network tunnel.")
+    name: .customLong("network"),
+    help: "Install and launch through a CoreDevice network tunnel.")
   var network = false
 
   @Flag(
@@ -148,8 +149,9 @@ struct RunCommand: AsyncParsableCommand {
       appProfile, kind: .development, teamID: teamID, bundleID: config.bundleID,
       deviceUDID: targetUDID)
     for (bundleID, url) in extensionProfileURLs {
+      let extensionProfile = try MobileProvisionParser.parse(at: url)
       try ProfilePreflight.validate(
-        MobileProvisionParser.parse(at: url), kind: .development, teamID: teamID,
+        extensionProfile, kind: .development, teamID: teamID,
         bundleID: bundleID, deviceUDID: targetUDID)
     }
 
@@ -203,7 +205,8 @@ struct RunCommand: AsyncParsableCommand {
         extensionPlan -> DeepSigningPipeline.ExtensionInput in
         let appexURL =
           unsignedApp
-          .appendingPathComponent("PlugIns/\(extensionPlan.product).appex", isDirectory: true)
+          .appendingPathComponent(
+            "PlugIns/\(extensionPlan.product).appex", isDirectory: true)
         guard let extensionProfileURL = extensionProfileURLs[extensionPlan.bundleID] else {
           throw RunError.profileMissing(extensionPlan.bundleID)
         }
@@ -236,7 +239,9 @@ struct RunCommand: AsyncParsableCommand {
       ipaURL = deepOutput.ipaURL
       signedAppURL = deepOutput.appBundle
       print("Signed \(deepOutput.appBundle.path)")
-      for result in deepOutput.extensions { print("Signed nested extension \(result.bundleID)") }
+      for result in deepOutput.extensions {
+        print("Signed nested extension \(result.bundleID)")
+      }
       print("Packaged \(deepOutput.ipaURL.path)")
       print("IPA SHA-256: \(try SHA256.file(at: deepOutput.ipaURL))")
     }
@@ -244,7 +249,8 @@ struct RunCommand: AsyncParsableCommand {
     // 3. Install and launch on the selected target.
     if mac {
       print(
-        "Installing \(config.bundleID) in this Mac's iPhone/iPad compatibility environment...")
+        "Installing \(config.bundleID) in this Mac's iPhone/iPad compatibility environment..."
+      )
       let installedURL = try MacCompatibilityRunner.installAndLaunch(appURL: signedAppURL)
       print("Installed and launched \(config.bundleID) at \(installedURL.path).")
     } else if usb {
@@ -265,7 +271,8 @@ struct RunCommand: AsyncParsableCommand {
       print("Launched \(config.bundleID) (pid \(pid)).")
     } else {
       print(
-        "Installing and launching \(config.bundleID) on the selected device over the network...")
+        "Installing and launching \(config.bundleID) on the selected device over the network..."
+      )
       #if os(macOS)
         guard let nativeRunner else { throw RunError.unsupportedTransport }
         let pid = try nativeRunner.runNetwork(
@@ -338,8 +345,17 @@ struct RunCommand: AsyncParsableCommand {
     // Ad-hoc signing is the scoped simulator exception: it is the normal, required
     // mode for simulator execution and is never an intermediate pass in a device or
     // release pipeline. Simulator .app output is never a device or release artifact.
-    print("Ad-hoc signing for the simulator (scoped exception: never a device/release artifact)...")
-    try adHocSign(appURL: unsignedApp)
+    print(
+      "Ad-hoc signing for the simulator (scoped exception: never a device/release artifact)..."
+    )
+    let extensionEntitlements: [String: String?] = plan.extensions.reduce(into: [:]) {
+      $0[$1.product] = $1.entitlementsPath
+    }
+    try adHocSign(
+      appURL: unsignedApp,
+      entitlementsPath: config.entitlementsPath,
+      extensionEntitlements: extensionEntitlements,
+      projectRoot: projectRoot)
 
     let device = try selectSimulatorDevice(udid: udid)
     print("Using simulator \(device.name) (\(device.udid))")
@@ -357,33 +373,111 @@ struct RunCommand: AsyncParsableCommand {
     print("Launched \(config.bundleID) on simulator \(device.name) (pid \(pid)).")
   }
 
-  private func adHocSign(appURL: URL) throws {
+  private func adHocSign(
+    appURL: URL,
+    entitlementsPath: String?,
+    extensionEntitlements: [String: String?],
+    projectRoot: URL
+  ) throws {
     // `codesign -s -` performs the ad-hoc signing that Xcode's "Sign to Run Locally"
     // uses for simulator builds. The scoped exception is documented in
     // docs/macos-host-support-scope.md. For deep apps (with bundled extensions), each
     // nested .appex is ad-hoc signed leaf-first so the simulator can load the widget
     // extension, then the containing app seals the signed appex.
+    // Project entitlements are embedded during this ad-hoc pass so keychain access groups
+    // and App Groups actually work on the simulator (without them, keychain reads return
+    // errSecMissingEntitlement -34018). `$(AppIdentifierPrefix)` has no team value on the
+    // simulator, so it is substituted with the relaxed `default` token that iOS accepts
+    // for ad-hoc local keychain groups.
     let pluginsDir = appURL.appendingPathComponent("PlugIns", isDirectory: true)
     if FileManager.default.fileExists(atPath: pluginsDir.path),
       let appexes = try? FileManager.default.contentsOfDirectory(atPath: pluginsDir.path)
     {
       for appex in appexes.sorted()
       where appex.hasSuffix(".appex") {
+        let product = (appex as NSString).deletingPathExtension
+        let extEnts = extensionEntitlements[product].flatMap { $0 }
         try adHocSignSingle(
-          appURL: pluginsDir.appendingPathComponent(appex, isDirectory: true))
+          appURL: pluginsDir.appendingPathComponent(appex, isDirectory: true),
+          entitlementsPath: extEnts,
+          projectRoot: projectRoot)
       }
     }
-    try adHocSignSingle(appURL: appURL)
+    try adHocSignSingle(
+      appURL: appURL,
+      entitlementsPath: entitlementsPath,
+      projectRoot: projectRoot)
   }
 
-  private func adHocSignSingle(appURL: URL) throws {
+  private func adHocSignSingle(
+    appURL: URL, entitlementsPath: String?, projectRoot: URL
+  ) throws {
+    var arguments = ["--force", "--sign", "-"]
+    if let entitlementsPath {
+      let original = URL(
+        fileURLWithPath: entitlementsPath, relativeTo: projectRoot
+      ).standardizedFileURL.path
+      // Ad-hoc simulator signing has no team/AppIdentifierPrefix value. Materialize the
+      // entitlements into a concrete override with `$(AppIdentifierPrefix)` removed so the
+      // keychain/App Group groups are usable on the simulator.
+      let simEntitlements = try substituteAppIdentifierPrefix(in: original)
+      arguments += ["--entitlements", simEntitlements]
+    }
+    arguments.append(appURL.path)
     let result = try ProcessRunner.run(
       executable: "/usr/bin/codesign",
-      arguments: ["--force", "--sign", "-", appURL.path]
+      arguments: arguments
     )
     guard result.succeeded else {
       let detail = result.stderr.isEmpty ? result.stdout : result.stderr
       throw RunError.simulatorSigningFailed(detail)
+    }
+  }
+
+  /// Returns a concrete entitlements override for ad-hoc (team-less) simulator signing.
+  /// The bare `$(AppIdentifierPrefix)` is removed and the whole `keychain-access-groups`
+  /// dictionary is dropped, because the simulator has no team/app-id prefix and a
+  /// team-less keychain group makes SpringBoard reject the launch, while the simulator's
+  /// default keychain group is the app bundle-id. Profile-gated capabilities (for example
+  /// `autofill-credential-provider`) are also dropped: an ad-hoc signature cannot satisfy
+  /// them, and embedding them makes SpringBoard reject the launch with "Security policy
+  /// issue". `com.apple.security.application-groups` (used for the shared container) is
+  /// preserved. The original file is untouched.
+  private func substituteAppIdentifierPrefix(in sourcePath: String) throws -> String {
+    let data = try Data(contentsOf: URL(fileURLWithPath: sourcePath))
+    let plist = try PropertyListSerialization.propertyList(
+      from: data, options: [], format: nil)
+    guard var dict = plist as? [String: Any] else { return sourcePath }
+    dict = SimulatorEntitlements.sanitize(dict)
+
+    let override = try PropertyListSerialization.data(
+      fromPropertyList: dict, format: .xml, options: 0)
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(
+      UUID().uuidString + ".entitlements")
+    try override.write(to: url)
+    return url.path
+  }
+
+  /// Entitlement sanitization for ad-hoc (team-less) simulator signing. `stupid-app`
+  /// preserves this override logic in one place so release signing always uses the
+  /// source entitlements while simulator builds get a relaxed, launchable subset.
+  enum SimulatorEntitlements {
+    static func sanitize(_ source: [String: Any]) -> [String: Any] {
+      var dict = source
+      // The simulator has no team/app-id prefix, so `keychain-access-groups` cannot be
+      // expressed and a team-less keychain group makes SpringBoard reject the launch.
+      dict["keychain-access-groups"] = nil
+      // Entitlements granted by provisioning profiles cannot be satisfied by an ad-hoc
+      // signature; embedding them makes SpringBoard reject the launch with "Security
+      // policy issue" (launchd POSIX 163).
+      dict["com.apple.developer.authentication-services.autofill-credential-provider"] = nil
+      // The shared-container App Group is preserved, with any `$(AppIdentifierPrefix)`
+      // token removed because there is no team prefix on the simulator.
+      if let groups = dict["com.apple.security.application-groups"] as? [String] {
+        dict["com.apple.security.application-groups"] =
+          groups.map { $0.replacingOccurrences(of: "$(AppIdentifierPrefix)", with: "") }
+      }
+      return dict
     }
   }
 
@@ -428,7 +522,8 @@ enum RunError: Error, CustomStringConvertible {
   var description: String {
     switch self {
     case .unsupportedTransport:
-      return "Select exactly one deployment transport: --usb, --network, --simulator, or --mac."
+      return
+        "Select exactly one deployment transport: --usb, --network, --simulator, or --mac."
     case .identityMissingTeam:
       return
         "The stored development identity has no team ID. Re-run `stupid-app signing setup --kind development`."

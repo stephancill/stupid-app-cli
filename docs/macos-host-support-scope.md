@@ -18,10 +18,15 @@ path) and Gate M1 (work area 2, the simulator run loop) are implemented: the Xco
 locator, host-SDK-mode detection, the in-place packer path, the mode-aware SDK-version
 resolution, the `doctor` host-mode check, the `arm64-apple-ios-simulator` target, and
 `run --simulator`/`simulators` via `simctl` all landed and were verified on this Mac.
-Local iOS compatibility execution is also implemented: `run --mac` uses the ordinary
-device build/signing pipeline, packages the app in macOS's `Wrapper`/`WrappedBundle`
-layout, registers it with LaunchServices, and launches it through UIKitSystem without an
-Xcode project, Xcode install service, or TestFlight.
+Local iOS compatibility execution is implemented: `run --mac`
+uses the ordinary device build/signing pipeline, packages the app in macOS's
+`Wrapper`/`WrappedBundle` layout, registers it with LaunchServices, registers each nested
+`.appex` with PlugInKit through the public `pluginkit -a`, and launches it through
+UIKitSystem. Nested Safari Web Extension web content runs in Safari, but native messaging is
+not available: Safari cannot spawn the iOS appex plugin (`Launchd job spawn failed`) because the
+register path does not create the launchd/RBS plugin registration that only Apple's entitled
+installer (`.XCInstall`/TestFlight/Xcode) provides. Connect/approval/signing therefore require
+TestFlight (or an Xcode-installed build) on the Mac, or the iOS simulator/device.
 Gate M3 (the shared device stack) is now ported: work area 5 (utun backend in `CTUN`
 via the `com.apple.net.utun_control` kernel-control socket, with macOS-aware 4-byte
 protocol-family framing in both C tunnel relays), work area 6 (Darwin process-group
@@ -68,11 +73,13 @@ The following decisions were confirmed with the project owner on 2026-08-18:
 
 Local compatibility clarification:
 
-- **Local iOS-on-Mac runs are not a native Mac target.** `run --mac` keeps the
-  `arm64-apple-ios` binary and real development signing. The local Mac provisioning UDID
-  must be present in every app/extension profile. `stupid-app` creates and registers the
-  compatibility wrapper directly; it does not generate an Xcode project or call Xcode's
-  privileged installer.
+- **Local iOS-on-Mac runs are not a native Mac target.** `run --mac` keeps the `arm64-apple-ios`
+  binary and real development signing. The local Mac
+  provisioning UDID must be present in the app and extension profiles. `stupid-app` creates and
+  registers the compatibility wrapper directly and registers nested `.appex` bundles with PlugInKit
+  through the public `pluginkit -a`. Nested Safari Web Extension web content is elected and runs in
+  Safari; native messaging is not available because the register path does not create the
+  launchd/RBS plugin registration that the entitled installer provides.
 
 A follow-up clarification on 2026-08-18 confirmed five more decisions:
 
@@ -264,7 +271,11 @@ host Swift differ.
   required mode for simulator execution and is not an intermediate pass in any
   device/release pipeline; the real-certificate invariants for device and App Store
   builds are unchanged. Ad-hoc simulator signing uses the project-owned signer where
-  feasible and `codesign -s -` only within this scoped exception.
+  feasible and `codesign -s -` only within this scoped exception. The ad-hoc pass embeds
+  a sanitized entitlement override: `keychain-access-groups` and profile-gated
+  capabilities such as `autofill-credential-provider` are dropped (a team-less keychain
+  group or an unsatisfied profile-gated entitlement makes SpringBoard reject the launch),
+  while `com.apple.security.application-groups` is preserved for the shared container.
 - **Scoped Apple-tooling exception.** `simctl` is the one product use of Apple runtime
   tooling and is acceptable because simulators cannot exist without Xcode. Simulator
   `.app` output is never a device or release artifact.

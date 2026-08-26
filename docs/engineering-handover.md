@@ -24,11 +24,16 @@ runtimes/devices and `stupid-app run --simulator [--udid <id>]` builds for
  through `simctl`. The macOS device stack (Gate M3) is now ported: a native `utun`
  backend in `CTUN` (kernel-control socket), macOS-aware 4-byte framing in both C tunnel
  relays, Darwin process-group cleanup in `ProcessRunner` (posix_spawn group leader), and
- macOS `doctor` checks. Apple Silicon local compatibility execution is implemented as
- `stupid-app run --mac`: it retains the ordinary `arm64-apple-ios` build and development
- profiles, creates the `Wrapper/<app>.app` plus `WrappedBundle` install shape, registers
- it with LaunchServices, and launches through UIKitSystem without an Xcode project,
- Xcode install service, Catalyst/native Mac target, or TestFlight. `device pair --usb`
+  macOS `doctor` checks. Apple Silicon local compatibility execution is implemented as
+  `stupid-app run --mac`: it retains the ordinary
+  `arm64-apple-ios` build and development profile, creates the `Wrapper/<app>.app` plus
+  `WrappedBundle` install shape, registers it with LaunchServices, registers each nested
+  `.appex` with PlugInKit through the public `pluginkit -a`, and launches through
+  UIKitSystem. Nested Safari Web Extension web content (provider, content scripts, background
+  page, EIP-6963 announce) is elected and runs in Safari, but native messaging is not available:
+  Safari cannot spawn the iOS appex plugin for `sendNativeMessage` because the install does not
+  register it with launchd/RBS (only the entitled installer/Xcode/TestFlight creates that
+  registration). `device pair --usb`
  and `run --usb` are physically qualified on a
  Mac against a connected iPhone; `run --network` runs through a new privileged
  `coredevice-helper run-network` subcommand and the three unplugged install-and-launch
@@ -1660,15 +1665,25 @@ requirement is still open. Summary:
   `stupid-app simulators` lists runtimes/devices, and `stupid-app run --simulator
   [--udid <id>]` assembles, ad-hoc signs (`codesign --force --sign -`, the recorded
   scoped exception for simulator output, never a device/release artifact), and
-  boots/installs/launches through `xcrun simctl`. Verified on this Mac: the app built,
-  signed, installed, and launched (pid returned) on both a booted device and a
-  shutdown device that was booted on demand, with no residual processes.
-- **Local iOS-on-Mac run.** Implemented: `run --mac` reads the Apple Silicon Mac's
-  provisioning UDID from `system_profiler`, preflights the app and extension development
-  profiles against it, reuses the ordinary iOS build/deep-sign pipeline, creates the
-  compatibility wrapper, registers it with LaunchServices, and launches the iOS process
-  through UIKitSystem. A deep wallet app launched and its Safari Web Extension appeared
-  in the LaunchServices plugin record. This is not a native macOS target or Catalyst.
+  boots/installs/launches through `xcrun simctl`. Simulator signing embeds a sanitized
+  entitlement override (`SimulatorEntitlements`): `$(AppIdentifierPrefix)` is removed,
+  `keychain-access-groups` and profile-gated capabilities (e.g.
+  `autofill-credential-provider`) are dropped — a team-less keychain group or an
+  unsatisfied profile-gated entitlement otherwise makes SpringBoard reject the launch
+  with "Security policy issue" — while `com.apple.security.application-groups` is kept
+  for the shared container. Verified on this Mac: the app built, signed, installed, and
+  launched (pid returned) on both a booted device and a shutdown device that was booted
+  on demand, with no residual processes.
+- **Local iOS-on-Mac run.** `run --mac` reads the
+  Apple Silicon Mac's provisioning UDID from `system_profiler`, preflights the app and extension
+  development profiles against it, reuses the ordinary iOS build/sign/deep-signing pipeline, creates
+  the compatibility wrapper, registers it with LaunchServices, registers each nested `.appex` with
+  PlugInKit through the public `pluginkit -a`, and launches through UIKitSystem. Nested Safari Web
+  Extension web content runs in Safari, but native messaging does not: Safari cannot spawn the iOS
+  appex plugin for `sendNativeMessage` (`Launchd job spawn failed`) because the register path does
+  not create the launchd/RBS plugin registration that only the entitled installer (Xcode/TestFlight)
+  provides. Connect/approval/signing therefore require TestFlight (or an Xcode-installed build) on
+  the Mac, or the iOS simulator/device. This is not a native macOS target or Catalyst.
 - **Gate M2: macOS-produced release.** A distribution IPA built on macOS passes
   `codesign --verify --strict`, processes to `VALID`/TestFlight readiness, and installs
   through TestFlight. Qualified on this Mac (2026-08-18): `release archive` produced a
