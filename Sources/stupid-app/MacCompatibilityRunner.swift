@@ -56,6 +56,45 @@ struct MacCompatibilityRunner {
       name: hardware.machineName)
   }
 
+  /// Enumerates the `.appex` bundles nested under `PlugIns/` of an iOS app wrapper.
+  /// These are the iOS-style extensions that macOS runs in the compatibility
+  /// environment (for this wallet, the Safari Web Extension). LaunchServices
+  /// registration of the containing wrapper already elects them for PlugInKit, but we
+  /// also register each one explicitly so the record is present and diagnosable even if
+  /// nested-bundle election is delayed.
+  static func enumerateNestedAppExtensions(in appURL: URL) -> [URL] {
+    let pluginsDir = appURL.appendingPathComponent("PlugIns", isDirectory: true)
+    guard
+      let entries = try? FileManager.default.contentsOfDirectory(
+        at: pluginsDir, includingPropertiesForKeys: nil)
+    else { return [] }
+    return entries
+      .filter { $0.pathExtension == "appex" }
+      .sorted { $0.lastPathComponent < $1.lastPathComponent }
+  }
+
+  /// Registers every nested `.appex` with PlugInKit after the wrapper is staged and
+  /// registered with LaunchServices. `pluginkit -a` is the public, idempotent way to
+  /// add a plugin; it does not carry private entitlements. A registration failure is a
+  /// loud warning rather than an install abort because the containing-app LaunchServices
+  /// registration already elects nested extensions, and Safari can still run them.
+  @discardableResult
+  static func registerNestedAppExtensions(in appURL: URL) throws -> [URL] {
+    let appexes = enumerateNestedAppExtensions(in: appURL)
+    for appex in appexes {
+      let result = try ProcessRunner.run(
+        executable: "/usr/bin/pluginkit",
+        arguments: ["-a", appex.path])
+      if !result.succeeded {
+        let detail = result.stderr.isEmpty ? result.stdout : result.stderr
+        print(
+          "Warning: could not explicitly register \(appex.lastPathComponent) with PlugInKit: \(detail)"
+        )
+      }
+    }
+    return appexes
+  }
+
   static func installAndLaunch(appURL: URL) throws -> URL {
     #if os(macOS) && arch(arm64)
       if let bundleID = Bundle(url: appURL)?.bundleIdentifier {
@@ -96,6 +135,13 @@ struct MacCompatibilityRunner {
         arguments: ["-f", installedURL.path])
       guard register.succeeded else {
         throw Error.installFailed(register.stderr.isEmpty ? register.stdout : register.stderr)
+      }
+
+      let nestedExtensions = try registerNestedAppExtensions(in: wrappedApp)
+      if !nestedExtensions.isEmpty {
+        print(
+          "Registered \(nestedExtensions.count) nested app extension(s) with PlugInKit: "
+            + nestedExtensions.map(\.lastPathComponent).joined(separator: ", "))
       }
 
       let launch = try ProcessRunner.run(

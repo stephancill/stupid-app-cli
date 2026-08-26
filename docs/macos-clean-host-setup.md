@@ -82,7 +82,7 @@ actionable diagnostics.
 ### 5. Local iPhone/iPad app run (optional)
 
 On Apple Silicon, register the Mac's Provisioning UDID as an iOS development device and
-create profiles for every configured bundle, then run locally:
+run locally:
 
 ```bash
 system_profiler SPHardwareDataType
@@ -91,8 +91,10 @@ stupid-app run --mac
 ```
 
 The command retains the `arm64-apple-ios` product, creates the compatibility wrapper,
-registers it with LaunchServices, and launches through UIKitSystem. It uses no Xcode
-project, Xcode install service, or TestFlight upload.
+registers it with LaunchServices, registers each nested `.appex` with PlugInKit
+(`pluginkit -a`), and launches it through UIKitSystem. A nested Safari Web Extension's web
+content runs in Safari, but native messaging does not (Safari cannot spawn the iOS appex
+plugin without the entitled installer's launchd registration).
 
 ### 6. Pairing records
 

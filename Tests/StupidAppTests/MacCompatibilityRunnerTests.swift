@@ -36,4 +36,31 @@ struct MacCompatibilityRunnerTests {
       try MacCompatibilityRunner.decodeLocalDevice(data)
     }
   }
+
+  @Test("enumerates nested app extensions in a deep wrapper")
+  func enumeratesNestedAppExtensions() throws {
+    let dir = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    let plugins = dir.appendingPathComponent("PlugIns", isDirectory: true)
+    let safari = plugins.appendingPathComponent("Safari.appex", isDirectory: true)
+    let widget = plugins.appendingPathComponent("Widget.appex", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try FileManager.default.createDirectory(at: safari, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: widget, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(
+      at: plugins.appendingPathComponent("Assets", isDirectory: true), withIntermediateDirectories: true)
+
+    let found = MacCompatibilityRunner.enumerateNestedAppExtensions(in: dir)
+
+    #expect(found.map(\.lastPathComponent) == ["Safari.appex", "Widget.appex"])
+  }
+
+  @Test("reports no nested app extensions when PlugIns is absent")
+  func reportsNoNestedExtensions() {
+    let dir = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+
+    #expect(MacCompatibilityRunner.enumerateNestedAppExtensions(in: dir).isEmpty)
+  }
 }

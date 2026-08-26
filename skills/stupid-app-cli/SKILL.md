@@ -248,11 +248,12 @@ stupid-app signing setup --kind development --udid <mac-provisioning-udid>
 stupid-app run --mac
 ```
 
-For a containing app without extensions, this builds and signs the ordinary iOS device
-binary, creates macOS's `Wrapper/<app>.app` plus `WrappedBundle` compatibility layout,
-registers it with LaunchServices, and launches it through UIKitSystem. Extension-bearing
-apps require Apple's privately entitled InstallCoordination/MobileInstallation path, so
-`run --mac` fails before build; use Xcode or TestFlight for those apps.
+This builds and signs the ordinary iOS device binary, creates macOS's
+`Wrapper/<app>.app` plus `WrappedBundle` compatibility layout, registers it with
+LaunchServices, registers each nested `.appex` with PlugInKit (`pluginkit -a`), and
+launches it through UIKitSystem. A nested Safari Web Extension's web content runs in
+Safari, but native messaging does not (Safari cannot spawn the iOS appex plugin without
+the entitled installer's launchd registration).
 
 ### 7. Distribution release
 
