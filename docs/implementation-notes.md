@@ -18,6 +18,28 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
 
+## 2026-08-27 - Release 0.0.9: macOS Local Runs, Simulator Entitlement Fix, And Nested Safari Extension On Mac
+
+`stupid-app 0.0.9` ships the Apple Silicon local iOS run loop plus the run-loop fixes:
+
+- `run --mac` runs iOS applications on an Apple Silicon Mac in the local compatibility
+  environment without an Xcode project or TestFlight. The command keeps the ordinary
+  `arm64-apple-ios` build and development profile, creates the `Wrapper/<app>.app` plus
+  `WrappedBundle` install shape, registers it with LaunchServices, and launches it through
+  UIKitSystem.
+- `run --mac` now registers each nested `.appex` with PlugInKit through the public
+  `pluginkit -a` instead of rejecting extension-bearing apps. A nested Safari Web
+  Extension's web content (provider, content scripts, background page, EIP-6963 announce)
+  runs in Safari; native messaging does not, because Safari cannot spawn the iOS appex
+  plugin without the entitled installer's launchd registration.
+- `run --simulator` loses the launch rejection for deep apps: the ad-hoc simulator signing
+  override now drops `keychain-access-groups`, `$(AppIdentifierPrefix)` tokens, and
+  profile-gated capabilities while preserving `com.apple.security.application-groups`.
+
+Verified with `swift test` (268 tests in 49 suites), `swift build -c release`, on-Mac
+nested-extension registration/launch, `pluginkit -m` listing, Safari extension election
+with a live background page, and simulator install/launch plus `pkd` plugin registration.
+
 ## 2026-08-27 - Simulator Launch Rejection From Profile-Gated Entitlements
 
 ### Summary
