@@ -99,7 +99,9 @@ struct SimulatorPlatformTests {
     version: "26.1.1",
     build: "17B100",
     iphoneosSDKVersion: "26.1",
-    iphoneSimulatorSDKVersion: "26.1"
+    iphoneosSDKBuild: "23B77",
+    iphoneSimulatorSDKVersion: "26.1",
+    iphoneSimulatorSDKBuild: "23B77"
   )
 
   @Test("simulator toolchain resolves the in-place simulator SDK version")

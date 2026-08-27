@@ -14,7 +14,9 @@ public struct XcodeInstallation: Sendable, Equatable {
   public var version: String
   public var build: String
   public var iphoneosSDKVersion: String
+  public var iphoneosSDKBuild: String?
   public var iphoneSimulatorSDKVersion: String?
+  public var iphoneSimulatorSDKBuild: String?
 
   public init(
     appURL: URL,
@@ -27,7 +29,9 @@ public struct XcodeInstallation: Sendable, Equatable {
     version: String,
     build: String,
     iphoneosSDKVersion: String,
-    iphoneSimulatorSDKVersion: String? = nil
+    iphoneosSDKBuild: String? = nil,
+    iphoneSimulatorSDKVersion: String? = nil,
+    iphoneSimulatorSDKBuild: String? = nil
   ) {
     self.appURL = appURL
     self.developerDirectory = developerDirectory
@@ -39,7 +43,9 @@ public struct XcodeInstallation: Sendable, Equatable {
     self.version = version
     self.build = build
     self.iphoneosSDKVersion = iphoneosSDKVersion
+    self.iphoneosSDKBuild = iphoneosSDKBuild
     self.iphoneSimulatorSDKVersion = iphoneSimulatorSDKVersion
+    self.iphoneSimulatorSDKBuild = iphoneSimulatorSDKBuild
   }
 }
 
@@ -147,7 +153,9 @@ public enum XcodeLocator {
       version: version,
       build: build,
       iphoneosSDKVersion: sdkVersion,
-      iphoneSimulatorSDKVersion: simulatorSDKURL.flatMap(sdkVersion(at:))
+      iphoneosSDKBuild: sdkBuild(at: sdk),
+      iphoneSimulatorSDKVersion: simulatorSDKURL.flatMap(sdkVersion(at:)),
+      iphoneSimulatorSDKBuild: simulatorSDKURL.flatMap(sdkBuild(at:))
     )
   }
 
@@ -256,6 +264,25 @@ public enum XcodeLocator {
       return nil
     }
     return version
+  }
+
+  /// Reads the SDK's own build number from `System/Library/CoreServices/
+  /// SystemVersion.plist` (`ProductBuildVersion`). Genuine Xcode archives stamp this
+  /// value as `DTPlatformBuild`/`DTSDKBuild`; App Store Connect uses it to identify
+  /// the SDK, so omitting it makes external TestFlight reject the build.
+  private static func sdkBuild(at sdkURL: URL) -> String? {
+    let systemVersion = sdkURL.appendingPathComponent(
+      "System/Library/CoreServices/SystemVersion.plist")
+    guard
+      let data = try? Data(contentsOf: systemVersion),
+      let plist = try? PropertyListSerialization.propertyList(
+        from: data, format: nil) as? [String: Any],
+      let build = plist["ProductBuildVersion"] as? String,
+      !build.isEmpty
+    else {
+      return nil
+    }
+    return build
   }
 
   /// Reads the Xcode version and build from the app's own metadata

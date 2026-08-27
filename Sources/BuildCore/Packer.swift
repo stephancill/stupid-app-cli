@@ -25,11 +25,18 @@ public enum SDKInput: Sendable, Equatable {
 /// `BuildMachineOSBuild` is never emitted.
 public struct BuildSystemMetadata: Sendable, Equatable {
   public var iphoneosSDKVersion: String
+  public var iphoneosSDKBuild: String?
   public var xcodeVersion: String
   public var xcodeBuild: String
 
-  public init(iphoneosSDKVersion: String, xcodeVersion: String, xcodeBuild: String) {
+  public init(
+    iphoneosSDKVersion: String,
+    iphoneosSDKBuild: String? = nil,
+    xcodeVersion: String,
+    xcodeBuild: String
+  ) {
     self.iphoneosSDKVersion = iphoneosSDKVersion
+    self.iphoneosSDKBuild = iphoneosSDKBuild
     self.xcodeVersion = xcodeVersion
     self.xcodeBuild = xcodeBuild
   }
@@ -502,6 +509,7 @@ public struct Packer: Sendable {
       case .device:
         return BuildSystemMetadata(
           iphoneosSDKVersion: installation.iphoneosSDKVersion,
+          iphoneosSDKBuild: installation.iphoneosSDKBuild,
           xcodeVersion: installation.version,
           xcodeBuild: installation.build
         )
@@ -511,6 +519,7 @@ public struct Packer: Sendable {
         }
         return BuildSystemMetadata(
           iphoneosSDKVersion: simulatorVersion,
+          iphoneosSDKBuild: installation.iphoneSimulatorSDKBuild,
           xcodeVersion: installation.version,
           xcodeBuild: installation.build
         )
@@ -537,6 +546,7 @@ public struct Packer: Sendable {
       let manifest = try SDKManifest.decode(data)
       return BuildSystemMetadata(
         iphoneosSDKVersion: manifest.iphoneosSDKVersion,
+        iphoneosSDKBuild: manifest.iphoneosSDKBuild,
         xcodeVersion: manifest.sourceXcode.version,
         xcodeBuild: manifest.sourceXcode.build
       )
@@ -544,8 +554,11 @@ public struct Packer: Sendable {
   }
 
   /// Injects the build-system keys App Store Connect requires: `DTPlatformName`,
-  /// `DTSDKName`, `DTXcode`, `DTXcodeBuild`, `DTCompiler`, and platform/SDK versions.
-  /// Values come from the source toolchain so the IPA records the real build.
+  /// `DTPlatformVersion`, `DTPlatformBuild`, `DTSDKName`, `DTSDKBuild`, `DTXcode`,
+  /// `DTXcodeBuild`, and `DTCompiler`. Values come from the source toolchain so the
+  /// IPA records the real build. `DTPlatformBuild`/`DTSDKBuild` carry the SDK build
+  /// number; App Store Connect uses them to identify the SDK, so they are emitted
+  /// whenever the toolchain records an SDK build.
   static func injectBuildSystemKeys(
     into info: inout [String: Sendable],
     metadata: BuildSystemMetadata,
@@ -554,20 +567,25 @@ public struct Packer: Sendable {
     info["DTPlatformName"] = platform.sdkPlatformName
     info["DTPlatformVersion"] = metadata.iphoneosSDKVersion
     info["DTSDKName"] = "\(platform.sdkPlatformName)\(metadata.iphoneosSDKVersion)"
+    if let sdkBuild = metadata.iphoneosSDKBuild {
+      info["DTPlatformBuild"] = sdkBuild
+      info["DTSDKBuild"] = sdkBuild
+    }
     info["DTXcode"] = Self.numericXcodeVersion(metadata.xcodeVersion)
     info["DTXcodeBuild"] = metadata.xcodeBuild
     info["DTCompiler"] = "com.apple.compilers.llvm.clang.1_0"
     info["BuildMachineOSBuild"] = nil
   }
 
-  /// Converts an Xcode version like "26.1.1" to the numeric form App Store Connect
-  /// records (e.g. "2611").
+  /// Converts an Xcode version like "26.6" to the numeric form App Store Connect
+  /// records. Xcode stamps `DTXcode` as `major*100 + minor*10 + patch`
+  /// zero-padded to four digits (Xcode 6.1.1 -> "0611", Xcode 26.6 -> "2660").
   static func numericXcodeVersion(_ version: String) -> String {
-    version
-      .split(separator: ".")
-      .prefix(3)
-      .map(String.init)
-      .joined()
+    let parts = version.split(separator: ".").prefix(3).compactMap { Int($0) }
+    guard let major = parts.first else { return "" }
+    let minor = parts.indices.contains(1) ? parts[1] : 0
+    let patch = parts.indices.contains(2) ? parts[2] : 0
+    return String(format: "%04d", major * 100 + minor * 10 + patch)
   }
 
   private static func copyTree(from source: URL, to destination: URL) throws {

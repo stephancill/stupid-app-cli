@@ -125,7 +125,8 @@ struct DoctorTests {
       toolchainBinDirectory: toolchainBin,
       version: "26.1.1",
       build: "17B100",
-      iphoneosSDKVersion: "26.1"
+      iphoneosSDKVersion: "26.1",
+      iphoneosSDKBuild: "23B77"
     )
 
     let results = Doctor.run(

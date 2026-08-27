@@ -52,13 +52,15 @@ struct Exporter {
         try copyWanted(from: developerDir, to: devDestination)
 
         let iphoneosVersion = try discoverIPhoneOSVersion(from: developerDir)
+        let iphoneosSDKBuild = try discoverIPhoneOSSDKBuild(from: developerDir)
         try installToolset(into: bundle)
 
         try writeMetadata(into: bundle, iphoneosVersion: iphoneosVersion)
 
         let manifest = try buildManifest(
             bundleURL: bundle,
-            iphoneosVersion: iphoneosVersion
+            iphoneosVersion: iphoneosVersion,
+            iphoneosSDKBuild: iphoneosSDKBuild
         )
         try manifest.encode().write(to: bundle.appendingPathComponent("sdk-manifest.json"))
 
@@ -152,6 +154,27 @@ struct Exporter {
             throw ExportError.noNumericIOSSDK(sdkDir.path)
         }
         return version
+    }
+
+    /// Reads the SDK build number (`ProductBuildVersion`) from the SDK's
+    /// `System/Library/CoreServices/SystemVersion.plist`. Missing or unreadable SDK
+    /// metadata is fatal because the exported bundle could not stamp
+    /// `DTPlatformBuild`/`DTSDKBuild`, which App Store Connect requires.
+    private func discoverIPhoneOSSDKBuild(from developerDir: URL) throws -> String {
+        let sdkURL = developerDir
+            .appendingPathComponent("Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk")
+        let systemVersion = sdkURL
+            .appendingPathComponent("System/Library/CoreServices/SystemVersion.plist")
+        guard
+            let data = try? Data(contentsOf: systemVersion),
+            let plist = try? PropertyListSerialization.propertyList(
+                from: data, format: nil) as? [String: Any],
+            let build = plist["ProductBuildVersion"] as? String,
+            !build.isEmpty
+        else {
+            throw ExportError.noNumericIOSSDK(sdkURL.path)
+        }
+        return build
     }
 
     // MARK: - Toolset
@@ -401,7 +424,11 @@ struct Exporter {
         try JSONEncoder.withSortedKeys().encode(toolset).write(to: bundle.appendingPathComponent("toolset.json"))
     }
 
-    private func buildManifest(bundleURL: URL, iphoneosVersion: String) throws -> SDKManifest {
+    private func buildManifest(
+        bundleURL: URL,
+        iphoneosVersion: String,
+        iphoneosSDKBuild: String
+    ) throws -> SDKManifest {
         var files: [String: String] = [:]
         try walkHashes(bundleURL, relativePrefix: "", files: &files)
 
@@ -439,6 +466,7 @@ struct Exporter {
             generatorVersion: "0.1.0",
             sourceXcode: SDKManifest.XcodeSource(version: xcode.0, build: xcode.1),
             iphoneosSDKVersion: iphoneosVersion,
+            iphoneosSDKBuild: iphoneosSDKBuild,
             swiftCompiler: swift,
             hostTriple: options.hostTriple,
             targetTriple: options.targetTriple,

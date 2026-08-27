@@ -8,6 +8,10 @@ public struct SDKManifest: Codable, Equatable, Sendable {
     public var generatorVersion: String
     public var sourceXcode: XcodeSource
     public var iphoneosSDKVersion: String
+    /// SDK build number (`ProductBuildVersion`) used to stamp `DTPlatformBuild`/
+    /// `DTSDKBuild`. Optional for compatibility with bundles exported before this
+    /// field existed; when absent, those keys are not emitted.
+    public var iphoneosSDKBuild: String?
     public var swiftCompiler: SwiftCompiler
     public var hostTriple: String
     public var targetTriple: String
@@ -23,6 +27,7 @@ public struct SDKManifest: Codable, Equatable, Sendable {
         generatorVersion: String,
         sourceXcode: XcodeSource,
         iphoneosSDKVersion: String,
+        iphoneosSDKBuild: String? = nil,
         swiftCompiler: SwiftCompiler,
         hostTriple: String,
         targetTriple: String,
@@ -34,6 +39,7 @@ public struct SDKManifest: Codable, Equatable, Sendable {
         self.generatorVersion = generatorVersion
         self.sourceXcode = sourceXcode
         self.iphoneosSDKVersion = iphoneosSDKVersion
+        self.iphoneosSDKBuild = iphoneosSDKBuild
         self.swiftCompiler = swiftCompiler
         self.hostTriple = hostTriple
         self.targetTriple = targetTriple

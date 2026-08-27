@@ -29,7 +29,8 @@ struct BuildToolchainTests {
         "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin"),
     version: "26.3",
     build: "17C529",
-    iphoneosSDKVersion: "26.2"
+    iphoneosSDKVersion: "26.2",
+    iphoneosSDKBuild: "23D60"
   )
 
   @Test("xcode in place substitutes Xcode's toolchain swift for the default path")

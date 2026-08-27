@@ -13,13 +13,16 @@ struct BuildSystemKeyTests {
       into: &info,
       metadata: BuildSystemMetadata(
         iphoneosSDKVersion: "26.1",
+        iphoneosSDKBuild: "23B77",
         xcodeVersion: "26.1.1",
         xcodeBuild: "17B100"
       ))
 
     #expect(info["DTPlatformName"] as? String == "iphoneos")
     #expect(info["DTPlatformVersion"] as? String == "26.1")
+    #expect(info["DTPlatformBuild"] as? String == "23B77")
     #expect(info["DTSDKName"] as? String == "iphoneos26.1")
+    #expect(info["DTSDKBuild"] as? String == "23B77")
     #expect(info["DTXcode"] as? String == "2611")
     #expect(info["DTXcodeBuild"] as? String == "17B100")
     #expect(info["DTCompiler"] as? String == "com.apple.compilers.llvm.clang.1_0")
@@ -31,6 +34,7 @@ struct BuildSystemKeyTests {
   func injectsFromInPlaceMetadata() {
     let metadata = BuildSystemMetadata(
       iphoneosSDKVersion: "26.1",
+      iphoneosSDKBuild: "23B77",
       xcodeVersion: "26.1.1",
       xcodeBuild: "17B100"
     )
@@ -39,18 +43,38 @@ struct BuildSystemKeyTests {
 
     #expect(info["DTPlatformName"] as? String == "iphoneos")
     #expect(info["DTPlatformVersion"] as? String == "26.1")
+    #expect(info["DTPlatformBuild"] as? String == "23B77")
     #expect(info["DTSDKName"] as? String == "iphoneos26.1")
+    #expect(info["DTSDKBuild"] as? String == "23B77")
     #expect(info["DTXcode"] as? String == "2611")
     #expect(info["DTXcodeBuild"] as? String == "17B100")
     #expect(info["DTCompiler"] as? String == "com.apple.compilers.llvm.clang.1_0")
     #expect(info["BuildMachineOSBuild"] == nil)
   }
 
+  @Test("omits SDK build keys when the toolchain records no SDK build")
+  func omitsSDKBuildKeysWhenAbsent() {
+    let metadata = BuildSystemMetadata(
+      iphoneosSDKVersion: "26.1",
+      xcodeVersion: "26.1.1",
+      xcodeBuild: "17B100"
+    )
+    var info: [String: Sendable] = ["CFBundleIdentifier": "net.example.app"]
+    Packer.injectBuildSystemKeys(into: &info, metadata: metadata)
+
+    #expect(info["DTPlatformBuild"] == nil)
+    #expect(info["DTSDKBuild"] == nil)
+    #expect(info["DTXcode"] as? String == "2611")
+  }
+
   @Test("numeric Xcode version conversion")
   func numericXcodeVersion() {
     #expect(Packer.numericXcodeVersion("26.1.1") == "2611")
-    #expect(Packer.numericXcodeVersion("26.0") == "260")
+    #expect(Packer.numericXcodeVersion("26.6") == "2660")
+    #expect(Packer.numericXcodeVersion("26.5") == "2650")
+    #expect(Packer.numericXcodeVersion("26.0") == "2600")
     #expect(Packer.numericXcodeVersion("15.0.0") == "1500")
+    #expect(Packer.numericXcodeVersion("6.1.1") == "0611")
     #expect(Packer.numericXcodeVersion("26.1.1.2") == "2611")
   }
 
