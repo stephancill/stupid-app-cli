@@ -31,6 +31,11 @@ or behavior the skill or README describes changes, update both in the same work.
 Do not commit a CLI surface change with the README or `references/commands.md`
 out of date; run the skill-creator validation after skill edits.
 
+`AGENTS.md` is project documentation too and must stay current with the release
+workflow. When the release process, versioning, asset naming, install
+instructions, or documentation requirements change, update this file in the same
+work — never tag a release whose own process documentation is stale.
+
 Before committing changes, inspect both documents and update them where necessary. Never defer a required documentation update merely because the code is complete.
 
 Implementation notes must be safe for public publication. Never record personal information, credentials, tokens, private keys, certificate contents, account identifiers, device identifiers, private hostnames, or secret-bearing output.
@@ -127,8 +132,18 @@ Publishing a new `stupid-app` version:
 
 1. Bump `StupidApp.productVersion` in `Sources/stupid-app/StupidApp.swift`.
 2. Build the release binary: `swift build -c release`.
-3. Tag and push: `git tag -a v<version> -m "stupid-app <version>" && git push origin v<version>`.
-4. Create the GitHub release with **versionless asset names** so the install
+3. Update every release documentation artifact in the same commit **before tagging**:
+   - `docs/implementation-notes.md`: append the release summary.
+   - `README.md` and the bundled CLI skill
+     (`skills/stupid-app-cli/SKILL.md` plus `references/commands.md`): update any
+     command surface, default, troubleshooting, or install text the release changes;
+     run the skill-creator validation after skill edits.
+   - This `AGENTS.md`: update the Release Process checklist, versioning, asset
+     naming, or install/README guidance whenever the release changes them. Do not
+     tag a release whose own process documentation is stale.
+4. Commit the release (version bump plus all documentation updates), then tag and
+   push: `git tag -a v<version> -m "stupid-app <version>" && git push origin v<version>`.
+5. Create the GitHub release with **versionless asset names** so the install
    instructions in `README.md` never pin a version and require an update. Build the
    binary to a filename without the version, e.g. `stupid-app-macos-arm64`, and attach
    it under that exact name:
@@ -142,7 +157,6 @@ Publishing a new `stupid-app` version:
    `releases/latest/download/stupid-app-macos-arm64`; because the asset name carries no
    version, the `latest` download keeps working across releases without editing the
    README. Keep the asset name stable (`stupid-app-macos-arm64`) on every release.
-5. Update `docs/implementation-notes.md` with the release summary.
 
 The bundled CLI skill (`skills/stupid-app-cli/`) ships with the CLI binary
 (`skills/stupid-app-cli/` documents the command surface via `references/commands.md`);
