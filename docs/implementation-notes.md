@@ -18,6 +18,27 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
 
+## 2026-08-27 - Release 0.0.10: App Store Connect Build-System Metadata Fix
+
+`stupid-app 0.0.10` ships the release-packaging fix that unblocks external TestFlight:
+
+- The packer now stamps `DTPlatformBuild` and `DTSDKBuild` in both the app and nested
+  extension Info.plist files, sourced from the SDK's
+  `System/Library/CoreServices/SystemVersion.plist` `ProductBuildVersion` (for example
+  `23F81a` on the iOS 26.5 SDK). Genuine Xcode archives always carry these keys; without
+  them, App Store Connect rejects external beta review with
+  `BUILD_SDK_NOT_ALLOWED_FOR_EXTERNAL_TESTING` ("Unsupported SDK or Xcode version").
+- `DTXcode` is now encoded canonically (`major*100 + minor*10 + patch`, e.g. Xcode 26.6 ->
+  `2660`) instead of naive version-part concatenation, which produced `266` for Xcode 26.6.
+- The SDK export manifest records `iphoneosSDKBuild` so imported bundles can stamp the same
+  keys; bundles exported by earlier versions simply omit them.
+- The bundled CLI skill documents how to diagnose the external-TestFlight SDK rejection and
+  inspect the packaged IPA metadata.
+
+Verified with `swift test` (269 tests in 49 suites), `swift build -c release`, and an end-to-end
+Stupid Wallet release whose external beta-review submission was accepted and reached external
+`IN_BETA_TESTING`.
+
 ## 2026-08-27 - Release 0.0.9: macOS Local Runs, Simulator Entitlement Fix, And Nested Safari Extension On Mac
 
 `stupid-app 0.0.9` ships the Apple Silicon local iOS run loop plus the run-loop fixes:

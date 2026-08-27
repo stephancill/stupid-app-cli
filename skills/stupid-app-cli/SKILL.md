@@ -306,7 +306,18 @@ When a workflow fails, in order:
 4. If the pairing record is missing or stale, re-run `device pair --usb`.
 5. Check the release manifest and `release status --live` before re-uploading;
    do not reuse a build number that already exists.
-6. Inspect a device crash report with `stupid-app device crash` — pass a local
+6. If App Store Connect rejects an external TestFlight submission with
+   `BUILD_SDK_NOT_ALLOWED_FOR_EXTERNAL_TESTING` or shows "beta version of Xcode",
+   inspect the packaged IPA's build-system keys before blaming the toolchain:
+   `unzip -p <ipa> Payload/<App>.app/Info.plist | plutil -p -` and check that
+   `DTXcode`, `DTXcodeBuild`, `DTPlatformBuild`, `DTSDKBuild`, and `DTSDKName` are
+   present and canonical. Since 0.0.10 the packer emits `DTPlatformBuild`/`DTSDKBuild`
+   from the SDK's `SystemVersion.plist` build number and encodes `DTXcode` as
+   `major*100 + minor*10 + patch`. Older output omitted those keys or encoded
+   `DTXcode` incorrectly (e.g. `266` for Xcode 26.6 instead of `2660`), which made
+   Apple classify an otherwise valid build as unsupported/beta. Re-export stale
+   imported iOS SDK bundles so their `sdk-manifest.json` records `iphoneosSDKBuild`.
+7. Inspect a device crash report with `stupid-app device crash` — pass a local
    `--path <file>.ips` or `--udid <phone-udid>` to pull the newest matching
    report directly from the phone over USB (no host tool), optionally `--json`.
    Add `--network` to pull a wireless device over the CoreDevice tunnel (needs
