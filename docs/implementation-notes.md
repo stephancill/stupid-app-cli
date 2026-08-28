@@ -18,6 +18,32 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
 
+## 2026-08-28 - Scoped TestFlight Control-Plane APIs For The CLI
+
+### Summary
+
+- Review structured the CLI release experience (internal beta upload/processing) and the
+  post-release TestFlight crash work as feedback for the next tranche of TestFlight APIs.
+- Recorded the TestFlight **control-plane scope** in the handover ("TestFlight Control-Plane
+  Scope (external beta)").
+- In scope (P0): `release external-beta` (submit internal-ready builds for external beta
+  review and poll to external `IN_BETA_TESTING`), `release beta-group` (list/create and attach
+  builds and testers), extending `release status` and the release manifest to carry external
+  review/group state, and an optional post-delivery install-and-launch + device-log
+  verification using existing DeviceKit diagnostics.
+- External beta submissions require the packer metadata already shipped in release 0.0.10
+  (`DTPlatformBuild`/`DTSDKBuild`/canonical `DTXcode`); without them App Store Connect rejects
+  with `BUILD_SDK_NOT_ALLOWED_FOR_EXTERNAL_TESTING`.
+- Out of scope for the TestFlight slice: App Store review/versions/submissions, In-App
+  Purchase, analytics/metrics, A/B experiments, and localized beta review notes.
+
+### Decisions
+
+- Keep TestFlight control-plane work as separable `release` subcommands rather than
+  overloading `release upload --wait`.
+- Recorded as scope documentation only; no `stupid-app release` command surface changed in
+  this entry.
+
 ## 2026-08-27 - Release 0.0.10: App Store Connect Build-System Metadata Fix
 
 `stupid-app 0.0.10` ships the release-packaging fix that unblocks external TestFlight:

@@ -413,6 +413,34 @@ Acceptance conditions:
 - The build installs and launches through TestFlight.
 - A release manifest records artifact hash, bundle ID, versions, upload resource ID, build resource ID, and processing state.
 
+#### TestFlight Control-Plane Scope (external beta)
+
+The Build Upload path above proves upload, processing, and internal-beta readiness. The
+TestFlight **control-plane** APIs are scoped as the next CLI additions, grounded in live
+release feedback:
+
+In scope (P0):
+
+- `release external-beta` — submit an internal-ready build for external beta review
+  (`POST /v1/betaAppReviewSubmissions`) and poll until external `IN_BETA_TESTING`. These
+  submissions currently require the packer to stamp `DTPlatformBuild`/`DTSDKBuild`/canonical
+  `DTXcode`; without them App Store Connect rejects with
+  `BUILD_SDK_NOT_ALLOWED_FOR_EXTERNAL_TESTING` (fixed in release 0.0.10).
+- `release beta-group [list|create|add-build|add-tester]` — manage external beta groups and
+  attach the build (`betaGroups`, `betaGroups/{id}/builds`) and testers
+  (`betaTesters`, `betaGroups/{id}/betaTesters`).
+- Extend `release status` and the release manifest to also record the external review
+  submission state and group resource IDs.
+- Post-delivery verification: after TestFlight install, optionally verify the build installs
+  and launches and surface device logs (via DeviceKit diagnostics). Delivery is not proof
+  the build runs; a TestFlight-installed build can still crash.
+
+Out of scope (App Store delivery, not TestFlight):
+
+- App Store review/versions/submissions (`appStoreVersions`, App Store review detail), In-App
+  Purchase, analytics/metrics, A/B experiments, and localized beta build review notes (these
+  remain portal-managed metadata).
+
 ## Supported Project Model
 
 The first generated project should resemble:
