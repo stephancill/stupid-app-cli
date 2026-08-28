@@ -20,6 +20,14 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 
 ## 2026-08-29 - TestFlight Control-Plane And Release Preflight Implemented
 
+### Release Workflow Follow-Up
+
+- Added a mandatory post-publication step to `AGENTS.md`: atomically update the local
+  `~/.local/bin/stupid-app` installation from the published versionless GitHub asset and
+  verify both `--version` and SHA-256 before considering a release complete.
+- This closes the gap exposed by release 0.0.11, where the GitHub release was published
+  successfully but the local installation initially remained on the previous version.
+
 ### Release 0.0.11
 
 `stupid-app 0.0.11` ships TestFlight control-plane commands, release preflight and
