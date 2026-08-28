@@ -12,8 +12,9 @@ struct ReleaseCommand: AsyncParsableCommand {
     commandName: "release",
     abstract: "Distribution build, signing, and upload operations.",
     subcommands: [
-      ReleaseArchiveCommand.self, ReleaseUploadCommand.self, ReleaseStatusCommand.self,
-      ReleaseNewBuildCommand.self, ReleaseBumpCommand.self,
+      ReleaseArchiveCommand.self, ReleasePreflightCommand.self, ReleaseUploadCommand.self,
+      ReleaseStatusCommand.self, ReleaseNewBuildCommand.self, ReleaseBumpCommand.self,
+      ReleaseExternalBetaCommand.self, ReleaseBetaGroupCommand.self, ReleaseBetaNotesCommand.self,
     ]
   )
 }

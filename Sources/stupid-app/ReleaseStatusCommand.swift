@@ -57,6 +57,12 @@ struct ReleaseStatusCommand: AsyncParsableCommand {
     if let state = manifest.externalBetaState {
       print("  external beta: \(state)")
     }
+    if let id = manifest.betaSubmissionId {
+      print("  external subscribe: \(id)")
+    }
+    if let id = manifest.betaGroupId {
+      print("  beta group:  \(id)")
+    }
 
     guard live else { return }
 

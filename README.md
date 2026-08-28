@@ -73,10 +73,14 @@ stupid-app run --network --udid ... Build, sign, install, and launch over the ne
 stupid-app run --simulator [--udid] Build, sign, install, and launch in a simulator (Xcode-present)
 stupid-app run --mac                Build, sign, install, and launch an iOS app on this Mac
 stupid-app simulators               List simulator runtimes and devices
+stupid-app release preflight         Local gates before upload (versions + export compliance)
 stupid-app release archive          Build, sign (once, no timestamps), package the IPA
 stupid-app release upload --wait    Upload the IPA and wait for internal TestFlight
 stupid-app release new-build        Suggest the next build number from the latest uploaded build
 stupid-app release status           Report the last release's recorded or live state
+stupid-app release external-beta    Submit the build for external TestFlight
+stupid-app release beta-group ...   Manage external beta groups and testers
+stupid-app release beta-notes       Set the "What to Test" note on a build
 ```
 
 `stupid-app signing setup` is the one-stop provisioning command:

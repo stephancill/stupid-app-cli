@@ -58,6 +58,17 @@ struct ReleaseUploadCommand: AsyncParsableCommand {
     }
     let config = try AppConfig.decode(data)
     let projectRoot = URL(fileURLWithPath: ".")
+
+    // Run local release readiness gates before any upload happens, so the mistakes
+    // App Store Connect would otherwise reject after upload fail fast.
+    let preflight = ReleasePreflight.assess(config: config, projectRoot: projectRoot)
+    if !preflight.isReady {
+      for issue in preflight.issues {
+        print("preflight: - \(issue)")
+      }
+      throw ReleaseUploadError.preflightFailed(preflight.issues)
+    }
+
     let outputDir = URL(
       fileURLWithPath: output ?? projectRoot.appendingPathComponent(".release").path)
 
@@ -211,6 +222,7 @@ enum ReleaseUploadError: Error, CustomStringConvertible {
   case appRecordNotFound(String)
   case buildNumberAlreadyUploaded(String, String, alreadyUploaded: Bool)
   case versionInfoMissing(String)
+  case preflightFailed([String])
 
   var description: String {
     switch self {
@@ -228,6 +240,10 @@ enum ReleaseUploadError: Error, CustomStringConvertible {
     case .versionInfoMissing(let path):
       return
         "Could not read CFBundleShortVersionString/CFBundleVersion from '\(path)'. Ensure the Info.plist declares both."
+    case .preflightFailed(let issues):
+      return
+        "Release preflight found \(issues.count) issue(s). Resolve them before uploading:\n"
+        + issues.map { "  - \($0)" }.joined(separator: "\n")
     }
   }
 }

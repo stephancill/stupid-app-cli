@@ -21,6 +21,11 @@ struct ReleaseBumpCommand: AsyncParsableCommand {
     help: "Only bump the app's Info.plist (skip bundled extensions).")
   var shallow = false
 
+  @Flag(
+    name: .customLong("marketing"),
+    help: "Bump CFBundleShortVersionString instead of CFBundleVersion.")
+  var marketing = false
+
   mutating func run() async throws {
     let configURL = URL(fileURLWithPath: "stupid-app.yml")
     guard let data = try? Data(contentsOf: configURL) else {
@@ -33,20 +38,24 @@ struct ReleaseBumpCommand: AsyncParsableCommand {
       infoURLs += extensions.map { URL(fileURLWithPath: $0.infoPath) }
     }
 
-    var previous = 0
-    for (index, url) in infoURLs.enumerated() {
+    for url in infoURLs {
       guard FileManager.default.fileExists(atPath: url.path) else {
         throw ReleaseBumpError.missingPlist(url.path)
       }
-      let current = try ReleaseBumper.currentBuildNumber(at: url)
-      if index == 0 { previous = current }
-    }
-
-    let target = buildNumber ?? (previous + 1)
-
-    for url in infoURLs {
-      let old = try ReleaseBumper.bumpBuildNumber(inFileAt: url, to: target)
-      print("\(url.path): \(old) -> \(target)")
+      if marketing {
+        let current = try ReleaseBumper.currentVersionString(
+          forKey: "CFBundleShortVersionString", in: url)
+        let new = try ReleaseBumper.bumpMarketingVersion(inFileAt: url)
+        print("\(url.path): \(current) -> \(new)")
+      } else if let target = buildNumber {
+        let old = try ReleaseBumper.bumpBuildNumber(inFileAt: url, to: target)
+        print("\(url.path): \(old) -> \(target)")
+      } else {
+        let current = try ReleaseBumper.currentVersionString(
+          forKey: "CFBundleVersion", in: url)
+        let new = try ReleaseBumper.bumpBuildVersion(inFileAt: url)
+        print("\(url.path): \(current) -> \(new)")
+      }
     }
   }
 }

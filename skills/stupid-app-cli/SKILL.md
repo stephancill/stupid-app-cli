@@ -1,6 +1,6 @@
 ---
 name: stupid-app-cli
-description: Operate the stupid-app CLI for iOS development without Xcode projects. Use when the user wants to create, build, sign, install, launch, or release a SwiftPM/SwiftUI iOS app on a Mac or Linux host — including scaffold a project (`stupid-app new`), export/import the iOS Swift SDK bundle (`sdk export`/`sdk import`), provision App Store Connect credentials, signing identities, and profiles (`credentials add`, `signing setup`), build an unsigned .app (`build`), register devices (`devices`), pair an iPhone (`device pair`), build/sign/install/launch over USB or the network (`run --usb`, `run --network`), a simulator (`run --simulator`, `simulators`), or locally as an iPhone/iPad app on Apple Silicon Mac (`run --mac`), or produce and upload a distribution IPA (`release archive`, `release upload`, `release status`, `release new-build`, `release bump`). Also use to diagnose the environment with `stupid-app doctor` or recover a host that fails to run, install, or upload.
+description: "Operate the stupid-app CLI for iOS development without Xcode on Mac or Linux. Use to scaffold (new), export/import the iOS Swift SDK (sdk export/import), provision ASC credentials/signing (credentials add, signing setup), build (build), register devices, pair (device pair), and run/install/launch over USB, network, a simulator, or on-Mac (run --usb/--network/--simulator/--mac) — or release with preflight/archive/upload/status/new-build/bump and external TestFlight (external-beta, beta-group, beta-notes). Also diagnose with doctor."
 ---
 
 # stupid-app CLI
@@ -258,16 +258,32 @@ the entitled installer's launchd registration).
 ### 7. Distribution release
 
 ```bash
+stupid-app release preflight            # local gates: versions in lockstep + export compliance
 stupid-app release bump                 # increment build across app + extensions
+stupid-app release bump --marketing     # bump the marketing version (patch) instead
 stupid-app release archive
 stupid-app release new-build            # suggest the next build number
 stupid-app release upload --wait
 stupid-app release status [--live]
+stupid-app release external-beta   # external TestFlight (group + submit + poll to readiness)
+stupid-app release beta-group list      # list beta groups
+stupid-app release beta-group create --group-name <name>
+stupid-app release beta-group add-build --group <id> --build-id <id>
+stupid-app release beta-group add-tester --group <id> --email <addr>
+stupid-app release beta-notes --whats-new "<note>"
 ```
+
+`release preflight` hard-gates a release locally (no App Store Connect call): it requires
+the app's `CFBundleShortVersionString`/`CFBundleVersion` to match every bundled
+extension in lockstep and an `ITSAppUsesNonExemptEncryption` Boolean to be declared.
+`release upload` runs the same gate before uploading, so the Invalid-bundle
+(`ITMS-90062`) and `MISSING_EXPORT_COMPLIANCE` rejection classes fail fast.
 
 `release bump` increments `CFBundleVersion` in `Info.plist` and every bundled
 extension's plist in lockstep (or sets a value with `--build-number`; `--shallow`
-bumps only the app). `release archive` produces `./.release/<product>.ipa` signed
+bumps only the app; `--marketing` bumps `CFBundleShortVersionString` instead). Build
+numbers may be dotted (`1.12.3 -> 1.12.4`) as well as plain integers.
+`release archive` produces `./.release/<product>.ipa` signed
 once with the
 Apple Distribution identity and App Store profile, timestamps disabled, with a
 native `Assets.car` and build-system Info.plist keys. `release upload --wait`
@@ -277,6 +293,18 @@ internally TestFlight-ready. It writes a public-safe release manifest
 (`./.release/release-manifest.json`) with artifact hash, bundle ID, versions,
 resource IDs, and states — never secrets. `release status --live` queries App
 Store Connect for the current processing/beta state.
+
+`release external-beta` takes an already-uploaded build and makes it externally
+testable: it resolves an external beta group (by `--group` id or by name, creating
+one as needed), adds the build to it, optionally sets the "What to Test" note, and
+submits an external beta review submission, then (by default) waits until external
+`IN_BETA_TESTING` — pass `--no-wait` to only create the submission. `release beta-group list/create/add-build/add-tester` manage
+external groups and their testers, and `release beta-notes` sets the per-build
+"What to Test" note alone. Manual prerequisites the API cannot perform (`create the
+App Store Connect app record before the first upload`) remain a loud, documented
+`release preflight`/upload error instead of a post-upload rejection. External beta
+requires `DTPlatformBuild`/`DTSDKBuild`/canonical `DTXcode` (packaged since 0.0.10)
+or App Store Connect rejects with `BUILD_SDK_NOT_ALLOWED_FOR_EXTERNAL_TESTING`.
 
 ## Command reference
 

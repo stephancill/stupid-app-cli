@@ -201,27 +201,51 @@ Lists simulator runtimes and devices (macOS Xcode-present).
 ## release
 
 ```text
+stupid-app release preflight [--home <dir>]
 stupid-app release archive [--sdk-id <id>] [--swift <path>] [--sdk-version <ver>] [--home <dir>] [--output <dir>]
 stupid-app release upload [--wait] [--ipa <path>] [--app-bundle-id <id>] [--home <dir>] [--output <dir>] [--poll-interval <sec>] [--sdk-id <id>] [--swift <path>]
 stupid-app release status [--live] [--home <dir>] [--output <dir>]
 stupid-app release new-build [--home <dir>] [--bundle-id <id>] [--build-number <n>]
-stupid-app release bump [--build-number <n>] [--shallow]
+stupid-app release bump [--build-number <n>] [--shallow] [--marketing]
+stupid-app release external-beta [--build-id <id>] [--group <id>] [--group-name <name>] [--whats-new <text>] [--no-wait] [--home <dir>] [--output <dir>] [--poll-interval <sec>]
+stupid-app release beta-group list [--home <dir>] [--bundle-id <id>]
+stupid-app release beta-group create [--name <name>] [--home <dir>] [--bundle-id <id>]
+stupid-app release beta-group add-build --group <id> --build-id <id>
+stupid-app release beta-group add-tester --group <id> --email <addr> [--first-name <n>] [--last-name <n>]
+stupid-app release beta-notes --whats-new <text> [--build-id <id>] [--home <dir>] [--output <dir>]
 ```
 
+- `preflight` — local (no ASC call) gate: app and every extension must share
+  `CFBundleShortVersionString`/`CFBundleVersion` in lockstep and the app must declare
+  an `ITSAppUsesNonExemptEncryption` Boolean. Fails fast on the drift/export-compliance
+  mistakes that would otherwise become post-upload rejections.
 - `archive` — release-configure build, one real Apple Distribution signing pass
   (no timestamps), native `Assets.car`, App Store profile embedded, IPA packaged
   to `./.release/<product>.ipa` (override with `--output`).
 - `upload` — resolves the exact app by bundle ID and version/build number,
-  rejects duplicate build numbers, uploads via the Build Upload APIs, and with
-  `--wait` polls until internally TestFlight-ready (`VALID` /
-  `READY_FOR_BETA_TESTING`). Writes the public-safe release manifest. `--ipa`
-  and `--output` default to `./.release`. A build number that already exists
-  (e.g. from a killed earlier run) is reported as an already-uploaded state
-  pointing at `release status --live`, not a packaging failure.
+  rejects duplicate build numbers, runs `preflight` first, uploads via the
+  Build Upload APIs, and with `--wait` polls until internally TestFlight-ready
+  (`VALID` / `READY_FOR_BETA_TESTING`). Writes the public-safe release manifest.
+  `--ipa` and `--output` default to `./.release`. A build number that already
+  exists (e.g. from a killed earlier run) is reported as an already-uploaded
+  state pointing at `release status --live`, not a packaging failure.
 - `status` — reports the recorded last release; `--live` queries App Store
-  Connect for the current processing/beta state of the resolved build.
+  Connect for the current processing/beta state of the resolved build. Also
+  reports the recorded external-beta submission and group ids.
 - `new-build` — suggests the next integer build number based on the latest
   uploaded build, or increments `--build-number` when given.
 - `bump` — increments `CFBundleVersion` in `Info.plist` and every bundled
   extension's plist in lockstep (a deep release shares one build), or sets it to
-  `--build-number`. `--shallow` bumps only the app plist.
+  `--build-number`. `--shallow` bumps only the app plist; `--marketing` bumps
+  `CFBundleShortVersionString` instead. Build numbers may be dotted rather than
+  plain integers.
+- `external-beta` — makes an already-uploaded build externally testable. Resolves an
+  external beta group (`--group` id, or by `--group-name`, creating one as needed),
+  adds the build to it, optionally sets the `--whats-new` note, creates an external
+  beta review submission, and with `--wait` polls until external `IN_BETA_TESTING`.
+  Writes the submission/group ids and external state into the release manifest.
+- `beta-group` — `list` shows the app's beta groups; `create` makes an external group
+  (default name "External Testers"); `add-build` attaches a build to a group;
+  `add-tester` enrolls a tester by email (internal groups cannot be assigned builds by
+  hand — internal testers see all builds automatically).
+- `beta-notes` — sets the per-build "What to Test" note without submitting.

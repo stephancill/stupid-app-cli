@@ -69,4 +69,34 @@ struct ReleaseBumperTests {
       _ = try ReleaseBumper.currentBuildNumber(at: url)
     }
   }
+
+  @Test("bumps a dotted (non-integer) build number by its last acceptable component")
+  func bumpsDottedBuild() throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("rb-dotted-\(UUID().uuidString).plist")
+    defer { try? FileManager.default.removeItem(at: url) }
+    try samplePlist(build: "12.3").write(to: url, atomically: true, encoding: .utf8)
+    let next = try ReleaseBumper.bumpBuildVersion(inFileAt: url)
+    #expect(next == "12.4")
+  }
+
+  @Test("nextBuildNumber handles integer and dotted values")
+  func nextBuildNumberValues() {
+    #expect(ReleaseBumper.nextBuildNumber("42") == "43")
+    #expect(ReleaseBumper.nextBuildNumber("1.12.3") == "1.12.4")
+    #expect(ReleaseBumper.nextBuildNumber("1.2") == "1.3")
+  }
+
+  @Test("bumps the marketing version patch component")
+  func bumpsMarketing() throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("rb-marketing-\(UUID().uuidString).plist")
+    defer { try? FileManager.default.removeItem(at: url) }
+    // Marketing version is 1.2.0 in the shared sample.
+    try samplePlist(build: "42").write(to: url, atomically: true, encoding: .utf8)
+    let next = try ReleaseBumper.bumpMarketingVersion(inFileAt: url)
+    #expect(next == "1.2.1")
+    let updated = try String(contentsOf: url, encoding: .utf8)
+    #expect(updated.contains("\t<string>1.2.1</string>"))
+  }
 }

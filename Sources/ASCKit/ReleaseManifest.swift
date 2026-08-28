@@ -16,6 +16,10 @@ public struct ReleaseManifest: Codable, Equatable, Sendable {
     public var processingState: String?
     public var internalBetaState: String?
     public var externalBetaState: String?
+    /// External beta review submission resource id, set by `release external-beta`.
+    public var betaSubmissionId: String?
+    /// The external beta group carrying the build, set by `release external-beta`.
+    public var betaGroupId: String?
     public var toolVersion: String?
     public var signerVersion: String?
     public var sdkVersion: String?
@@ -45,6 +49,8 @@ public struct ReleaseManifest: Codable, Equatable, Sendable {
         processingState: String? = nil,
         internalBetaState: String? = nil,
         externalBetaState: String? = nil,
+        betaSubmissionId: String? = nil,
+        betaGroupId: String? = nil,
         toolVersion: String? = nil,
         signerVersion: String? = nil,
         sdkVersion: String? = nil,
@@ -62,6 +68,8 @@ public struct ReleaseManifest: Codable, Equatable, Sendable {
         self.processingState = processingState
         self.internalBetaState = internalBetaState
         self.externalBetaState = externalBetaState
+        self.betaSubmissionId = betaSubmissionId
+        self.betaGroupId = betaGroupId
         self.toolVersion = toolVersion
         self.signerVersion = signerVersion
         self.sdkVersion = sdkVersion

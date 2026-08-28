@@ -413,33 +413,31 @@ Acceptance conditions:
 - The build installs and launches through TestFlight.
 - A release manifest records artifact hash, bundle ID, versions, upload resource ID, build resource ID, and processing state.
 
-#### TestFlight Control-Plane Scope (external beta)
+#### TestFlight Control-Plane Scope (external)
 
 The Build Upload path above proves upload, processing, and internal-beta readiness. The
-TestFlight **control-plane** APIs are scoped as the next CLI additions, grounded in live
-release feedback:
+TestFlight **control-plane** APIs are implemented:
 
-In scope (P0):
-
-- `release external-beta` — submit an internal-ready build for external beta review
-  (`POST /v1/betaAppReviewSubmissions`) and poll until external `IN_BETA_TESTING`. These
-  submissions currently require the packer to stamp `DTPlatformBuild`/`DTSDKBuild`/canonical
-  `DTXcode`; without them App Store Connect rejects with
-  `BUILD_SDK_NOT_ALLOWED_FOR_EXTERNAL_TESTING` (fixed in release 0.0.10).
-- `release beta-group [list|create|add-build|add-tester]` — manage external beta groups and
-  attach the build (`betaGroups`, `betaGroups/{id}/builds`) and testers
-  (`betaTesters`, `betaGroups/{id}/betaTesters`).
-- Extend `release status` and the release manifest to also record the external review
-  submission state and group resource IDs.
-- Post-delivery verification: after TestFlight install, optionally verify the build installs
-  and launches and surface device logs (via DeviceKit diagnostics). Delivery is not proof
-  the build runs; a TestFlight-installed build can still crash.
+- `release external-beta` — resolves an external beta group (by `--group` id or by name,
+  creating one as the build needs), adds the build, creates an external beta review
+  submission, and with `--wait` polls until the build reaches external `IN_BETA_TESTING`.
+- `release beta-group [list|create|add-build|add-tester]` — manages external beta groups
+  and external testers. Internal groups cannot be assigned builds via the API.
+- `release beta-notes` — sets the per-build “What to Test” note.
+- `release preflight` — a local, credential-free gate that fails loudly before an upload
+  when the app and bundled extensions drift in marketing/build version or export
+  compliance is missing/declared true. `release upload` runs the same gate first, so
+  `ITMS-90062`-style and `MISSING_EXPORT_COMPLIANCE` failures happen locally.
+- `release bump` handles dotted build numbers and safely bumps the marketing version with
+  `--marketing`.
 
 Out of scope (App Store delivery, not TestFlight):
 
-- App Store review/versions/submissions (`appStoreVersions`, App Store review detail), In-App
-  Purchase, analytics/metrics, A/B experiments, and localized beta build review notes (these
-  remain portal-managed metadata).
+- App Store review/versions/submissions, In-App Purchase, analytics/metrics, A/B
+  experiments, and localized beta review notes (these stay portal-managed metadata).
+- Creating the App Store Connect app record, associating App Group identifiers, and
+  filling App Privacy data usage labels are manual prerequisites the public API cannot
+  do; `release` fails loudly with the exact step instead of rejecting after upload.
 
 ## Supported Project Model
 

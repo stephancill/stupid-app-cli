@@ -18,6 +18,43 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
 
+## 2026-08-29 - TestFlight Control-Plane And Release Preflight Implemented
+
+### Summary
+
+- Added App Store Connect TestFlight control-plane support to `stupid-app release`:
+  `external-beta`, `beta-group` (list/create/add-build/add-tester), and `beta-notes`
+  ("What to Test"), backed by new operations in `Sources/ASCKit/TestFlight.swift`.
+- `release external-beta` resolves an external beta group (by id or name, creating one as
+  needed), adds the build, creates an external beta review submission, and `--wait` polls
+  until the build reaches external `IN_BETA_TESTING`. It records `betaSubmissionId`,
+  `betaGroupId`, and the external state in `release-manifest.json`, which `release status`
+  now also reports.
+- `release preflight` is a new local, credential-free gate: it flags marketing/build
+  version drift between the app and bundled extensions and a missing or `true`
+  `ITSAppUsesNonExemptEncryption` declaration, so the post-upload `ITMS-90062` /
+  `MISSING_EXPORT_COMPLIANCE` rejection classes fail locally. `release upload` runs the
+  same gate before uploading.
+- `release bump` now handles dotted build numbers (`1.12.3 -> 1.12.4`) and, with
+  `--marketing`, bumps `CFBundleShortVersionString` in lockstep, keeping version
+  reconciliation consistent with `release preflight`. Source lives in
+  `Sources/ProjectCore/ReleaseBumper.swift` and `Sources/ProjectCore/ReleasePreflight.swift`.
+
+### Verification
+
+- `swift build -c debug` succeeds.
+- `swift test`: 283 tests in 51 suites pass, including 18 new assertions in
+  `TestFlightTests`, `ReleasePreflightTests`, and `ReleaseBumperTests`: build-number and
+  marketing bumps, beta review/submission decision state machines, and preflight
+  version/compliance assessment.
+
+### Public-safety and scope notes
+
+- No live App Store Connect interaction was exercised. The TestFlight request/response
+  bodies are implemented from the pinned OpenAPI schemas; only the pure decoding and
+  state-machine transitions are unit-tested. The external-beta submission and group-add
+  operations have not been run against a live team.
+
 ## 2026-08-28 - Scoped TestFlight Control-Plane APIs For The CLI
 
 ### Summary
