@@ -20,6 +20,24 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 
 ## 2026-08-29 - TestFlight Control-Plane And Release Preflight Implemented
 
+### Release 0.0.11
+
+`stupid-app 0.0.11` ships TestFlight control-plane commands, release preflight and
+version bumping, and the live API correction from the signing-proof flow. The release
+supports external beta groups/testers, "What to Test" notes, external review submission,
+manifest/status tracking, local extension-version and export-compliance gates, and dotted
+build numbers. Live verification produced a distribution-signed build that App Store
+Connect accepted as `VALID` and `IN_BETA_TESTING`; external submission reached Apple's
+portal-metadata validation after removing the unsupported `betaGroup` relationship.
+External readiness remains blocked for that proof app until its Beta App Description is
+completed in App Store Connect.
+
+Release verification: the bundled skill passed `quick_validate.py`; `swift test` passed
+all 284 tests across 51 suites after one timing-sensitive USBMux timeout assertion failed
+once with a connection reset and passed immediately in isolation; `swift build -c release`
+succeeded; the packaged Apple Silicon binary reports `stupid-app 0.0.11` and has SHA-256
+`146707c0b3ac2ec9455437dc688bfdc77a483af1bca04206a9a0642e47a334c8`.
+
 ### Summary
 
 - Added App Store Connect TestFlight control-plane support to `stupid-app release`:
@@ -54,6 +72,41 @@ The current project plan and architecture live in `docs/engineering-handover.md`
   bodies are implemented from the pinned OpenAPI schemas; only the pure decoding and
   state-machine transitions are unit-tested. The external-beta submission and group-add
   operations have not been run against a live team.
+
+### Sample-app validation (2026-08-29)
+
+- Validated the new commands against a fresh scaffold and a real released app.
+- Fresh scaffold: `stupid-app new` now emits `ITSAppUsesNonExemptEncryption=false` in the
+  generated `Info.plist`, so `release preflight` is READY on a new project (previously it
+  flagged the scaffold as missing export compliance).
+- Local loop confirmed: `release preflight` passes on a clean scaffold and fails loudly on
+  (a) a missing export-compliance key and (b) a bundled extension whose build drifted from
+  the app. `release bump` increments integer and dotted builds (`1.12.3 -> 1.12.4`) and
+  `release bump --marketing` bumps the marketing version.
+- ASC-dependent commands (`new-build`, `beta-group list`, `beta-notes`, `external-beta`)
+  fail loudly with actionable messages when the app record or build does not exist, without
+  performing any mutation.
+- Read-only live validation against a released app: `beta-group list` decodes internal vs
+  external beta groups correctly and `release status --live` reports `processing=VALID`,
+  `internal=IN_BETA_TESTING`, `external=IN_BETA_TESTING`.
+- Full signing-proof flow used a fresh scaffold with the existing signing-proof bundle ID.
+  Build 12 passed local release preflight, native distribution archive/signature verification,
+  Build Upload, and App Store processing, reaching `processing=VALID` and
+  `internal=IN_BETA_TESTING`. The first upload attempt (build 11) correctly reached Apple but
+  was rejected for missing icons because the scaffold had intentionally been created without
+  `--icon`; adding a valid proof icon resolved the packaging errors.
+- Live external-beta execution created an external group, assigned build 12, and set its
+  "What to Test" note. It exposed that `betaAppReviewSubmissions` accepts only the `build`
+  relationship; sending the OpenAPI-derived `betaGroup` relationship returned HTTP 409.
+  Removed that unsupported relationship (group assignment remains the separate
+  `betaGroups/<id>/relationships/builds` operation). The corrected submission reached Apple's
+  metadata validation and failed with `MISSING_BETA_APP_DESCRIPTION`; that description is a
+  portal-managed prerequisite for this app record, so external review/readiness could not be
+  completed in this run.
+- Updated the bundled CLI skill and README from the live findings: release projects need an
+  icon, new scaffolds declare export compliance, external review requires the Beta App
+  Description, `external-beta` waits by default unless `--no-wait` is passed, and beta-group
+  creation uses `--name`.
 
 ## 2026-08-28 - Scoped TestFlight Control-Plane APIs For The CLI
 

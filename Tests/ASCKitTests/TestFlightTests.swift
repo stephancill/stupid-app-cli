@@ -53,4 +53,13 @@ struct TestFlightTests {
     let id = try ASCOperations.decodeBetaResourceID(Data(json.utf8), resource: "test")
     #expect(id == "loc-7")
   }
+
+  @Test("beta review submission relates only the build")
+  func submissionBody() throws {
+    let body = ASCOperations.betaAppReviewSubmissionBody(buildID: "build-1")
+    let data = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
+    let json = String(decoding: data, as: UTF8.self)
+    #expect(json.contains(#""build":{"data":{"id":"build-1","type":"builds"}}"#))
+    #expect(!json.contains("betaGroup"))
+  }
 }

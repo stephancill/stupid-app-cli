@@ -85,7 +85,7 @@ struct ReleaseExternalBetaCommand: AsyncParsableCommand {
     }
 
     // Create the external beta review submission.
-    let submissionID = try operations.createBetaAppReviewSubmission(buildID: buildID, betaGroupID: group.id)
+    let submissionID = try operations.createBetaAppReviewSubmission(buildID: buildID)
     print("Created external beta review submission \(submissionID)")
 
     guard !noWait else {
@@ -211,7 +211,7 @@ enum ReleaseExternalBetaError: Error, CustomStringConvertible {
     case .externalBetaFailed(let state):
       return "Build could not reach external TestFlight (external build state '\(state)'). Check export compliance and resolve violations."
     case .timedOut(let phase):
-      return "Timed out while \(phase). Check the state in App Store Connect and re-run `stupid-app release external-beta --wait`."
+      return "Timed out while \(phase). Check the state in App Store Connect and re-run `stupid-app release external-beta`."
     }
   }
 }

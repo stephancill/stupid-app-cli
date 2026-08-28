@@ -203,21 +203,13 @@ public extension ASCOperations {
         )
     }
 
-    /// Creates an external beta review submission for a build in a beta group. Returns
-    /// the submission id.
-    func createBetaAppReviewSubmission(buildID: String, betaGroupID: String) throws -> String {
+    /// Creates an external beta review submission for a build. Group assignment is a
+    /// separate beta-group relationship operation. Returns the submission id.
+    func createBetaAppReviewSubmission(buildID: String) throws -> String {
         let response = try client.request(
             method: .post,
             path: "betaAppReviewSubmissions",
-            body: [
-                "data": [
-                    "type": "betaAppReviewSubmissions",
-                    "relationships": [
-                        "build": ["data": ["type": "builds", "id": buildID]],
-                        "betaGroup": ["data": ["type": "betaGroups", "id": betaGroupID]],
-                    ],
-                ],
-            ]
+            body: Self.betaAppReviewSubmissionBody(buildID: buildID)
         )
         struct Envelope: Decodable { struct Data: Decodable { let id: String }; let data: Data }
         guard let envelope = try? JSONDecoder().decode(Envelope.self, from: response.data) else {
@@ -338,6 +330,17 @@ public extension ASCOperations {
             throw ASCError.malformedPayload(resource)
         }
         return envelope.data.id
+    }
+
+    static func betaAppReviewSubmissionBody(buildID: String) -> [String: Any] {
+        [
+            "data": [
+                "type": "betaAppReviewSubmissions",
+                "relationships": [
+                    "build": ["data": ["type": "builds", "id": buildID]]
+                ],
+            ]
+        ]
     }
 
     // MARK: - Pure state decisions (credential-free, unit-testable)

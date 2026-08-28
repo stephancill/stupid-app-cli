@@ -437,7 +437,9 @@ Out of scope (App Store delivery, not TestFlight):
   experiments, and localized beta review notes (these stay portal-managed metadata).
 - Creating the App Store Connect app record, associating App Group identifiers, and
   filling App Privacy data usage labels are manual prerequisites the public API cannot
-  do; `release` fails loudly with the exact step instead of rejecting after upload.
+  do. External review also requires the app's portal-managed Beta App Description;
+  `release external-beta` surfaces Apple's `MISSING_BETA_APP_DESCRIPTION` response when
+  it is absent.
 
 ## Supported Project Model
 

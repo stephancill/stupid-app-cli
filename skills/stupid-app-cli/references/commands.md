@@ -55,7 +55,9 @@ stupid-app new <name> [--bundle-id <id>] [--deployment-target <ver>] [--icon <pn
 Scaffolds a SwiftPM/SwiftUI iOS project. `<name>` is the project/product name.
 `--bundle-id` is the exact identifier (e.g. `net.example.acceptance-app`);
 `--deployment-target` defaults to `17.0`; `--icon` copies a square source PNG to
-`Resources/AppIcon.png`; `--output` defaults to the current directory.
+`Resources/AppIcon.png`; `--output` defaults to the current directory. An icon is
+optional for local build/run but required by App Store Connect. New scaffolds set
+`ITSAppUsesNonExemptEncryption=false`; change it when that declaration is not true.
 
 ## sdk
 
@@ -242,8 +244,10 @@ stupid-app release beta-notes --whats-new <text> [--build-id <id>] [--home <dir>
 - `external-beta` — makes an already-uploaded build externally testable. Resolves an
   external beta group (`--group` id, or by `--group-name`, creating one as needed),
   adds the build to it, optionally sets the `--whats-new` note, creates an external
-  beta review submission, and with `--wait` polls until external `IN_BETA_TESTING`.
-  Writes the submission/group ids and external state into the release manifest.
+  beta review submission, and polls until external `IN_BETA_TESTING` by default;
+  `--no-wait` exits after creating the submission. The app's portal-managed Beta App
+  Description must exist or Apple returns `MISSING_BETA_APP_DESCRIPTION`. Writes the
+  submission/group ids and external state into the release manifest.
 - `beta-group` — `list` shows the app's beta groups; `create` makes an external group
   (default name "External Testers"); `add-build` attaches a build to a group;
   `add-tester` enrolls a tester by email (internal groups cannot be assigned builds by

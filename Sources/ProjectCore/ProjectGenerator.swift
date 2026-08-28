@@ -135,6 +135,8 @@ public enum ProjectGenerator {
             <string>1.0.0</string>
             <key>CFBundleVersion</key>
             <string>1</string>
+            <key>ITSAppUsesNonExemptEncryption</key>
+            <false/>
             <key>MinimumOSVersion</key>
             <string>\(target)</string>
             <key>UIApplicationSceneManifest</key>

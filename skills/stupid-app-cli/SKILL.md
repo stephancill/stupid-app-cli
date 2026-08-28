@@ -136,7 +136,11 @@ This scaffolds a SwiftPM package, `stupid-app.yml`, `Info.plist`,
 `App.entitlements`, and SwiftUI sources. Pass `--icon <square-png>` to seed
 `Resources/AppIcon.png` (and the `iconPath` config key) and
 `--deployment-target` to set the minimum iOS version (default `17.0`). The
-default scaffold has no icon, which is fine for building and running.
+default scaffold has no icon, which is fine for building and running but not for
+App Store Connect upload; create release projects with `--icon` or add a square
+PNG and `iconPath` before archiving. New scaffolds declare
+`ITSAppUsesNonExemptEncryption=false`; change it if the app uses non-exempt
+encryption.
 
 `stupid-app.yml` (project config, version 1; `iconPath` is present only when
 `--icon` was given):
@@ -267,7 +271,7 @@ stupid-app release upload --wait
 stupid-app release status [--live]
 stupid-app release external-beta   # external TestFlight (group + submit + poll to readiness)
 stupid-app release beta-group list      # list beta groups
-stupid-app release beta-group create --group-name <name>
+stupid-app release beta-group create --name <name>
 stupid-app release beta-group add-build --group <id> --build-id <id>
 stupid-app release beta-group add-tester --group <id> --email <addr>
 stupid-app release beta-notes --whats-new "<note>"
@@ -301,10 +305,11 @@ submits an external beta review submission, then (by default) waits until extern
 `IN_BETA_TESTING` — pass `--no-wait` to only create the submission. `release beta-group list/create/add-build/add-tester` manage
 external groups and their testers, and `release beta-notes` sets the per-build
 "What to Test" note alone. Manual prerequisites the API cannot perform (`create the
-App Store Connect app record before the first upload`) remain a loud, documented
-`release preflight`/upload error instead of a post-upload rejection. External beta
-requires `DTPlatformBuild`/`DTSDKBuild`/canonical `DTXcode` (packaged since 0.0.10)
-or App Store Connect rejects with `BUILD_SDK_NOT_ALLOWED_FOR_EXTERNAL_TESTING`.
+App Store Connect app record before the first upload`, and complete the app's Beta
+App Description before external review) remain explicit. A missing description is
+reported by Apple as `MISSING_BETA_APP_DESCRIPTION`. External beta requires
+`DTPlatformBuild`/`DTSDKBuild`/canonical `DTXcode` (packaged since 0.0.10) or App
+Store Connect rejects with `BUILD_SDK_NOT_ALLOWED_FOR_EXTERNAL_TESTING`.
 
 ## Command reference
 
@@ -335,6 +340,10 @@ When a workflow fails, in order:
 5. Check the release manifest and `release status --live` before re-uploading;
    do not reuse a build number that already exists.
 6. If App Store Connect rejects an external TestFlight submission with
+   `MISSING_BETA_APP_DESCRIPTION`, complete the app's Beta App Description in App
+   Store Connect, then rerun `release external-beta`; the existing upload and beta
+   group assignment can be reused.
+7. If App Store Connect rejects an external TestFlight submission with
    `BUILD_SDK_NOT_ALLOWED_FOR_EXTERNAL_TESTING` or shows "beta version of Xcode",
    inspect the packaged IPA's build-system keys before blaming the toolchain:
    `unzip -p <ipa> Payload/<App>.app/Info.plist | plutil -p -` and check that
@@ -345,7 +354,7 @@ When a workflow fails, in order:
    `DTXcode` incorrectly (e.g. `266` for Xcode 26.6 instead of `2660`), which made
    Apple classify an otherwise valid build as unsupported/beta. Re-export stale
    imported iOS SDK bundles so their `sdk-manifest.json` records `iphoneosSDKBuild`.
-7. Inspect a device crash report with `stupid-app device crash` — pass a local
+8. Inspect a device crash report with `stupid-app device crash` — pass a local
    `--path <file>.ips` or `--udid <phone-udid>` to pull the newest matching
    report directly from the phone over USB (no host tool), optionally `--json`.
    Add `--network` to pull a wireless device over the CoreDevice tunnel (needs

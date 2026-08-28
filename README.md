@@ -83,6 +83,13 @@ stupid-app release beta-group ...   Manage external beta groups and testers
 stupid-app release beta-notes       Set the "What to Test" note on a build
 ```
 
+Use `stupid-app new ... --icon <square-png>` for projects that will be uploaded;
+the icon is optional for local build/run but required by App Store Connect. New
+scaffolds declare `ITSAppUsesNonExemptEncryption=false`; change that value when it
+is not true. External TestFlight submission also requires the app's Beta App
+Description to be completed in App Store Connect; Apple reports
+`MISSING_BETA_APP_DESCRIPTION` when it is absent.
+
 `stupid-app signing setup` is the one-stop provisioning command:
 
 ```bash
