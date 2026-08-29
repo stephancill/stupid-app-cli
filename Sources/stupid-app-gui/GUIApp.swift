@@ -401,8 +401,6 @@ struct RootView: View {
     VStack(alignment: .leading, spacing: 12) {
       toolbar
       Divider()
-      deviceSection
-      Divider()
       statusLine
       logView
     }
@@ -410,74 +408,6 @@ struct RootView: View {
     .frame(minWidth: 620, minHeight: 520)
     .onAppear {
       runner.refreshDevices()
-    }
-  }
-
-  private var deviceSection: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      HStack {
-        Text("Devices to run on")
-          .font(.headline)
-        Spacer()
-        if runner.isRefreshingDevices {
-          ProgressView().controlSize(.small)
-        }
-        Button("Refresh") { runner.refreshDevices() }
-          .disabled(runner.isRefreshingDevices)
-      }
-      if let error = runner.devicesError {
-        Text(error)
-          .font(.caption)
-          .foregroundColor(.secondary)
-      }
-      if runner.availableTargets.isEmpty {
-        Text("No devices found yet. Click Refresh.")
-          .font(.caption)
-          .foregroundColor(.secondary)
-      } else {
-        ScrollView(.vertical) {
-          LazyVStack(spacing: 2) {
-            ForEach(runner.availableTargets) { target in
-              HStack(spacing: 8) {
-                Text(target.kind)
-                  .font(.caption2)
-                  .padding(.horizontal, 5)
-                  .padding(.vertical, 1)
-                  .background(kindColor(target.kind))
-                  .clipShape(Capsule())
-                Text(target.name)
-                  .lineLimit(1)
-                Text(target.udid ?? target.detail)
-                  .font(.caption)
-                  .foregroundColor(.secondary)
-                  .lineLimit(1)
-                Spacer()
-                if target.kind != "Simulator" {
-                  Text(target.detail)
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                }
-                Button("Run") { runner.run(on: target) }
-                  .disabled(runner.isRunning)
-                  .buttonStyle(.bordered)
-                  .controlSize(.small)
-              }
-              .frame(maxWidth: .infinity, alignment: .leading)
-            }
-          }
-        }
-        .frame(maxHeight: 130)
-      }
-    }
-    .padding(8)
-    .background(Color.black.opacity(0.03), in: RoundedRectangle(cornerRadius: 6))
-  }
-
-  private func kindColor(_ kind: String) -> Color {
-    switch kind {
-    case "Simulator": return .blue.opacity(0.2)
-    case "USB": return .green.opacity(0.2)
-    default: return .orange.opacity(0.2)
     }
   }
 
@@ -500,6 +430,12 @@ struct RootView: View {
         .pickerStyle(.menu)
         .frame(minWidth: 220)
         .disabled(runner.availableTargets.isEmpty || runner.isRunning)
+
+        if runner.isRefreshingDevices {
+          ProgressView().controlSize(.small)
+        }
+        Button("Refresh") { runner.refreshDevices() }
+          .disabled(runner.isRefreshingDevices || runner.isRunning)
 
         Button("Doctor") { runner.doctor() }
           .disabled(runner.isRunning)

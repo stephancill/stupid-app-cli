@@ -38,8 +38,17 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 - Follow-up: replaced the manual transport dropdown + free-text UDID field with a single
   device-selection dropdown fed by the device panel. `CommandRunner` keeps only a
   `selectedTargetID`; transport mode and UDID are derived from the chosen `RunTarget`
+  - Follow-up: replaced the manual transport dropdown + free-text UDID field with a single
+  device-selection dropdown fed by the device panel. `CommandRunner` keeps only a
+  `selectedTargetID`; transport mode and UDID are derived from the chosen `RunTarget`
   (`run(on:)`). The Actions menu now has Run Selected Device (⌘R) and Refresh Devices
   (⇧⌘R) instead of separate USB/Network/Simulator items.
+- Follow-up: removed the standalone "Devices to run on" panel (now redundant with the
+  selection dropdown) and placed the **Refresh** button beside the device selection in the
+  toolbar; the dropdown still auto-loads on launch.
+- Environment: pruned local simulators down to just `NoFeedSocial iOS 26.3`
+  (UDID `6552DF1D-95CE-48E3-801F-8F80F0AA8D29`, the project-preferred simulator); the other
+  17 simulator devices were removed via `xcrun simctl delete`.
 
 ## 2026-08-29 - Native macOS GUI (`stupid-app gui`)
 
