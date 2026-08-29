@@ -41,10 +41,11 @@ stupid-app gui
 
 Opens the native macOS desktop GUI. A macOS-only SwiftUI app (the `stupid-app-gui`
 executable, launched next to `stupid-app`) exposes a native menu bar and toolbar that
-execute the CLI commands (Doctor, Build, and Run — USB/Network/Simulator) by spawning the
-CLI as a subprocess and streaming stdout/stderr into a live log pane. It also lists the
-runnable devices (simulators, USB-attached, and network-paired devices) with a
-**Refresh** button, and each device row runs on that selected target. Includes a project
+execute the CLI commands (Doctor, Build, and the selected device's Run) by spawning the
+CLI as a subprocess and streaming stdout/stderr into a live log pane. A "Devices to run
+on" panel lists simulators, USB-attached, and network-paired devices with a **Refresh**
+button; a single device-selection dropdown picks the run target (transport + UDID are
+derived from the chosen device), and each panel row can run directly. Includes a project
 directory picker and a Stop control; on non-macOS hosts the subcommand is not registered.
 
 ## doctor

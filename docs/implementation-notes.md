@@ -35,6 +35,11 @@ The current project plan and architecture live in `docs/engineering-handover.md`
   the network pairing). Temporarily-inserted diagnostics were removed.
 - Updated the bundled CLI skill reference (`simulators --json`, `device list --json`, and the
   GUI device list) and re-ran skill validation.
+- Follow-up: replaced the manual transport dropdown + free-text UDID field with a single
+  device-selection dropdown fed by the device panel. `CommandRunner` keeps only a
+  `selectedTargetID`; transport mode and UDID are derived from the chosen `RunTarget`
+  (`run(on:)`). The Actions menu now has Run Selected Device (⌘R) and Refresh Devices
+  (⇧⌘R) instead of separate USB/Network/Simulator items.
 
 ## 2026-08-29 - Native macOS GUI (`stupid-app gui`)
 

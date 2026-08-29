@@ -47,8 +47,7 @@ final class CommandRunner: ObservableObject {
   @Published var statusText = "Idle"
 
   @Published var projectPath = FileManager.default.currentDirectoryPath
-  @Published var runMode: RunMode = .usb
-  @Published var udid = ""
+  @Published var selectedTargetID: String?
 
   @Published var availableTargets: [RunTarget] = []
   @Published var isRefreshingDevices = false
@@ -97,19 +96,36 @@ final class CommandRunner: ObservableObject {
     start(arguments: ["build"], label: "build")
   }
 
-  func run(mode: RunMode = .usb) {
+  /// The currently selected device target from the dropdown, if any.
+  var selectedTarget: RunTarget? {
+    guard let selectedTargetID else { return nil }
+    return availableTargets.first { $0.id == selectedTargetID }
+  }
+
+  /// Runs the command on the currently selected device target. No-op when none.
+  func runSelected() {
+    guard let target = selectedTarget else {
+      statusText = "Select a device to run on first."
+      return
+    }
+    run(on: target)
+  }
+
+  /// Runs on a specific device target from the device list or dropdown.
+  func run(on target: RunTarget) {
     var args = ["run"]
-    switch mode {
+    switch target.mode {
     case .usb:
       args += ["--usb"]
     case .network:
       args += ["--network"]
-      if !udid.isEmpty { args += ["--udid", udid] }
     case .simulator:
       args += ["--simulator"]
-      if !udid.isEmpty { args += ["--udid", udid] }
     }
-    start(arguments: args, label: "run \(mode.label)")
+    if let udid = target.udid {
+      args += ["--udid", udid]
+    }
+    start(arguments: args, label: "run on \(target.name)")
   }
 
   func stop() {
@@ -144,13 +160,6 @@ final class CommandRunner: ObservableObject {
         runner.isRefreshingDevices = false
       }
     }
-  }
-
-  /// Runs on a specific target from the device list.
-  func run(on target: RunTarget) {
-    runMode = target.mode
-    udid = target.udid ?? ""
-    run(mode: target.mode)
   }
 
   // MARK: - Subprocess management
@@ -376,12 +385,10 @@ struct AppMenuCommands: Commands {
       Button("Build") { runner.build() }
         .keyboardShortcut("b", modifiers: [.command])
       Divider()
-      Menu("Run") {
-        Button("Over USB") { runner.run(mode: .usb) }
-          .keyboardShortcut("r", modifiers: [.command])
-        Button("Over Network…") { runner.run(mode: .network) }
-        Button("In Simulator…") { runner.run(mode: .simulator) }
-      }
+      Button("Run Selected Device") { runner.runSelected() }
+        .keyboardShortcut("r", modifiers: [.command])
+      Button("Refresh Devices") { runner.refreshDevices() }
+        .keyboardShortcut("r", modifiers: [.command, .shift])
     }
   }
 }
@@ -484,23 +491,22 @@ struct RootView: View {
           .disabled(runner.isRunning)
       }
       HStack(spacing: 8) {
-        Picker("Run", selection: $runner.runMode) {
-          ForEach(RunMode.allCases) { mode in
-            Text(mode.label).tag(mode)
+        Picker("Run:", selection: $runner.selectedTargetID) {
+          Text("Choose a device…").tag(String?.none)
+          ForEach(runner.availableTargets) { target in
+            Text(targetLabel(target)).tag(Optional(target.id))
           }
         }
         .pickerStyle(.menu)
-        .fixedSize()
-        TextField("UDID (optional)", text: $runner.udid)
-          .textFieldStyle(.roundedBorder)
-          .frame(width: 160)
+        .frame(minWidth: 220)
+        .disabled(runner.availableTargets.isEmpty || runner.isRunning)
 
         Button("Doctor") { runner.doctor() }
           .disabled(runner.isRunning)
         Button("Build") { runner.build() }
           .disabled(runner.isRunning)
-        Button("Run") { runner.run(mode: runner.runMode) }
-          .disabled(runner.isRunning)
+        Button("Run") { runner.runSelected() }
+          .disabled(runner.isRunning || runner.selectedTarget == nil)
 
         if runner.isRunning {
           ProgressView().controlSize(.small)
@@ -508,6 +514,12 @@ struct RootView: View {
         }
       }
     }
+  }
+
+  private func targetLabel(_ target: RunTarget) -> String {
+    let device = target.kind == "Simulator" ? target.name : "\(target.kind) · \(target.name)"
+    let trailer = target.kind == "Simulator" ? " (\(target.detail))" : ""
+    return device + trailer
   }
 
   private var statusLine: some View {
