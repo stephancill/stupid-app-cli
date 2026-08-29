@@ -23,33 +23,48 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 ### Summary
 
 - Added a native macOS desktop GUI, `stupid-app gui`. It is Mac-only and registered as a
-  subcommand only when building on macOS, so the packaged CLI still compiles unchanged on
-  Linux (all AppKit/SwiftUI code is behind `#if os(macOS)` in `Sources/stupid-app/GUICommand.swift`).
+  subcommand only when building on macOS. The UI lives in a standalone SwiftUI executable
+  target (`Sources/stupid-app-gui/GUIApp.swift`, readable in `Package.swift` as
+  `stupid-app-gui`); `Sources/stupid-app/GUICommand.swift` is a thin launcher that spawns it.
+  The GUI content is behind `#if os(macOS)` so the packaged CLI and Linux `swift build` are
+  unchanged.
 - Minimal surface per the requested scope: a toolbar with **Doctor**, **Build**, and **Run**
   (USB / Network / Simulator transport picker with an optional `--udid`), a project directory
   picker, a status indicator, and a live monospaced log pane with auto-scroll and clear/stop.
-- Commands are executed by spawning the current `stupid-app` binary as a subprocess with the
-  exact CLI arguments (`build`, `run --usb`, `run --network --udid …`, `doctor`, …), streaming
-  stdout/stderr into the log and forwarding termination/cancellation. The binary path is
-  resolved via `Bundle.main.executableURL` (falling back to `argv[0]`) so an install run from
-  PATH self-spawns correctly.
+- Commands are executed by re-invoking the CLI as a subprocess with the exact arguments
+  (`build`, `run --usb`, `run --network --udid …`, `doctor`, …), streaming stdout/stderr
+  into the log and forwarding termination/cancellation. The CLI path is resolved by the
+  `gui` subcommand (symlink-resolved, forwarded via `STUPID_APP_BIN`) so a PATH-installed
+  `stupid-app gui` self-spawns correctly.
 - The GUI is intentionally thin: it adds no command logic and cannot diverge from the CLI
-  surface. The app menu bar (Actions → Doctor / Build / Run) and the in-view toolbar share one
-  `CommandRunner` (`@MainActor` `ObservableObject`).
+  surface. The app menu bar (Actions → Doctor / Build / Run) and the in-view toolbar share
+  one `CommandRunner` (`@MainActor` `ObservableObject`).
 
 ### Verification
 
-- `swift build --product stupid-app` succeeds on macOS; the `--help` output lists `gui`.
-- Launched `.build/debug/stupid-app gui`; the AppKit event loop stays running (no early exit).
-- `swift test --filter StupidAppTests` passes (18 tests in 5 suites); full suite run
-  recommended before release.
-- Skill-creator validation passes after updating the bundled CLI skill reference.
+### Verification
+
+- `swift build` (all products) succeeds on macOS; `stupid-app --help` lists `gui`.
+- `stupid-app gui` (through the PATH-installed symlink) launches and keeps the
+  `stupid-app-gui` child process alive until quit; the `gui` subcommand waits on it.
+- The standalone GUI spawned the `doctor` subprocess, streamed its output, and reported a
+  completed finish (diagnostic instrumentation added and then removed).
+- Full `swift test` passes: 284 tests across 51 suites.
 
 ### Notes / follow-ups
 
-- The GUI window/layout was smoke-tested for launch, not driven visually end-to-end.
+- **Why a standalone process:** an earlier in-process version embedded `NSApplication.run()`
+  inside an ArgumentParser `async @MainActor` entrypoint, which held the main actor and
+  starved every deferred `Task { @MainActor }`/`DispatchQueue.main` job — toolbar actions,
+  output appends, and the termination handler never ran (`doctor` appeared to run forever
+  with no output). A SwiftUI `App` process drives the main actor correctly, which is why the
+  GUI ships as its own executable.
+- The GUI window/layout was verified for launch and subprocess behavior, not driven visually
+  end-to-end.
+- A release/install must place `stupid-app-gui` beside `stupid-app` for `gui` to find it;
+  dev `swift build` already co-builds both binaries. A future release step should ship both.
 - Future GUI scope (credentials/signing setup, release controls, external beta) can be added
-  as additional subprocess actions without changing the subprocess model.
+  as additional subprocess actions without changing the architecture.
 
 ## 2026-08-29 - TestFlight Control Plane And Release Preflight Implemented
 

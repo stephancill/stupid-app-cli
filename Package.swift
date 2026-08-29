@@ -135,6 +135,10 @@ let package = Package(
         .product(name: "ArgumentParser", package: "swift-argument-parser"),
       ]
     ),
+    .executableTarget(
+      name: "stupid-app-gui",
+      dependencies: []
+    ),
     .testTarget(
       name: "SDKCoreTests",
       dependencies: ["SDKCore"]

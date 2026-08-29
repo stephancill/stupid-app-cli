@@ -39,12 +39,11 @@ directly. `gui` is macOS-only.
 stupid-app gui
 ```
 
-Opens the native macOS desktop GUI. A macOS-only SwiftUI/AppKit app exposes a
-toolbar and menu bar that execute the CLI commands (Doctor, Build, and Run —
-USB/Network/Simulator) by spawning the current `stupid-app` binary as a
-subprocess and streaming stdout/stderr into a live log pane. Include a project
-directory picker and a Stop control; on non-macOS hosts the subcommand is not
-registered. Use the toolbar or the Actions/Run menu when driving the app.
+Opens the native macOS desktop GUI. A macOS-only SwiftUI app (the `stupid-app-gui`
+executable, launched next to `stupid-app`) exposes a native menu bar and toolbar that
+execute the CLI commands (Doctor, Build, and Run — USB/Network/Simulator) by spawning the
+CLI as a subprocess and streaming stdout/stderr into a live log pane. Includes a project
+directory picker and a Stop control; on non-macOS hosts the subcommand is not registered.
 
 ## doctor
 
