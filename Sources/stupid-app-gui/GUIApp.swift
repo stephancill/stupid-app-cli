@@ -16,10 +16,22 @@ import AppKit
 import SwiftUI
 
 /// How `stupid-app run` is transported.
-enum RunMode: String, CaseIterable, Identifiable {
+enum RunMode: String, CaseIterable, Identifiable, Sendable {
   case usb, network, simulator
   var id: Self { self }
   var label: String { rawValue }
+}
+
+/// One runnable target shown in the device list (a simulator, a USB device, or a device
+/// with a saved network pairing record).
+struct RunTarget: Identifiable, Sendable {
+  let kind: String       // "Simulator" | "USB" | "Network"
+  let name: String
+  let mode: RunMode
+  let udid: String?
+  let detail: String     // state for simulators, transport note for devices
+
+  var id: String { "\(kind)/\(udid ?? name)" }
 }
 
 /// Owns subprocess execution and observable UI state. Shared by the toolbar, the window
@@ -37,6 +49,10 @@ final class CommandRunner: ObservableObject {
   @Published var projectPath = FileManager.default.currentDirectoryPath
   @Published var runMode: RunMode = .usb
   @Published var udid = ""
+
+  @Published var availableTargets: [RunTarget] = []
+  @Published var isRefreshingDevices = false
+  @Published var devicesError: String?
 
   /// Cap on kept output characters; the oldest text is dropped beyond this.
   private let maxOutputCharacters = 200_000
@@ -100,6 +116,41 @@ final class CommandRunner: ObservableObject {
     guard let process else { return }
     canceledByUser = true
     process.terminate()
+  }
+
+  // MARK: - Device inventory
+
+  /// Refreshes the runnable-device list from `simulators --json` and `device list --json`,
+  /// off the main thread so the UI stays responsive.
+  func refreshDevices() {
+    guard let bin = resolveBin() else {
+      devicesError = "Cannot find the stupid-app binary."
+      return
+    }
+    guard !isRefreshingDevices else { return }
+    isRefreshingDevices = true
+    devicesError = nil
+
+    let binURL = bin
+    Task.detached(priority: .userInitiated) {
+      let sim = Self.capture(bin: binURL, arguments: ["simulators", "--json"])
+      let dev = Self.capture(bin: binURL, arguments: ["device", "list", "--json"])
+      let targets = Self.parseTargets(sim: sim, dev: dev)
+      let errorText = Self.summarizeErrors(sim: sim, dev: dev)
+      await MainActor.run {
+        let runner = CommandRunner.shared
+        runner.availableTargets = targets
+        runner.devicesError = errorText
+        runner.isRefreshingDevices = false
+      }
+    }
+  }
+
+  /// Runs on a specific target from the device list.
+  func run(on target: RunTarget) {
+    runMode = target.mode
+    udid = target.udid ?? ""
+    run(mode: target.mode)
   }
 
   // MARK: - Subprocess management
@@ -190,6 +241,116 @@ final class CommandRunner: ObservableObject {
     runningLabel = nil
     self.process = nil
   }
+
+  // MARK: - Device inventory helpers (callable from a background task)
+
+  nonisolated private struct CaptureResult: Sendable {
+    let status: Int
+    let stdout: String
+    let stderr: String
+  }
+
+  private struct SimDevice: Decodable {
+    let name: String
+    let udid: String
+    let state: String
+  }
+
+  private struct SimRoot: Decodable {
+    let devices: [SimDevice]
+  }
+
+  private struct NetworkPairing: Decodable {
+    let identifier: String
+    let udid: String?
+  }
+
+  private struct DeviceListRoot: Decodable {
+    let usbDevices: [String]
+    let networkPairings: [NetworkPairing]
+  }
+
+  /// Runs a short CLI call and captures its output synchronously. Blocking, so it is
+  /// intended to be invoked from a background task.
+  nonisolated private static func capture(bin: URL, arguments: [String]) -> CaptureResult {
+    let proc = Process()
+    proc.executableURL = bin
+    proc.arguments = arguments
+
+    let stdout = Pipe()
+    let stderr = Pipe()
+    proc.standardOutput = stdout
+    proc.standardError = stderr
+
+    do {
+      try proc.run()
+    } catch {
+      return CaptureResult(status: -1, stdout: "", stderr: error.localizedDescription)
+    }
+    let outData = stdout.fileHandleForReading.readDataToEndOfFile()
+    let errData = stderr.fileHandleForReading.readDataToEndOfFile()
+    proc.waitUntilExit()
+    return CaptureResult(
+      status: Int(proc.terminationStatus),
+      stdout: String(data: outData, encoding: .utf8) ?? "",
+      stderr: String(data: errData, encoding: .utf8) ?? ""
+    )
+  }
+
+  /// Merges simulator and local-device listings into runnable targets.
+  nonisolated private static func parseTargets(sim: CaptureResult, dev: CaptureResult) -> [RunTarget] {
+    var targets: [RunTarget] = []
+
+    if sim.status == 0, let data = sim.stdout.data(using: .utf8) {
+      let json = (try? JSONDecoder().decode(SimRoot.self, from: data)) ?? SimRoot(devices: [])
+      for device in json.devices {
+        targets.append(
+          RunTarget(
+            kind: "Simulator",
+            name: device.name,
+            mode: .simulator,
+            udid: device.udid,
+            detail: device.state
+          )
+        )
+      }
+    }
+
+    if dev.status == 0, let data = dev.stdout.data(using: .utf8) {
+      if let json = try? JSONDecoder().decode(DeviceListRoot.self, from: data) {
+        for udid in json.usbDevices {
+          targets.append(
+            RunTarget(kind: "USB", name: "USB Device", mode: .usb, udid: udid, detail: "connected")
+          )
+        }
+        for pairing in json.networkPairings where pairing.udid != nil {
+          targets.append(
+            RunTarget(
+              kind: "Network",
+              name: "Paired Device",
+              mode: .network,
+              udid: pairing.udid,
+              detail: "wireless pairing"
+            )
+          )
+        }
+      }
+    }
+
+    return targets.sorted { ($0.kind, $0.name.lowercased()) < ($1.kind, $1.name.lowercased()) }
+  }
+
+  /// Builds a short error note when a listing source failed, or nil when all succeeded.
+  nonisolated private static func summarizeErrors(sim: CaptureResult, dev: CaptureResult) -> String? {
+    var notes: [String] = []
+    if sim.status != 0 {
+      notes.append("simulators unavailable (\(sim.stderr)\(sim.stdout))")
+    }
+    if dev.status != 0 {
+      notes.append("device list unavailable (\(dev.stderr.isEmpty ? dev.stdout : dev.stderr))")
+    }
+    return notes.isEmpty ? nil : notes.joined(separator: "; ")
+  }
 }
 
 @main
@@ -233,11 +394,84 @@ struct RootView: View {
     VStack(alignment: .leading, spacing: 12) {
       toolbar
       Divider()
+      deviceSection
+      Divider()
       statusLine
       logView
     }
     .padding(12)
-    .frame(minWidth: 560, minHeight: 360)
+    .frame(minWidth: 620, minHeight: 520)
+    .onAppear {
+      runner.refreshDevices()
+    }
+  }
+
+  private var deviceSection: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      HStack {
+        Text("Devices to run on")
+          .font(.headline)
+        Spacer()
+        if runner.isRefreshingDevices {
+          ProgressView().controlSize(.small)
+        }
+        Button("Refresh") { runner.refreshDevices() }
+          .disabled(runner.isRefreshingDevices)
+      }
+      if let error = runner.devicesError {
+        Text(error)
+          .font(.caption)
+          .foregroundColor(.secondary)
+      }
+      if runner.availableTargets.isEmpty {
+        Text("No devices found yet. Click Refresh.")
+          .font(.caption)
+          .foregroundColor(.secondary)
+      } else {
+        ScrollView(.vertical) {
+          LazyVStack(spacing: 2) {
+            ForEach(runner.availableTargets) { target in
+              HStack(spacing: 8) {
+                Text(target.kind)
+                  .font(.caption2)
+                  .padding(.horizontal, 5)
+                  .padding(.vertical, 1)
+                  .background(kindColor(target.kind))
+                  .clipShape(Capsule())
+                Text(target.name)
+                  .lineLimit(1)
+                Text(target.udid ?? target.detail)
+                  .font(.caption)
+                  .foregroundColor(.secondary)
+                  .lineLimit(1)
+                Spacer()
+                if target.kind != "Simulator" {
+                  Text(target.detail)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                }
+                Button("Run") { runner.run(on: target) }
+                  .disabled(runner.isRunning)
+                  .buttonStyle(.bordered)
+                  .controlSize(.small)
+              }
+              .frame(maxWidth: .infinity, alignment: .leading)
+            }
+          }
+        }
+        .frame(maxHeight: 130)
+      }
+    }
+    .padding(8)
+    .background(Color.black.opacity(0.03), in: RoundedRectangle(cornerRadius: 6))
+  }
+
+  private func kindColor(_ kind: String) -> Color {
+    switch kind {
+    case "Simulator": return .blue.opacity(0.2)
+    case "USB": return .green.opacity(0.2)
+    default: return .orange.opacity(0.2)
+    }
   }
 
   private var toolbar: some View {

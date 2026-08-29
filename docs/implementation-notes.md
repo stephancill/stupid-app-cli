@@ -18,6 +18,24 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
 
+The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
+
+## 2026-08-29 - GUI device list and refresh
+
+- Added a refreshable "Devices to run on" panel to the GUI that merges simulators, USB-attached
+  devices, and network-paired devices, with a per-row **Run** action.
+- CLI: added `--json` machine-readable output to `stupid-app simulators`
+  (`{"runtimes":[…],"devices":[{"name","udid","state","runtimeIdentifier"}]}`) and
+  `stupid-app device list`
+  (`{"usbDevices":[…],"networkPairings":[{"identifier","udid"}]}`). Human output is unchanged.
+- GUI: `CommandRunner.refreshDevices()` runs both listing commands off the main thread and
+  merges them into `availableTargets`; `run(on:)` sets the transport mode + UDID from the
+  selected row and re-invokes the CLI. The list auto-loads on launch and via a **Refresh**
+  button. Verified the running GUI produced the merged list (simulators with state, USB, and
+  the network pairing). Temporarily-inserted diagnostics were removed.
+- Updated the bundled CLI skill reference (`simulators --json`, `device list --json`, and the
+  GUI device list) and re-ran skill validation.
+
 ## 2026-08-29 - Native macOS GUI (`stupid-app gui`)
 
 ### Summary

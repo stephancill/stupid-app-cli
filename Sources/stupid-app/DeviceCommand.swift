@@ -23,32 +23,58 @@ struct DeviceListCommand: AsyncParsableCommand {
   @Option(name: .customLong("home"), help: "Credential store directory.")
   var home: String?
 
+  @Flag(name: .customLong("json"), help: "Print machine-readable JSON instead of a human summary.")
+  var json = false
+
   mutating func run() throws {
     let homeURL =
       home.map { URL(fileURLWithPath: $0) }
       ?? FileManager.default.homeDirectoryForCurrentUser
       .appendingPathComponent(".stupid-app/credentials", isDirectory: true)
 
-    print("USB devices:")
+    let pairingDirectory = homeURL.appendingPathComponent("pairing", isDirectory: true)
+    let pairingRecords = (try? RemotePairing.savedPairings(in: pairingDirectory)) ?? []
+
+    let usbUDIDs: [String]
+    let usbError: String?
     do {
       let discovery = USBMuxClient(address: usbmuxAddress)
-      let udids = try discovery.usbDeviceUDIDs()
-      if udids.isEmpty {
-        print("  (none connected)")
-      } else {
-        for udid in udids { print("  \(udid)") }
-      }
+      usbUDIDs = try discovery.usbDeviceUDIDs()
+      usbError = nil
     } catch {
-      print("  (unavailable: \(error))")
+      usbUDIDs = []
+      usbError = String(describing: error)
+    }
+
+    if json {
+      let payload = DeviceListJSON(
+        usbDevices: usbUDIDs,
+        usbError: usbError,
+        networkPairings: pairingRecords.map {
+          NetworkPairingJSON(identifier: $0.identifier, udid: $0.udid)
+        }
+      )
+      let encoder = JSONEncoder()
+      encoder.outputFormatting = [.sortedKeys]
+      print(String(data: try encoder.encode(payload), encoding: .utf8) ?? "{}")
+      return
+    }
+
+    print("USB devices:")
+    if usbUDIDs.isEmpty {
+      print("  (none connected)")
+    } else {
+      for udid in usbUDIDs { print("  \(udid)") }
+    }
+    if let usbError {
+      print("  (unavailable: \(usbError))")
     }
 
     print("Saved network pairing records:")
-    let pairingDirectory = homeURL.appendingPathComponent("pairing", isDirectory: true)
-    let saved = (try? RemotePairing.savedPairings(in: pairingDirectory)) ?? []
-    if saved.isEmpty {
+    if pairingRecords.isEmpty {
       print("  (none)")
     } else {
-      for record in saved {
+      for record in pairingRecords {
         if let udid = record.udid {
           print("  \(record.identifier) -> \(udid)")
         } else {
@@ -56,6 +82,17 @@ struct DeviceListCommand: AsyncParsableCommand {
         }
       }
     }
+  }
+
+  private struct DeviceListJSON: Encodable {
+    var usbDevices: [String]
+    var usbError: String?
+    var networkPairings: [NetworkPairingJSON]
+  }
+
+  private struct NetworkPairingJSON: Encodable {
+    var identifier: String
+    var udid: String?
   }
 }
 

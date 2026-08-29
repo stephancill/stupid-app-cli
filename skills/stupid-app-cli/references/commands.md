@@ -42,7 +42,9 @@ stupid-app gui
 Opens the native macOS desktop GUI. A macOS-only SwiftUI app (the `stupid-app-gui`
 executable, launched next to `stupid-app`) exposes a native menu bar and toolbar that
 execute the CLI commands (Doctor, Build, and Run — USB/Network/Simulator) by spawning the
-CLI as a subprocess and streaming stdout/stderr into a live log pane. Includes a project
+CLI as a subprocess and streaming stdout/stderr into a live log pane. It also lists the
+runnable devices (simulators, USB-attached, and network-paired devices) with a
+**Refresh** button, and each device row runs on that selected target. Includes a project
 directory picker and a Stop control; on non-macOS hosts the subcommand is not registered.
 
 ## doctor
@@ -148,7 +150,7 @@ Lists or registers App Store Connect devices. `--name` defaults to `iPhone`.
 ## device
 
 ```text
-stupid-app device list [--usbmux <addr>] [--home <dir>]
+stupid-app device list [--usbmux <addr>] [--home <dir>] [--json]
 stupid-app device pair --usb [--udid <udid>] [--sudo <path>] [--usbmux <addr>] [--timeout <sec>] [--replace-lockdown-record] [--home <dir>]
 stupid-app device crash [--path <file>] [--udid <udid>] [--filter <name>] [--network] [--sudo <path>] [--json] [--home <dir>]
 ```
@@ -156,6 +158,8 @@ stupid-app device crash [--path <file>] [--udid <udid>] [--filter <name>] [--net
 `device list` prints the locally known devices: USB-attached UDIDs (best-effort via
 usbmuxd) and each saved network pairing record with its device UDID when a mapping
 exists, surfacing unmapped records that still need a fresh `device pair --usb`.
+`--json` emits `{"usbDevices":[...],"usbError":"…","networkPairings":[{"identifier":"…","udid":"…"}]}`
+for machine consumption (used by the GUI device list).
 
 `device pair` bootstraps lockdown trust natively and then CoreDevice remote pairing over
 USB. `--usbmux` accepts a Unix socket or `HOST:PORT`. `--timeout` defaults to 30
@@ -207,10 +211,13 @@ Builds, signs once (Apple Development), packages, installs, and launches.
 ## simulators
 
 ```text
-stupid-app simulators
+stupid-app simulators [--json]
 ```
 
-Lists simulator runtimes and devices (macOS Xcode-present).
+Lists simulator runtimes and devices (macOS Xcode-present). `--json` prints a
+machine-readable object (`{"runtimes":[...],"devices":[...]}`) with each device's
+`name`, `udid`, `state`, and `runtimeIdentifier`; the GUI uses this for its refreshed
+device list.
 
 ## release
 
