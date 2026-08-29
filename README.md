@@ -60,6 +60,7 @@ Without this step the CLI works identically; the skill only adds agent guidance.
 ```text
 stupid-app --version              Print the product and toolchain version
 stupid-app doctor                  Check toolchain, SDK, signer, credentials, and device dependencies
+stupid-app gui                     (macOS) open the native desktop GUI (toolbar + menus)
 stupid-app new <name>              Scaffold a SwiftPM/SwiftUI iOS project
 stupid-app sdk export ...          (macOS) export a device-only Swift SDK bundle
 stupid-app sdk import <archive>    (Linux) validate and install an SDK bundle

@@ -521,7 +521,9 @@ implemented so far: `new`, `sdk export`, `sdk import`, `build`, `credentials add
 `device pair --usb`, `run --network`, `run --simulator`, `run --mac`, `simulators`,
 `release archive`, `release upload --wait`, `release new-build`, `release bump`,
 `release status`, and
-`doctor`. `release new-build` queries App Store Connect for the most recently uploaded
+`doctor`. A native macOS desktop GUI (`stupid-app gui`) is also implemented;
+it is macOS-only and executes Doctor/Build/Run by spawning the current
+`stupid-app` binary as a subprocess with a live log pane. `release new-build` queries App Store Connect for the most recently uploaded
 build number (or takes an explicit `--build-number` base) and suggests the next integer.
 `release bump` increments (or sets with `--build-number`) `CFBundleVersion` across the
 app's `Info.plist` and every bundled extension's plist in lockstep, so a deep release

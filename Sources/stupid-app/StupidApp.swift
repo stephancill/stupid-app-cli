@@ -10,7 +10,12 @@ struct StupidApp: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "stupid-app",
     abstract: "Build, sign, deploy, and release iOS apps without Xcode.",
-    subcommands: [
+    subcommands: StupidApp.subcommands
+  )
+
+  /// The registered subcommand types. `gui` is macOS-only.
+  private static var subcommands: [ParsableCommand.Type] {
+    var commands: [ParsableCommand.Type] = [
       DoctorCommand.self,
       NewCommand.self,
       SDKCommand.self,
@@ -24,7 +29,11 @@ struct StupidApp: AsyncParsableCommand {
       ReleaseCommand.self,
       CoreDeviceHelperCommand.self,
     ]
-  )
+    #if os(macOS)
+    commands.append(GUICommand.self)
+    #endif
+    return commands
+  }
 
   @Flag(name: .shortAndLong, help: "Print version information and exit.")
   var version = false

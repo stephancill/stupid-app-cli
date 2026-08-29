@@ -18,7 +18,40 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
 
-## 2026-08-29 - TestFlight Control-Plane And Release Preflight Implemented
+## 2026-08-29 - Native macOS GUI (`stupid-app gui`)
+
+### Summary
+
+- Added a native macOS desktop GUI, `stupid-app gui`. It is Mac-only and registered as a
+  subcommand only when building on macOS, so the packaged CLI still compiles unchanged on
+  Linux (all AppKit/SwiftUI code is behind `#if os(macOS)` in `Sources/stupid-app/GUICommand.swift`).
+- Minimal surface per the requested scope: a toolbar with **Doctor**, **Build**, and **Run**
+  (USB / Network / Simulator transport picker with an optional `--udid`), a project directory
+  picker, a status indicator, and a live monospaced log pane with auto-scroll and clear/stop.
+- Commands are executed by spawning the current `stupid-app` binary as a subprocess with the
+  exact CLI arguments (`build`, `run --usb`, `run --network --udid …`, `doctor`, …), streaming
+  stdout/stderr into the log and forwarding termination/cancellation. The binary path is
+  resolved via `Bundle.main.executableURL` (falling back to `argv[0]`) so an install run from
+  PATH self-spawns correctly.
+- The GUI is intentionally thin: it adds no command logic and cannot diverge from the CLI
+  surface. The app menu bar (Actions → Doctor / Build / Run) and the in-view toolbar share one
+  `CommandRunner` (`@MainActor` `ObservableObject`).
+
+### Verification
+
+- `swift build --product stupid-app` succeeds on macOS; the `--help` output lists `gui`.
+- Launched `.build/debug/stupid-app gui`; the AppKit event loop stays running (no early exit).
+- `swift test --filter StupidAppTests` passes (18 tests in 5 suites); full suite run
+  recommended before release.
+- Skill-creator validation passes after updating the bundled CLI skill reference.
+
+### Notes / follow-ups
+
+- The GUI window/layout was smoke-tested for launch, not driven visually end-to-end.
+- Future GUI scope (credentials/signing setup, release controls, external beta) can be added
+  as additional subprocess actions without changing the subprocess model.
+
+## 2026-08-29 - TestFlight Control Plane And Release Preflight Implemented
 
 ### Release Workflow Follow-Up
 

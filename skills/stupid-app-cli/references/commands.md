@@ -26,12 +26,25 @@ stupid-app --version   # -v: print the product version + host Swift compiler lin
 stupid-app <subcommand>
 ```
 
-Subcommands: `doctor`, `new`, `sdk`, `build`, `credentials`, `signing`,
+Subcommands: `doctor`, `gui`, `new`, `sdk`, `build`, `credentials`, `signing`,
 `devices`, `device`, `run`, `simulators`, `release`, `coredevice-helper`.
 
 `coredevice-helper` is the privileged native CoreDevice subcommand; it is
 normally invoked by `run`/`device pair` with `--sudo` and should not be called
-directly.
+directly. `gui` is macOS-only.
+
+## gui
+
+```text
+stupid-app gui
+```
+
+Opens the native macOS desktop GUI. A macOS-only SwiftUI/AppKit app exposes a
+toolbar and menu bar that execute the CLI commands (Doctor, Build, and Run —
+USB/Network/Simulator) by spawning the current `stupid-app` binary as a
+subprocess and streaming stdout/stderr into a live log pane. Include a project
+directory picker and a Stop control; on non-macOS hosts the subcommand is not
+registered. Use the toolbar or the Actions/Run menu when driving the app.
 
 ## doctor
 
