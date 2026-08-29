@@ -49,6 +49,11 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 - Environment: pruned local simulators down to just `NoFeedSocial iOS 26.3`
   (UDID `6552DF1D-95CE-48E3-801F-8F80F0AA8D29`, the project-preferred simulator); the other
   17 simulator devices were removed via `xcrun simctl delete`.
+- Fix: physical-device runs (USB / network) from the GUI now pass the CLI's explicit
+  `--sudo /usr/bin/sudo` boundary for `run`. On macOS the helper's TUN/usbmux work runs
+  under the scoped NOPASSWD sudoers rule for the exact binary, and without `--sudo` the
+  network run failed with `CoreDevice tunnel TUN failed (public error code 2)`. Simulator
+  runs are unchanged (no sudo).
 
 ## 2026-08-29 - Native macOS GUI (`stupid-app gui`)
 

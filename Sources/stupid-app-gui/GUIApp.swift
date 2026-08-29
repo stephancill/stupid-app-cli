@@ -111,7 +111,7 @@ final class CommandRunner: ObservableObject {
     run(on: target)
   }
 
-  /// Runs on a specific device target from the device list or dropdown.
+  /// Runs on a specific device target from the dropdown or device list.
   func run(on target: RunTarget) {
     var args = ["run"]
     switch target.mode {
@@ -124,6 +124,13 @@ final class CommandRunner: ObservableObject {
     }
     if let udid = target.udid {
       args += ["--udid", udid]
+    }
+    // Physical-device deployment owns the privileged TUN/usbmux work in the
+    // `coredevice-helper` subcommand, which runs under the CLI's explicit `--sudo`
+    // boundary (macOS network + USB both create a utun / route and need it). Without it
+    // the helper cannot create the tunnel, so pass the documented sudo path here.
+    if target.mode != .simulator {
+      args += ["--sudo", "/usr/bin/sudo"]
     }
     start(arguments: args, label: "run on \(target.name)")
   }

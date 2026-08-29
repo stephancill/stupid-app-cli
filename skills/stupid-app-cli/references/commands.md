@@ -45,8 +45,9 @@ execute the CLI commands (Doctor, Build, and the selected device's Run) by spawn
 CLI as a subprocess and streaming stdout/stderr into a live log pane. A device-selection
 dropdown (with a refresh button beside it) picks the run target across simulators,
 USB-attached, and network-paired devices; transport mode and UDID are derived from the
-chosen device. Includes a project directory picker and a Stop control; on non-macOS hosts
-the subcommand is not registered.
+chosen device, and physical-device runs pass the CLI's explicit `--sudo` boundary (the
+TUN/usbmux helper must run privileged). Includes a project directory picker and a Stop
+control; on non-macOS hosts the subcommand is not registered.
 
 ## doctor
 
