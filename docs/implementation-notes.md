@@ -20,6 +20,22 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
 
+## 2026-08-29 - Release 0.0.12
+
+`stupid-app 0.0.12` ships the native macOS desktop GUI and its device tooling. A new
+`stupid-app gui` subcommand launches a standalone SwiftUI desktop app (`stupid-app-gui`)
+that runs the CLI commands as subprocesses with live output, lists runnable devices
+(simulators, USB, network-paired) with refresh, and runs on a selected device. It also
+fixes the physical-device path: the GUI passes the CLI's explicit `--sudo` boundary so
+the privileged `coredevice-helper` can create the TUN for network/USB runs on macOS.
+
+Release verification: `swift build -c release` succeeded and produced arm64
+`stupid-app` (`8dd92bfa350628b691a2f07d30166f35ccce72d8f944db56d08aa82302392445`) and
+`stupid-app-gui` (`e093111043972127048ab025ec98a463a15d718ee115b46eef77073765c1d083`);
+the CLI reports `0.0.12`. The release ships both versionless assets
+(`stupid-app-macos-arm64`, `stupid-app-gui-macos-arm64`) so `stupid-app gui` finds its
+companion beside the CLI; README and the release process were updated to install both.
+
 ## 2026-08-29 - GUI device list and refresh
 
 - Added a refreshable "Devices to run on" panel to the GUI that merges simulators, USB-attached

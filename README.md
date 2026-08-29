@@ -11,16 +11,22 @@ App Store Connect through the public API. It runs on macOS and Linux.
 
 ### macOS (Apple Silicon)
 
-Download the `stupid-app-macos-arm64` binary from the
-[releases page](https://github.com/stephancill/stupid-app-cli/releases) and put it on
-your `PATH`:
+Download the `stupid-app-macos-arm64` and `stupid-app-gui-macos-arm64` binaries
+from the [releases page](https://github.com/stephancill/stupid-app-cli/releases) and
+put them on your `PATH` (keep them in the same directory):
 
 ```bash
 curl -fsSL -o /usr/local/bin/stupid-app \
   https://github.com/stephancill/stupid-app-cli/releases/latest/download/stupid-app-macos-arm64
-chmod +x /usr/local/bin/stupid-app
+curl -fsSL -o /usr/local/bin/stupid-app-gui \
+  https://github.com/stephancill/stupid-app-cli/releases/latest/download/stupid-app-gui-macos-arm64
+chmod +x /usr/local/bin/stupid-app /usr/local/bin/stupid-app-gui
 stupid-app --version
 ```
+
+`stupid-app gui` (macOS-only) launches the desktop GUI; it discovers the companion
+`stupid-app-gui` binary next to the `stupid-app` executable, so keep the two files in
+the same directory.
 
 ### Linux
 

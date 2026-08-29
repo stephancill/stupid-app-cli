@@ -145,22 +145,25 @@ Publishing a new `stupid-app` version:
    push: `git tag -a v<version> -m "stupid-app <version>" && git push origin v<version>`.
 5. Create the GitHub release with **versionless asset names** so the install
    instructions in `README.md` never pin a version and require an update. Build the
-   binary to a filename without the version, e.g. `stupid-app-macos-arm64`, and attach
-   it under that exact name:
+   binaries to filenames without the version and attach them under those exact names —
+   the CLI ships together with its companion macOS GUI (`stupid-app-gui`) so
+   `stupid-app gui` can find it beside `stupid-app`:
 
    ```bash
-   gh release create v<version> /tmp/stupid-app-macos-arm64 \
+   gh release create v<version> /tmp/stupid-app-macos-arm64 /tmp/stupid-app-gui-macos-arm64 \
      --title "stupid-app v<version> for Apple Silicon macOS" --notes "..."
    ```
 
-   The README install command uses
-   `releases/latest/download/stupid-app-macos-arm64`; because the asset name carries no
-   version, the `latest` download keeps working across releases without editing the
-   README. Keep the asset name stable (`stupid-app-macos-arm64`) on every release.
-6. Update the local installation from the published release asset using an atomic
-   replacement, then verify both the reported version and checksum. Download to a
-   sibling `.new` path, set it executable, verify it before replacement, and only
-   then rename it over `~/.local/bin/stupid-app`:
+   The README install commands use
+   `releases/latest/download/stupid-app-macos-arm64` and
+   `releases/latest/download/stupid-app-gui-macos-arm64`; because the asset names carry
+   no version, the `latest` download keeps working across releases without editing the
+   README. Keep the asset names stable (`stupid-app-macos-arm64`,
+   `stupid-app-gui-macos-arm64`) on every release.
+6. Update the local installation from the published release assets using an atomic
+   replacement, then verify both the reported version and checksum. Download each asset
+   to a sibling `.new` path, set it executable, verify it before replacement, and only
+   then rename it over `~/.local/bin/stupid-app` (and `~/.local/bin/stupid-app-gui`):
 
    ```bash
    curl -fL https://github.com/stephancill/stupid-app-cli/releases/latest/download/stupid-app-macos-arm64 \
@@ -169,11 +172,16 @@ Publishing a new `stupid-app` version:
    ~/.local/bin/stupid-app.new --version
    shasum -a 256 ~/.local/bin/stupid-app.new
    mv ~/.local/bin/stupid-app.new ~/.local/bin/stupid-app
+   curl -fL https://github.com/stephancill/stupid-app-cli/releases/latest/download/stupid-app-gui-macos-arm64 \
+     -o ~/.local/bin/stupid-app-gui.new
+   chmod 755 ~/.local/bin/stupid-app-gui.new
+   shasum -a 256 ~/.local/bin/stupid-app-gui.new
+   mv ~/.local/bin/stupid-app-gui.new ~/.local/bin/stupid-app-gui
    stupid-app --version
-   shasum -a 256 ~/.local/bin/stupid-app
+   shasum -a 256 ~/.local/bin/stupid-app ~/.local/bin/stupid-app-gui
    ```
 
-   Confirm the installed checksum matches the asset built and uploaded in step 5.
+   Confirm the installed checksums match the assets built and uploaded in step 5.
 
 The bundled CLI skill (`skills/stupid-app-cli/`) ships with the CLI binary
 (`skills/stupid-app-cli/` documents the command surface via `references/commands.md`);
