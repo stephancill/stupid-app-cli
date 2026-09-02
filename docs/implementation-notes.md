@@ -20,6 +20,21 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
 
+## 2026-09-02 - Release 0.0.13
+
+`stupid-app 0.0.13` is a signing fix release. `EntitlementDeriver` now expands all
+three Xcode build tokens (`$(AppIdentifierPrefix)`, `$(TeamIdentifierPrefix)`,
+`$(CFBundleIdentifier)`) instead of only the app-identifier prefix, and String
+entitlements are authorized against the same trailing-`.*` wildcard grant the
+array branch already used. This unblocks signing the
+`com.apple.developer.ubiquity-kvstore-identifier` (iCloud Key-Value Storage)
+entitlement, whose distribution profile grants the team-wide wildcard container.
+
+Release verification: `swift build -c release` succeeded; the CLI reports
+`0.0.13`; the `EntitlementDeriverTests` suite passes (7 tests, including the two
+new ubiquity cases). No CLI surface, README, or skill changes were required for
+this release.
+
 ## 2026-09-02 - iCloud Key-Value entitlements sign correctly
 
 `EntitlementDeriver` expanded only the `$(AppIdentifierPrefix)` build token and
