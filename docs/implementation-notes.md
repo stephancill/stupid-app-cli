@@ -20,7 +20,30 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
 
-## 2026-08-29 - Release 0.0.12
+## 2026-09-02 - iCloud Key-Value entitlements sign correctly
+
+`EntitlementDeriver` expanded only the `$(AppIdentifierPrefix)` build token and
+authorized an entitlement only when a profile value matched exactly (or, for
+arrays, against a trailing `.*` wildcard). This blocked signing the
+`com.apple.developer.ubiquity-kvstore-identifier` entitlement: source value
+`$(TeamIdentifierPrefix)$(CFBundleIdentifier)` was emitted verbatim and the
+distribution profile grants the team-wide wildcard container, so the strict
+String comparison failed even though `codesign` accepts the concrete value.
+
+Changes:
+
+- `expandBuildPrefix` generalised to `expandBuildTokens`, also substituting
+  `$(TeamIdentifierPrefix)` and `$(CFBundleIdentifier)`.
+- String entitlement authorization now consults the same wildcard matcher the
+  array branch uses, so a profile grant like `TEAM.*` authorises a concrete
+  `TEAM.<...>` value (matching how codesign honours trailing-`.*` grants).
+- The profile-authorisation gate still fails loudly for a key the profile does
+  not grant at all.
+
+Added two `EntitlementDeriverTests` (ubiquity token expansion + wildcard String
+grant, and the not-authorised failure), ran the deriver test suite (7 passing),
+rebuilt the release binary, and verified an end-to-end distribution archive now
+signs with the iCloud entitlement embedded.
 
 `stupid-app 0.0.12` ships the native macOS desktop GUI and its device tooling. A new
 `stupid-app gui` subcommand launches a standalone SwiftUI desktop app (`stupid-app-gui`)

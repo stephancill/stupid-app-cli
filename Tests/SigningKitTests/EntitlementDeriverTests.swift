@@ -177,4 +177,72 @@ struct EntitlementDeriverTests {
       "TEAM123.net.stupidtech.widgets.extension",
     ])
   }
+
+  @Test("iCloud ubiquity kvstore expands tokens and matches a team wildcard string")
+  func ubiquityKVStoreWildcardString() throws {
+    let tmps = FileManager.default.temporaryDirectory
+      .appendingPathComponent("deriver-ubiquity-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: tmps, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tmps) }
+
+    let source = tmps.appendingPathComponent("App.entitlements")
+    try writePlist([
+      "com.apple.developer.ubiquity-kvstore-identifier":
+        "$(TeamIdentifierPrefix)$(CFBundleIdentifier)",
+    ], to: source)
+
+    // A distribution profile authorizes the team-wide wildcard container.
+    let profile = MobileProvisionParser.ProvisioningProfile(plist: [
+      "Entitlements": [
+        "com.apple.developer.ubiquity-kvstore-identifier": "TEAM123.*",
+        "application-identifier": "TEAM123.net.stupidtech.widgets",
+        "com.apple.developer.team-identifier": "TEAM123",
+        "get-task-allow": false,
+      ]
+    ])
+
+    let derived = try EntitlementDeriver.derive(
+      sourceURL: source,
+      configuration: .distribution,
+      bundleID: "net.stupidtech.widgets",
+      profile: profile,
+      teamID: "TEAM123"
+    )
+    // Tokens expand to concrete identifiers and the value matches the wildcard grant.
+    #expect((derived["com.apple.developer.ubiquity-kvstore-identifier"] as? String) ==
+      "TEAM123.net.stupidtech.widgets")
+  }
+
+  @Test("ubiquity string token still fails loudly when not authorized")
+  func ubiquityKVStoreNotAuthorized() throws {
+    let tmps = FileManager.default.temporaryDirectory
+      .appendingPathComponent("deriver-ubiquity-missing-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: tmps, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tmps) }
+
+    let source = tmps.appendingPathComponent("App.entitlements")
+    try writePlist([
+      "com.apple.developer.ubiquity-kvstore-identifier": "TEAM123.net.stupidtech.widgets",
+    ], to: source)
+
+    // Profile has no iCloud grant at all -> loud failure.
+    let profile = MobileProvisionParser.ProvisioningProfile(plist: [
+      "Entitlements": [
+        "application-identifier": "TEAM123.net.stupidtech.widgets",
+        "com.apple.developer.team-identifier": "TEAM123",
+        "get-task-allow": false,
+      ]
+    ])
+
+    #expect(throws: EntitlementDeriver.Error.notAuthorizedByProfile(
+      "com.apple.developer.ubiquity-kvstore-identifier")) {
+      _ = try EntitlementDeriver.derive(
+        sourceURL: source,
+        configuration: .distribution,
+        bundleID: "net.stupidtech.widgets",
+        profile: profile,
+        teamID: "TEAM123"
+      )
+    }
+  }
 }

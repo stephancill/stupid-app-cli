@@ -70,11 +70,11 @@ public enum EntitlementDeriver {
         derived["application-identifier"] = applicationIdentifier
         derived["com.apple.developer.team-identifier"] = teamID
 
-        // Expand the Xcode build token to the concrete team prefix. This pipeline signs
-        // on its own and does not run an Xcode build-setting expansion, so a literal
-        // `$(AppIdentifierPrefix)` in keychain-access-groups would otherwise be signed
-        // verbatim.
-        derived = expandBuildPrefix(in: derived, teamID: teamID)
+        // Expand Xcode build tokens to concrete values. This pipeline signs
+        // on its own and does not run an Xcode build-setting expansion, so a
+        // literal `$(AppIdentifierPrefix)`/`$(TeamIdentifierPrefix)`/
+        // `$(CFBundleIdentifier)` would otherwise be signed verbatim.
+        derived = expandBuildTokens(in: derived, teamID: teamID, bundleID: bundleID)
 
         // Reconcile: every requested entitlement must be authorized by the profile.
         let profileEntitlements = profile.entitlements
@@ -93,7 +93,7 @@ public enum EntitlementDeriver {
                     )
                 }
             } else if let profileString = profileValue as? String, let valueString = value as? String {
-                if profileString != valueString {
+                if !isAuthorized(pattern: profileString, value: valueString) {
                     throw Error.notAuthorizedByProfile("\(key) value mismatch")
                 }
             } else if let profileArray = profileValue as? [Any], let valueArray = value as? [Any] {
@@ -111,13 +111,17 @@ public enum EntitlementDeriver {
         return derived
     }
 
-    /// Recursively replaces `$(AppIdentifierPrefix)` with `<teamID>.` so entitlement
-    /// arrays reference the real keychain access group rather than an unexpanded token.
-    private static func expandBuildPrefix(in plist: [String: Any], teamID: String) -> [String: Any] {
-        let prefix = "$(AppIdentifierPrefix)"
+    /// Recursively replaces Xcode build tokens (`$(AppIdentifierPrefix)`,
+    /// `$(TeamIdentifierPrefix)`, `$(CFBundleIdentifier)`) with their concrete
+    /// values so entitlement values reference real identifiers rather than
+    /// unexpanded tokens.
+    private static func expandBuildTokens(in plist: [String: Any], teamID: String, bundleID: String) -> [String: Any] {
         func expand(_ value: Any) -> Any {
             if let string = value as? String {
-                return string.replacingOccurrences(of: prefix, with: teamID + ".")
+                return string
+                    .replacingOccurrences(of: "$(AppIdentifierPrefix)", with: teamID + ".")
+                    .replacingOccurrences(of: "$(TeamIdentifierPrefix)", with: teamID + ".")
+                    .replacingOccurrences(of: "$(CFBundleIdentifier)", with: bundleID)
             }
             if let array = value as? [Any] {
                 return array.map(expand)
