@@ -20,6 +20,14 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
 
+## 2026-09-04 - Release 0.0.14
+
+`stupid-app 0.0.14` adds per-bundle capability derivation and Push Notifications signing
+`EntitlementDeriver` now reconciles `aps-environment` per configuration; `signing setup` enables
+capabilities per bundle from that bundle's own entitlements, including `PUSH_NOTIFICATIONS`. Built as
+a release binary (`swift build -c release` -> `stupid-app` reporting `0.0.14`) and installed locally
+for wallet notification provisioning. Full test suite: 288 tests / 51 suites.
+
 ## 2026-09-04 - Per-Bundle Capabilities And Push Notifications Signing
 
 ### Summary
