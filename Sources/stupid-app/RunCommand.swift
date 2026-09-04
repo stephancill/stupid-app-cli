@@ -384,11 +384,9 @@ struct RunCommand: AsyncParsableCommand {
     // docs/macos-host-support-scope.md. For deep apps (with bundled extensions), each
     // nested .appex is ad-hoc signed leaf-first so the simulator can load the widget
     // extension, then the containing app seals the signed appex.
-    // Project entitlements are embedded during this ad-hoc pass so keychain access groups
-    // and App Groups actually work on the simulator (without them, keychain reads return
-    // errSecMissingEntitlement -34018). `$(AppIdentifierPrefix)` has no team value on the
-    // simulator, so it is substituted with the relaxed `default` token that iOS accepts
-    // for ad-hoc local keychain groups.
+    // Project entitlements are sanitized during this ad-hoc pass. App Groups are kept so
+    // shared containers work on the simulator; team- and profile-gated entitlements are
+    // removed because an ad-hoc signature cannot satisfy them.
     let pluginsDir = appURL.appendingPathComponent("PlugIns", isDirectory: true)
     if FileManager.default.fileExists(atPath: pluginsDir.path),
       let appexes = try? FileManager.default.contentsOfDirectory(atPath: pluginsDir.path)
@@ -469,8 +467,16 @@ struct RunCommand: AsyncParsableCommand {
       dict["keychain-access-groups"] = nil
       // Entitlements granted by provisioning profiles cannot be satisfied by an ad-hoc
       // signature; embedding them makes SpringBoard reject the launch with "Security
-      // policy issue" (launchd POSIX 163).
-      dict["com.apple.developer.authentication-services.autofill-credential-provider"] = nil
+      // policy issue" (launchd POSIX 163). Capability enablement is intentionally open-
+      // ended, so this must cover the developer entitlement namespace rather than list
+      // individual capabilities such as AutoFill, Push, Siri, or Communication Notifications.
+      let profileGatedKeys = dict.keys.filter {
+        $0 == "application-identifier" || $0 == "aps-environment"
+          || $0.hasPrefix("com.apple.developer.")
+      }
+      for key in profileGatedKeys {
+        dict[key] = nil
+      }
       // The shared-container App Group is preserved, with any `$(AppIdentifierPrefix)`
       // token removed because there is no team prefix on the simulator.
       if let groups = dict["com.apple.security.application-groups"] as? [String] {

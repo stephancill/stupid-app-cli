@@ -272,8 +272,8 @@ host Swift differ.
   device/release pipeline; the real-certificate invariants for device and App Store
   builds are unchanged. Ad-hoc simulator signing uses the project-owned signer where
   feasible and `codesign -s -` only within this scoped exception. The ad-hoc pass embeds
-  a sanitized entitlement override: `keychain-access-groups` and profile-gated
-  capabilities such as `autofill-credential-provider` are dropped (a team-less keychain
+  a sanitized entitlement override: `keychain-access-groups`, `aps-environment`, and all
+  `com.apple.developer.*` capabilities are dropped (a team-less keychain
   group or an unsatisfied profile-gated entitlement makes SpringBoard reject the launch),
   while `com.apple.security.application-groups` is preserved for the shared container.
 - **Scoped Apple-tooling exception.** `simctl` is the one product use of Apple runtime

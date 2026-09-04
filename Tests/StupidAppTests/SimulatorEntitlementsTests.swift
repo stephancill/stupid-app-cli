@@ -13,26 +13,45 @@ struct SimulatorEntitlementsTests {
     ])
 
     #expect(override["keychain-access-groups"] == nil)
-    #expect((override["com.apple.security.application-groups"] as? [String])?.first
-      == "group.com.example")
+    #expect(
+      (override["com.apple.security.application-groups"] as? [String])?.first
+        == "group.com.example")
   }
 
-  @Test("drops profile-gated autofill-credential-provider")
-  func dropsProfileGatedAutofill() {
+  @Test("drops profile-gated developer capabilities")
+  func dropsProfileGatedDeveloperCapabilities() {
     let override = RunCommand.SimulatorEntitlements.sanitize([
       "com.apple.developer.authentication-services.autofill-credential-provider": true,
+      "com.apple.developer.siri": true,
+      "com.apple.developer.usernotifications.communication": true,
       "com.apple.security.application-groups": ["group.com.example"],
     ])
 
-    #expect(override["com.apple.developer.authentication-services.autofill-credential-provider"]
-      == nil)
+    #expect(
+      override["com.apple.developer.authentication-services.autofill-credential-provider"]
+        == nil)
+    #expect(override["com.apple.developer.siri"] == nil)
+    #expect(override["com.apple.developer.usernotifications.communication"] == nil)
     #expect(override["com.apple.security.application-groups"] != nil)
+  }
+
+  @Test("drops profile identity and push entitlements")
+  func dropsProfileIdentityAndPush() {
+    let override = RunCommand.SimulatorEntitlements.sanitize([
+      "application-identifier": "TEAM.com.example",
+      "aps-environment": "development",
+      "com.apple.developer.team-identifier": "TEAM",
+    ])
+
+    #expect(override["application-identifier"] == nil)
+    #expect(override["aps-environment"] == nil)
+    #expect(override["com.apple.developer.team-identifier"] == nil)
   }
 
   @Test("removes AppIdentifierPrefix from preserved app groups")
   func removesAppIdentifierPrefix() {
     let override = RunCommand.SimulatorEntitlements.sanitize([
-      "com.apple.security.application-groups": ["$(AppIdentifierPrefix)group.com.example"],
+      "com.apple.security.application-groups": ["$(AppIdentifierPrefix)group.com.example"]
     ])
 
     #expect(

@@ -1714,8 +1714,8 @@ requirement is still open. Summary:
   scoped exception for simulator output, never a device/release artifact), and
   boots/installs/launches through `xcrun simctl`. Simulator signing embeds a sanitized
   entitlement override (`SimulatorEntitlements`): `$(AppIdentifierPrefix)` is removed,
-  `keychain-access-groups` and profile-gated capabilities (e.g.
-  `autofill-credential-provider`) are dropped — a team-less keychain group or an
+  `keychain-access-groups`, `aps-environment`, and all `com.apple.developer.*`
+  capabilities are dropped — a team-less keychain group or an
   unsatisfied profile-gated entitlement otherwise makes SpringBoard reject the launch
   with "Security policy issue" — while `com.apple.security.application-groups` is kept
   for the shared container. Verified on this Mac: the app built, signed, installed, and

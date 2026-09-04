@@ -248,9 +248,9 @@ stupid-app run --simulator [--udid <udid>]
 
 Xcode-present-only. Lists runtimes/devices and builds for the simulator SDK,
 ad-hoc signs, boots, installs, and launches via `simctl`. Simulator ad-hoc
-signing embeds a sanitized entitlement override: `keychain-access-groups` and
-profile-gated capabilities such as `autofill-credential-provider` are dropped
-(they make SpringBoard reject the launch), while
+signing embeds a sanitized entitlement override: `keychain-access-groups`,
+`aps-environment`, and all `com.apple.developer.*` capabilities are dropped
+(they make SpringBoard reject the team-less launch), while
 `com.apple.security.application-groups` is preserved for the shared container.
 Simulator Keychain access groups are unavailable by design without a
 development identity.

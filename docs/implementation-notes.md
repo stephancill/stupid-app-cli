@@ -20,6 +20,50 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
 
+## 2026-09-04 - Release 0.0.16
+
+`stupid-app 0.0.16` fixes simulator launch rejection for apps carrying newly configured
+profile-gated capabilities. Team-less ad-hoc simulator signatures now remove
+`application-identifier`, `keychain-access-groups`, `aps-environment`, and all
+`com.apple.developer.*` entitlements while preserving App Groups. The release binary
+reports `0.0.16`; the full suite passes (295 tests / 51 suites), the deep wallet fixture
+installs and launches on the preferred simulator, and the bundled CLI skill validates.
+
+## 2026-09-04 - Simulator Launch Sanitizes Open-Ended Capabilities
+
+### Summary
+
+- Fixed `stupid-app run --simulator` rejecting an ad-hoc-signed app after Push, Siri,
+  and Communication Notifications entitlements were added. The installed bundle passed
+  deep strict signature verification, but simulator launchd rejected the process with
+  POSIX 163 (`Security policy issue`).
+- Root cause: simulator entitlement sanitization still removed only the previously
+  hardcoded AutoFill capability. The product's capability model is now open-ended, so
+  newly configured profile-gated entitlements remained in the team-less ad-hoc signature.
+- `SimulatorEntitlements.sanitize` now removes `application-identifier`,
+  `aps-environment`, and the complete `com.apple.developer.*` namespace, in addition to
+  `keychain-access-groups`. It continues to preserve
+  `com.apple.security.application-groups`, whose shared container behavior is qualified
+  on the simulator, and preserves unrelated non-profile-gated values.
+
+### Verification
+
+- A controlled re-sign of the failing deep app with only its App Group entitlement
+  launched successfully, isolating the failure from compilation, installation, nested
+  extension signing, and simulator state.
+- Added regressions for Push, Siri, Communication Notifications, AutoFill, profile/team
+  identity keys, App Groups, keychain groups, and unrelated values.
+- `swift format lint --strict` passes for the changed Swift files.
+- Focused simulator-entitlement tests pass (6 tests); the full suite passes (295 tests in
+  51 suites); debug and release builds succeed.
+- The source-built CLI rebuilt, ad-hoc signed, installed, and launched the original deep
+  app on the preferred simulator (PID returned). Deep strict signature verification
+  passes, the root signature contains only the preserved App Group entitlement, and the
+  accessibility tree exposes the running wallet UI.
+- The patched release binary was installed locally with an atomic replacement; rerunning
+  the original PATH-based command also installs and launches successfully.
+- The bundled CLI skill passes `quick_validate.py`.
+
 ## 2026-09-04 - Release 0.0.15
 
 `stupid-app 0.0.15` declares capability enablement per bundle in `stupid-app.yml`. The
