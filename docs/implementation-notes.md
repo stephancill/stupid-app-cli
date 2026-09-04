@@ -20,6 +20,17 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
 
+## 2026-09-04 - Release 0.0.15
+
+`stupid-app 0.0.15` declares capability enablement per bundle in `stupid-app.yml`. The
+hardcoded client-side capability map (`APP_GROUPS`, `AUTOFILL_CREDENTIAL_PROVIDER`,
+`PUSH_NOTIFICATIONS`) is replaced by optional per-bundle `capabilities:` lists on the app and
+each extension, mapping source entitlement keys to App Store Connect capability types, so
+supported capability types stay open with no CLI change and an undeclared capability fails
+loudly at the profile-authorization gate. Built as a release binary (`swift build -c release`
+-> `stupid-app` reporting `0.0.15`); the scaffold emits a commented `capabilities:` example.
+Full test suite: 294 tests / 51 suites.
+
 ## 2026-09-04 - Config-Driven Capability Enablement In `stupid-app.yml`
 
 `signing setup` capability enablement is now declared per bundle in `stupid-app.yml` instead of
