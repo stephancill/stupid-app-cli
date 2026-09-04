@@ -20,6 +20,42 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
 
+## 2026-09-04 - Config-Driven Capability Enablement In `stupid-app.yml`
+
+`signing setup` capability enablement is now declared per bundle in `stupid-app.yml` instead of
+a hardcoded client-side map.
+
+### Summary
+
+- Removed the hardcoded `SigningCapability` map (App Groups, AutoFill Credential Provider, Push
+  Notifications) from `SigningSetupCommand`.
+- Added a `CapabilityConfig` model and an optional `capabilities:` list to `stupid-app.yml`, on
+  the app and on each extension: each entry maps a source entitlement key to the App Store
+  Connect capability type to enable on that bundle ID.
+- `signing setup` now enables every capability declared for a bundle (per-bundle, no union
+  across the app and extensions, and no entitlement-plist scanning at setup time). A capability
+  whose source entitlement is signed without a matching `capabilities:` entry fails loudly at
+  the profile-authorization gate during signing — the declaration is required, not defaulted.
+- `stupid-app.yml` validation rejects empty capability entitlement keys/types and duplicate
+  entitlement keys within one bundle.
+- The scaffold's generated `stupid-app.yml` now carries a commented `capabilities:` example.
+- Migrated the consumer `stupid-wallet-2` project's `stupid-app.yml` to declare Push
+  Notifications on the app and App Groups on the app and both extensions.
+
+### Why
+
+Capability enablement previously required a CLI code change to add or alter a mapping. Moving
+the specification into the project config keeps the supported capability set open at the
+configuration level, consistent with the profile-gated pass-through signing model.
+
+### Verification
+
+- `swift test` passes: 294 tests / 51 suites, 0 failures (6 new `AppConfigTests` covering
+  app/extension capability decoding, empty-field rejection, and duplicate-key rejection).
+- For a project that declares the same mappings the previous code enabled implicitly, setup
+  behavior is unchanged; the only behavioral change is that an undeclared capability is no
+  longer enabled and instead fails loudly at signing.
+
 ## 2026-09-04 - Release 0.0.14
 
 `stupid-app 0.0.14` adds per-bundle capability derivation and Push Notifications signing

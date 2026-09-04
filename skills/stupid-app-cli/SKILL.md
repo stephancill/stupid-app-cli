@@ -81,8 +81,8 @@ stupid-app signing setup --key-id <id> --issuer-id <id> --p8 <key.p8> --team-id 
 defaults to both distribution and development; development runs only when
 `--udid` is given. When run in a project directory, `--bundle-id` defaults to
 all bundle IDs in `stupid-app.yml` (the app plus every configured extension), and
-the `APP_GROUPS` capability is enabled per bundle when the project declares app
-groups. ASC credentials may also come from environment
+each bundle's declared `capabilities:` entries are enabled on that bundle ID via
+the API. ASC credentials may also come from environment
 variables `ASC_API_KEY_ID`, `ASC_API_ISSUER_ID`, `ASC_API_KEY_PATH`, and
 `DEVELOPER_TEAM_ID`.
 
@@ -160,6 +160,16 @@ iconPath: Resources/AppIcon.png
 #     infoPath: WidgetExtension-Info.plist
 #     entitlementsPath: WidgetExtension.entitlements
 #     appIntentsMetadata: WidgetMetadata/Metadata.appintents
+# App Store Connect capabilities to enable on a bundle ID. Each entry maps a
+# source entitlement key to the portal capability type that authorizes it; add an
+# entry here for every entitlement that needs portal provisioning (no code
+# change). Example — push notifications on the app and App Groups on the app plus
+# each extension:
+# capabilities:
+#   - entitlementKey: aps-environment
+#     type: PUSH_NOTIFICATIONS
+#   - entitlementKey: com.apple.security.application-groups
+#     type: APP_GROUPS
 ```
 
 Extensions share the app's signing identity per kind, are provisioned as their own
@@ -169,14 +179,15 @@ entitlements. Entitlements are profile-gated pass-through: every source entitlem
 signed it exists, and anything the profile does not authorize fails loudly, so the
 supported-capability set stays open without per-capability code. A project with no
 entitlements file needs no placeholder — when `entitlementsPath` is unset and
-`App.entitlements` is absent, signing treats the source as empty. App Groups
-(`com.apple.security.application-groups` in entitlements) are
-supported: `signing setup` enables the capability via the API, but the concrete group
-association is a one-time Developer Portal step that signing enforces loudly until the
-downloaded profile authorizes the group. `signing setup` also enables
-`AUTOFILL_CREDENTIAL_PROVIDER` for apps that ship a credential-provider extension, so
-the `com.apple.developer.authentication-services.autofill-credential-provider`
-entitlement is provisioned.
+`App.entitlements` is absent, signing treats the source as empty.
+Capability *enablement* is declared per bundle in `stupid-app.yml` under `capabilities:`
+(the app and each extension may each list entries): `signing setup` enables each declared
+capability via the API on that bundle ID. Declaring a capability is required — there is no
+implicit App Groups/AutoFill/Push enablement — so a capability whose source entitlement is
+signed without a matching `capabilities:` entry fails loudly at the profile-authorization
+gate. Concrete resources such as App
+Group identifiers or the sandbox APNs environment are one-time Developer Portal
+associations that signing enforces loudly until the downloaded profile authorizes them.
 
 ### 2. Build an unsigned app
 

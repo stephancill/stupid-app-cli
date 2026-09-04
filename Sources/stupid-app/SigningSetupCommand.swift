@@ -335,11 +335,11 @@ struct SigningSetupCommand: AsyncParsableCommand {
         print("Development signing setup complete.")
     }
 
-    /// Enables the capabilities a project requests on a bundle ID, derived from the
-    /// entitlements of that one bundle (not a project-wide union), so an app-only
-    /// entitlement (for example Push Notifications) is enabled only on the bundle that
-    /// declares it. Best-effort: a failed enable is reported but the authoritative gate
-    /// is the profile-authorization check at signing time.
+    /// Enables the capabilities a project declares for a bundle ID in
+    /// `stupid-app.yml` (per bundle, so an app-only capability is enabled only on
+    /// the bundle that declares it — not a union across the app and extensions).
+    /// Best-effort: a failed enable is reported but the authoritative gate is the
+    /// profile-authorization check at signing time.
     private func enableRequestedCapabilities(
         operations: ASCOperations, bundleIDResourceID: String, bundleID: String
     ) throws {
@@ -347,72 +347,31 @@ struct SigningSetupCommand: AsyncParsableCommand {
             do {
                 try operations.enableBundleIDCapability(
                     bundleIDResourceID: bundleIDResourceID, capabilityType: capability.type)
-                print("Enabled \(capability.displayName) capability on \(bundleID)")
+                print("Enabled \(capability.type) capability on \(bundleID)")
             } catch {
                 print(
-                    "WARNING: could not enable \(capability.displayName) capability on \(bundleID): \(error). The concrete association remains a manual Developer Portal step.")
+                    "WARNING: could not enable \(capability.type) capability on \(bundleID): \(error). The concrete association remains a manual Developer Portal step.")
             }
         }
     }
 
-    /// The capabilities a specific bundle requests, derived only from that bundle's source
-    /// entitlements (the app, or one configured extension). An entitlement set requests a
-    /// capability when that bundle declares the corresponding source entitlement key.
-    private func requestedCapabilities(for bundleID: String) -> [SigningCapability] {
+    /// The capabilities a specific bundle declares in `stupid-app.yml` (the app, or
+    /// one configured extension). The configuration is the specification: every
+    /// declared capability is enabled on the bundle ID, and an undeclared capability
+    /// whose source entitlement is still signed fails loudly later at the
+    /// profile-authorization gate.
+    private func requestedCapabilities(for bundleID: String) -> [AppConfig.CapabilityConfig] {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: "stupid-app.yml")),
             let config = try? AppConfig.decode(data)
         else { return [] }
 
-        let entitlementsPath: String?
         if bundleID == config.bundleID {
-            entitlementsPath = config.entitlementsPath
-        } else if let extensionConfig = config.extensions?.first(where: { $0.bundleID == bundleID }) {
-            entitlementsPath = extensionConfig.entitlementsPath
-        } else {
-            return []
+            return config.capabilities ?? []
         }
-        guard let path = entitlementsPath,
-            let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-            let plist = try? PropertyListSerialization.propertyList(from: data, format: nil)
-                as? [String: Any]
-        else { return [] }
-
-        var requested: [SigningCapability] = []
-        for capability in SigningCapability.all where plist[capability.entitlementKey] != nil {
-            if !requested.contains(capability) {
-                requested.append(capability)
-            }
+        if let extensionConfig = config.extensions?.first(where: { $0.bundleID == bundleID }) {
+            return extensionConfig.capabilities ?? []
         }
-        return requested
-    }
-
-    /// A mapping from a source entitlement key to the App Store Connect capability that
-    /// must be enabled on a bundle ID so the downloaded profile authorizes it.
-    private struct SigningCapability: Equatable {
-        let entitlementKey: String
-        let type: String
-        let displayName: String
-
-        static let appGroups = SigningCapability(
-            entitlementKey: "com.apple.security.application-groups",
-            type: "APP_GROUPS",
-            displayName: "App Groups"
-        )
-        static let autoFillCredentialProvider = SigningCapability(
-            entitlementKey: "com.apple.developer.authentication-services" +
-                ".autofill-credential-provider",
-            type: "AUTOFILL_CREDENTIAL_PROVIDER",
-            displayName: "AutoFill Credential Provider"
-        )
-        static let pushNotifications = SigningCapability(
-            entitlementKey: "aps-environment",
-            type: "PUSH_NOTIFICATIONS",
-            displayName: "Push Notifications"
-        )
-
-        static let all: [SigningCapability] = [
-            .appGroups, .autoFillCredentialProvider, .pushNotifications,
-        ]
+        return []
     }
 
     private func decodeCertificate(_ base64: String) throws -> String {

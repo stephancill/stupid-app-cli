@@ -469,6 +469,11 @@ deploymentTarget: "17.0"
 infoPath: Info.plist
 entitlementsPath: App.entitlements
 iconPath: Resources/AppIcon.png
+capabilities:
+  - entitlementKey: aps-environment
+    type: PUSH_NOTIFICATIONS
+  - entitlementKey: com.apple.security.application-groups
+    type: APP_GROUPS
 ```
 
 Initial supported inputs:
@@ -712,13 +717,17 @@ every source entitlement through and the selected provisioning profile's authori
 the authoritative gate: `get-task-allow`, `application-identifier`, and
 `com.apple.developer.team-identifier` are derived, and any entitlement the profile does not
 authorize fails loudly with an actionable message. This keeps the supported-capability set
-open with no per-capability code. Capability *enablement* on bundle creation remains a small
-data-driven map (`SigningCapability`) in `SigningSetupCommand` — the profile is still the
-gate, and the enablement sources only that bundle's own source entitlements (per-bundle, not a
-union across the app and extensions). App Groups are supported: the `APP_GROUPS` capability is
-enabled per bundle and the requested group is reconciled against the profile on max-array-subset
+open with no per-capability code. Capability *enablement* on bundle creation is configured
+per bundle in `stupid-app.yml` under `capabilities:` (a `capabilities:` list on the app and on
+each extension): each entry maps a source entitlement key to the App Store Connect capability
+type to enable on that bundle ID, so the enablement set stays open with no code change — the
+profile is still the gate, and enablement is per-bundle, not a union across the app and
+extensions. A capability whose source entitlement is signed without being declared (or
+enabled) fails loudly at the profile-authorization gate, so the config is required rather than
+defaulted. App Groups are supported: the `APP_GROUPS` capability is enabled per bundle and the
+requested group is reconciled against the profile on max-array-subset
 semantics; the one-time Developer Portal association remains a manual prerequisite the
-profile-authorization gate enforces. AutoFill Credential Provider ships enabled for the app and
+profile-authorization gate enforces. AutoFill Credential Provider is enabled for the app and
 its credential-provider extension via the `AUTOFILL_CREDENTIAL_PROVIDER` capability, driving the
 `com.apple.developer.authentication-services.autofill-credential-provider` entitlement. Push
 Notifications is enabled per bundle via the `aps-environment` -> `PUSH_NOTIFICATIONS` capability,
@@ -1834,8 +1843,9 @@ Required recurring integration coverage:
 - Minimum entitlement and capability set included in version 1. **Resolved (2026-08-19):**
   entitlement derivation is profile-gated pass-through — the supported set is whatever the
   selected provisioning profile authorizes, so capabilities are not a hardcoded list. Named
-  capability *enablement* (`APP_GROUPS`, `AUTOFILL_CREDENTIAL_PROVIDER`) is driven by a
-  small client-side map in `SigningSetupCommand`; the profile remains the gate. See the
+  capability *enablement* is configured per bundle under `capabilities:` in `stupid-app.yml`
+  (a per-app and per-extension list mapping source entitlement keys to App Store Connect
+  capability types); the profile remains the gate. See the
   "Entitlement scope" section above.
 - Whether the initial WSL x86_64 environment becomes a supported production host or remains a proof environment alongside a future native Linux host. **Resolved (2026-08-19):** proof/reference only.
 - Whether build and release environments are persistent or created ephemerally.

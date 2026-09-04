@@ -112,6 +112,14 @@ public enum ProjectGenerator {
             "deploymentTarget: \"\(options.deploymentTarget)\"",
             "infoPath: Info.plist",
             "entitlementsPath: App.entitlements",
+            // Declare the App Store Connect capabilities each bundle needs. Each entry
+            // maps a source entitlement key to the portal capability type that
+            // authorizes it (for example aps-environment -> PUSH_NOTIFICATIONS for push,
+            // or com.apple.developer.authentication-services.autofill-credential-provider
+            // -> AUTOFILL_CREDENTIAL_PROVIDER for an AutoFill credential provider).
+            "# capabilities:",
+            "#   - entitlementKey: aps-environment",
+            "#     type: PUSH_NOTIFICATIONS",
         ]
         if options.iconSource != nil {
             lines.append("iconPath: Resources/AppIcon.png")

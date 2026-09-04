@@ -205,6 +205,130 @@ struct AppConfigTests {
         }
     }
 
+    @Test("capabilities decode for the app bundle")
+    func appCapabilitiesDecode() throws {
+        let config = try decode("""
+        version: 1
+        product: AcceptanceApp
+        bundleID: net.example.acceptance-app
+        deploymentTarget: "17.0"
+        infoPath: Info.plist
+        entitlementsPath: App.entitlements
+        capabilities:
+          - entitlementKey: aps-environment
+            type: PUSH_NOTIFICATIONS
+          - entitlementKey: com.apple.security.application-groups
+            type: APP_GROUPS
+        """)
+        let capabilities = try #require(config.capabilities)
+        #expect(capabilities.count == 2)
+        #expect(capabilities[0].entitlementKey == "aps-environment")
+        #expect(capabilities[0].type == "PUSH_NOTIFICATIONS")
+        #expect(capabilities[1].type == "APP_GROUPS")
+    }
+
+    @Test("capabilities decode per extension")
+    func extensionCapabilitiesDecode() throws {
+        let config = try decode("""
+        version: 1
+        product: App
+        bundleID: net.example.app
+        deploymentTarget: "17.0"
+        infoPath: Info.plist
+        extensions:
+          - product: CredentialProvider
+            bundleID: net.example.app.credential-provider
+            infoPath: CredentialProvider-Info.plist
+            capabilities:
+              - entitlementKey: com.apple.developer.authentication-services.autofill-credential-provider
+                type: AUTOFILL_CREDENTIAL_PROVIDER
+        """)
+        let extensions = try #require(config.extensions)
+        let capabilities = try #require(extensions[0].capabilities)
+        #expect(capabilities.count == 1)
+        #expect(
+            capabilities[0].entitlementKey
+                == "com.apple.developer.authentication-services.autofill-credential-provider")
+        #expect(capabilities[0].type == "AUTOFILL_CREDENTIAL_PROVIDER")
+    }
+
+    @Test("capability with empty entitlementKey is rejected")
+    func emptyCapabilityKey() {
+        let yaml = """
+        version: 1
+        product: App
+        bundleID: net.example.app
+        deploymentTarget: "17.0"
+        infoPath: Info.plist
+        capabilities:
+          - entitlementKey: ""
+            type: PUSH_NOTIFICATIONS
+        """
+        #expect(throws: ProjectError.missingCapabilityField("capabilities[0]", "entitlementKey")) {
+            try decode(yaml)
+        }
+    }
+
+    @Test("capability with empty type is rejected")
+    func emptyCapabilityType() {
+        let yaml = """
+        version: 1
+        product: App
+        bundleID: net.example.app
+        deploymentTarget: "17.0"
+        infoPath: Info.plist
+        capabilities:
+          - entitlementKey: aps-environment
+            type: ""
+        """
+        #expect(throws: ProjectError.missingCapabilityField("capabilities[0]", "type")) {
+            try decode(yaml)
+        }
+    }
+
+    @Test("duplicate capability entitlement keys are rejected within the app bundle")
+    func duplicateAppCapabilityKeys() {
+        let yaml = """
+        version: 1
+        product: App
+        bundleID: net.example.app
+        deploymentTarget: "17.0"
+        infoPath: Info.plist
+        capabilities:
+          - entitlementKey: aps-environment
+            type: PUSH_NOTIFICATIONS
+          - entitlementKey: aps-environment
+            type: PUSH_NOTIFICATIONS
+        """
+        #expect(throws: ProjectError.duplicateCapabilityKey("capabilities[1]", "aps-environment")) {
+            try decode(yaml)
+        }
+    }
+
+    @Test("duplicate capability entitlement keys are rejected within an extension")
+    func duplicateExtensionCapabilityKeys() {
+        let yaml = """
+        version: 1
+        product: App
+        bundleID: net.example.app
+        deploymentTarget: "17.0"
+        infoPath: Info.plist
+        extensions:
+          - product: Ext
+            bundleID: net.example.app.ext
+            infoPath: Ext.plist
+            capabilities:
+              - entitlementKey: aps-environment
+                type: PUSH_NOTIFICATIONS
+              - entitlementKey: aps-environment
+                type: PUSH_NOTIFICATIONS
+        """
+        #expect(throws: ProjectError.duplicateCapabilityKey(
+            "extensions[0].capabilities[1]", "aps-environment")) {
+            try decode(yaml)
+        }
+    }
+
     @Test("entitlements resolution honors an explicit path and falls back only to an existing App.entitlements")
     func entitlementsResolution() throws {
         let tmps = FileManager.default.temporaryDirectory

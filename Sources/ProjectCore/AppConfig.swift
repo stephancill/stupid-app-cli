@@ -21,6 +21,9 @@ public struct AppConfig: Codable, Equatable, Sendable {
     public var resources: [String]?
     /// Bundled app extensions (each becomes a `PlugIns/*.appex`).
     public var extensions: [ExtensionConfig]?
+    /// Declared App Store Connect capability mappings for the app bundle. Each entry
+    /// maps a source entitlement key to the portal capability type to enable.
+    public var capabilities: [CapabilityConfig]?
 
     public init(
         version: Int,
@@ -31,7 +34,8 @@ public struct AppConfig: Codable, Equatable, Sendable {
         entitlementsPath: String? = nil,
         iconPath: String? = nil,
         resources: [String]? = nil,
-        extensions: [ExtensionConfig]? = nil
+        extensions: [ExtensionConfig]? = nil,
+        capabilities: [CapabilityConfig]? = nil
     ) {
         self.version = version
         self.product = product
@@ -42,6 +46,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
         self.iconPath = iconPath
         self.resources = resources
         self.extensions = extensions
+        self.capabilities = capabilities
     }
 
     /// Decodes and fully validates a `stupid-app.yml` from data.
@@ -92,6 +97,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
                 try Self.validateRelativePath(resource, field: "resources[\(index)]", projectRoot: projectRoot)
             }
         }
+        try Self.validateCapabilities(capabilities, prefix: "")
         if let extensions {
             var seenBundleIDs = Set<String>()
             for (index, extensionConfig) in extensions.enumerated() {
@@ -126,6 +132,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
                     try Self.validateRelativePath(
                         appIntentsMetadata, field: "\(prefix).appIntentsMetadata", projectRoot: projectRoot)
                 }
+                try Self.validateCapabilities(extensionConfig.capabilities, prefix: prefix)
             }
         }
     }
@@ -164,6 +171,8 @@ public struct AppConfig: Codable, Equatable, Sendable {
         /// Optional path to a bundled App Intents metadata directory
         /// (`WidgetMetadata/Metadata.appintents`), copied to the appex root.
         public var appIntentsMetadata: String?
+        /// Declared App Store Connect capability mappings for this extension bundle.
+        public var capabilities: [CapabilityConfig]?
 
         public init(
             product: String,
@@ -172,7 +181,8 @@ public struct AppConfig: Codable, Equatable, Sendable {
             entitlementsPath: String? = nil,
             deploymentTarget: String? = nil,
             resources: [String]? = nil,
-            appIntentsMetadata: String? = nil
+            appIntentsMetadata: String? = nil,
+            capabilities: [CapabilityConfig]? = nil
         ) {
             self.product = product
             self.bundleID = bundleID
@@ -181,6 +191,48 @@ public struct AppConfig: Codable, Equatable, Sendable {
             self.deploymentTarget = deploymentTarget
             self.resources = resources
             self.appIntentsMetadata = appIntentsMetadata
+            self.capabilities = capabilities
+        }
+    }
+
+    /// A declared App Store Connect capability mapping for one bundle: the source
+    /// entitlement key that requests it and the portal capability type to enable.
+    /// Declared under `capabilities:` in `stupid-app.yml`, so supported capability
+    /// types stay open: enabling a new capability needs configuration, not code.
+    public struct CapabilityConfig: Codable, Equatable, Sendable {
+        /// The source entitlements key that requests this capability.
+        public var entitlementKey: String
+        /// The App Store Connect bundle-ID capability type, e.g. `PUSH_NOTIFICATIONS`.
+        public var type: String
+
+        public init(entitlementKey: String, type: String) {
+            self.entitlementKey = entitlementKey
+            self.type = type
+        }
+    }
+
+    /// Validates a bundle's declared capability mappings: both fields are required
+    /// and each entitlement key must be unique within the bundle. Capability types
+    /// are intentionally not validated against a known list so new portal
+    /// capabilities need no CLI change.
+    private static func validateCapabilities(
+        _ capabilities: [CapabilityConfig]?, prefix: String
+    ) throws {
+        guard let capabilities else { return }
+        var seenKeys = Set<String>()
+        for (index, capability) in capabilities.enumerated() {
+            let field = prefix.isEmpty
+                ? "capabilities[\(index)]"
+                : "\(prefix).capabilities[\(index)]"
+            guard !capability.entitlementKey.isEmpty else {
+                throw ProjectError.missingCapabilityField(field, "entitlementKey")
+            }
+            guard !capability.type.isEmpty else {
+                throw ProjectError.missingCapabilityField(field, "type")
+            }
+            guard seenKeys.insert(capability.entitlementKey).inserted else {
+                throw ProjectError.duplicateCapabilityKey(field, capability.entitlementKey)
+            }
         }
     }
 
@@ -282,6 +334,8 @@ public enum ProjectError: Error, Equatable, Sendable, CustomStringConvertible {
     case invalidExtensionBundleID(String, String)
     case duplicateExtensionBundleID(String)
     case invalidExtensionDeploymentTarget(String, String)
+    case missingCapabilityField(String, String)
+    case duplicateCapabilityKey(String, String)
 
     public var description: String {
         switch self {
@@ -317,6 +371,10 @@ public enum ProjectError: Error, Equatable, Sendable, CustomStringConvertible {
             return "Duplicate extension bundle identifier '\(id)'. Each extension must have a unique bundle ID."
         case let .invalidExtensionDeploymentTarget(prefix, target):
             return "\(prefix): invalid extension deployment target '\(target)'. Use a numeric version such as '17.0'."
+        case let .missingCapabilityField(field, capabilityField):
+            return "\(field): capability is missing required field '\(capabilityField)'."
+        case let .duplicateCapabilityKey(field, key):
+            return "\(field): duplicate capability entitlement key '\(key)'. Use a unique key per entry."
         }
     }
 }
