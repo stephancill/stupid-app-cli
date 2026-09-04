@@ -65,6 +65,14 @@ public enum EntitlementDeriver {
         // get-task-allow: true for development, false for distribution.
         derived["get-task-allow"] = (configuration == .development)
 
+        // aps-environment is configuration-dependent: a development profile carries
+        // "development" and an App Store / distribution profile carries "production".
+        // Override any source value so the signed entitlement matches the selected
+        // profile instead of failing profile reconciliation.
+        if derived["aps-environment"] != nil {
+            derived["aps-environment"] = (configuration == .development) ? "development" : "production"
+        }
+
         // application-identifier and team-identifier are derived from the bundle ID.
         let applicationIdentifier = "\(teamID).\(bundleID)"
         derived["application-identifier"] = applicationIdentifier

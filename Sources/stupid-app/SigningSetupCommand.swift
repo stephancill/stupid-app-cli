@@ -336,14 +336,14 @@ struct SigningSetupCommand: AsyncParsableCommand {
     }
 
     /// Enables the capabilities a project requests on a bundle ID, derived from the
-    /// entitlements of the app and every configured extension. Best-effort: a failed
-    /// enable is reported but the authoritative gate is the profile-authorization check
-    /// at signing time (concrete resource associations, e.g. an App Group identity,
-    /// remain manual Developer Portal steps).
+    /// entitlements of that one bundle (not a project-wide union), so an app-only
+    /// entitlement (for example Push Notifications) is enabled only on the bundle that
+    /// declares it. Best-effort: a failed enable is reported but the authoritative gate
+    /// is the profile-authorization check at signing time.
     private func enableRequestedCapabilities(
         operations: ASCOperations, bundleIDResourceID: String, bundleID: String
     ) throws {
-        for capability in projectRequestedCapabilities() {
+        for capability in requestedCapabilities(for: bundleID) {
             do {
                 try operations.enableBundleIDCapability(
                     bundleIDResourceID: bundleIDResourceID, capabilityType: capability.type)
@@ -355,27 +355,32 @@ struct SigningSetupCommand: AsyncParsableCommand {
         }
     }
 
-    /// The capabilities the project requests, derived from the source entitlements of
-    /// the app and every configured extension. An entitlement set requests a capability
-    /// when any bundle declares the corresponding source entitlement key.
-    private func projectRequestedCapabilities() -> [SigningCapability] {
+    /// The capabilities a specific bundle requests, derived only from that bundle's source
+    /// entitlements (the app, or one configured extension). An entitlement set requests a
+    /// capability when that bundle declares the corresponding source entitlement key.
+    private func requestedCapabilities(for bundleID: String) -> [SigningCapability] {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: "stupid-app.yml")),
             let config = try? AppConfig.decode(data)
         else { return [] }
-        var entitlementsPaths = [config.entitlementsPath].compactMap { $0 }
-        if let extensions = config.extensions {
-            entitlementsPaths += extensions.compactMap { $0.entitlementsPath }
+
+        let entitlementsPath: String?
+        if bundleID == config.bundleID {
+            entitlementsPath = config.entitlementsPath
+        } else if let extensionConfig = config.extensions?.first(where: { $0.bundleID == bundleID }) {
+            entitlementsPath = extensionConfig.entitlementsPath
+        } else {
+            return []
         }
+        guard let path = entitlementsPath,
+            let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+            let plist = try? PropertyListSerialization.propertyList(from: data, format: nil)
+                as? [String: Any]
+        else { return [] }
+
         var requested: [SigningCapability] = []
-        for path in entitlementsPaths {
-            guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-                let plist = try? PropertyListSerialization.propertyList(from: data, format: nil)
-                    as? [String: Any]
-            else { continue }
-            for capability in SigningCapability.all where plist[capability.entitlementKey] != nil {
-                if !requested.contains(capability) {
-                    requested.append(capability)
-                }
+        for capability in SigningCapability.all where plist[capability.entitlementKey] != nil {
+            if !requested.contains(capability) {
+                requested.append(capability)
             }
         }
         return requested
@@ -399,8 +404,15 @@ struct SigningSetupCommand: AsyncParsableCommand {
             type: "AUTOFILL_CREDENTIAL_PROVIDER",
             displayName: "AutoFill Credential Provider"
         )
+        static let pushNotifications = SigningCapability(
+            entitlementKey: "aps-environment",
+            type: "PUSH_NOTIFICATIONS",
+            displayName: "Push Notifications"
+        )
 
-        static let all: [SigningCapability] = [.appGroups, .autoFillCredentialProvider]
+        static let all: [SigningCapability] = [
+            .appGroups, .autoFillCredentialProvider, .pushNotifications,
+        ]
     }
 
     private func decodeCertificate(_ base64: String) throws -> String {

@@ -714,12 +714,16 @@ the authoritative gate: `get-task-allow`, `application-identifier`, and
 authorize fails loudly with an actionable message. This keeps the supported-capability set
 open with no per-capability code. Capability *enablement* on bundle creation remains a small
 data-driven map (`SigningCapability`) in `SigningSetupCommand` — the profile is still the
-gate. App Groups are supported: the `APP_GROUPS` capability is enabled per bundle and the
-requested group is reconciled against the profile on array-subset semantics; the one-time
-Developer Portal association remains a manual prerequisite the profile-authorization gate
-enforces. AutoFill Credential Provider ships enabled for the app and its credential-provider
-extension via the `AUTOFILL_CREDENTIAL_PROVIDER` capability, driving the
-`com.apple.developer.authentication-services.autofill-credential-provider` entitlement.
+gate, and the enablement sources only that bundle's own source entitlements (per-bundle, not a
+union across the app and extensions). App Groups are supported: the `APP_GROUPS` capability is
+enabled per bundle and the requested group is reconciled against the profile on max-array-subset
+semantics; the one-time Developer Portal association remains a manual prerequisite the
+profile-authorization gate enforces. AutoFill Credential Provider ships enabled for the app and
+its credential-provider extension via the `AUTOFILL_CREDENTIAL_PROVIDER` capability, driving the
+`com.apple.developer.authentication-services.autofill-credential-provider` entitlement. Push
+Notifications is enabled per bundle via the `aps-environment` -> `PUSH_NOTIFICATIONS` capability,
+and `EntitlementDeriver` reconciles `aps-environment` to `development` for development builds and
+`production` for distribution/App Store builds regardless of the source value.
 
 **Profile storage and reconciliation (resolved):** provisioning profiles are stored at a
 canonical content-addressed path, `profiles/<development|distribution>/<bundle-id>.mobileprovision`,

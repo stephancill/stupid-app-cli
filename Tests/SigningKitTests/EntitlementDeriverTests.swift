@@ -245,4 +245,71 @@ struct EntitlementDeriverTests {
       )
     }
   }
+
+  @Test("push notification environment is derived as development for dev builds")
+  func pushNotificationsDevelopment() throws {
+    let tmps = FileManager.default.temporaryDirectory
+      .appendingPathComponent("deriver-push-dev-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: tmps, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tmps) }
+
+    let source = tmps.appendingPathComponent("App.entitlements")
+    try writePlist([
+      "aps-environment": "development",
+    ], to: source)
+
+    // Development profile authorizes aps-environment = development.
+    let profile = MobileProvisionParser.ProvisioningProfile(plist: [
+      "Entitlements": [
+        "aps-environment": "development",
+        "application-identifier": "TEAM123.net.stupidtech.widgets",
+        "com.apple.developer.team-identifier": "TEAM123",
+        "get-task-allow": true,
+      ]
+    ])
+
+    let derived = try EntitlementDeriver.derive(
+      sourceURL: source,
+      configuration: .development,
+      bundleID: "net.stupidtech.widgets",
+      profile: profile,
+      teamID: "TEAM123"
+    )
+    #expect(derived["aps-environment"] as? String == "development")
+    #expect(derived["get-task-allow"] as? Bool == true)
+  }
+
+  @Test("push notification environment is derived as production for distribution")
+  func pushNotificationsProduction() throws {
+    let tmps = FileManager.default.temporaryDirectory
+      .appendingPathComponent("deriver-push-prod-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: tmps, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tmps) }
+
+    // The source says development, but a distribution build must sign production.
+    let source = tmps.appendingPathComponent("App.entitlements")
+    try writePlist([
+      "aps-environment": "development",
+    ], to: source)
+
+    let profile = MobileProvisionParser.ProvisioningProfile(plist: [
+      "Entitlements": [
+        "aps-environment": "production",
+        "application-identifier": "TEAM123.net.stupidtech.widgets",
+        "com.apple.developer.team-identifier": "TEAM123",
+        "get-task-allow": false,
+      ]
+    ])
+
+    let derived = try EntitlementDeriver.derive(
+      sourceURL: source,
+      configuration: .distribution,
+      bundleID: "net.stupidtech.widgets",
+      profile: profile,
+      teamID: "TEAM123"
+    )
+    // The distribution build reconciles to the production Profile value, not the source.
+    #expect(derived["aps-environment"] as? String == "production")
+    #expect(derived["get-task-allow"] as? Bool == false)
+  }
 }

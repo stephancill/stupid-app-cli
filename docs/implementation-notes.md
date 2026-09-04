@@ -20,6 +20,35 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
 
+## 2026-09-04 - Per-Bundle Capabilities And Push Notifications Signing
+
+### Summary
+
+- Changed `stupid-app signing setup` capability derivation from project-wide to per-bundle: a
+  capability is now enabled only on the bundle ID whose own source entitlements declare it, instead of
+  a union across the app and every extension.
+- Added a Push Notifications capability (`aps-environment` -> App Store Connect `PUSH_NOTIFICATIONS`)
+  to the signing-setup capability set.
+- `EntitlementDeriver` now reconciles `aps-environment` per configuration: development builds sign
+  `development` and distribution/App Store builds sign `production`, overriding any source value and
+  avoiding profile-reconciliation failures.
+
+### Why
+
+- The wallet notification MVP requires Push Notifications only on the containing app. The previous
+  union would have enabled capabilities on every bundle, and the deriver needed a per-configuration
+  environment so a development source value cannot leak into (or invalidate) a distribution profile.
+
+### Verification
+
+- `swift test` passed: 288 tests / 51 suites, 0 failures (two new
+  `EntitlementDeriverTests` for push development/production reconciliation).
+
+### Follow-Up
+
+- Provision the containing app, Safari extension, and the new notification-service extension, then run
+  `stupid-app doctor` and a development build to confirm sandbox APNs only on the containing app.
+
 ## 2026-09-02 - Release 0.0.13
 
 `stupid-app 0.0.13` is a signing fix release. `EntitlementDeriver` now expands all
