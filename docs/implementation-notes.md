@@ -20,6 +20,124 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
 
+## 2026-09-20 - Release 0.0.17
+
+### Summary
+
+- Released `stupid-app 0.0.17`, which generates and packages App Intents metadata for the
+  app and each extension on Xcode-present hosts (const-values plus
+  `appintentsmetadataprocessor`), fails loudly on an imported-SDK host that declares App
+  Intents, and keeps the checked-in extension `appIntentsMetadata` path authoritative.
+- The release also carries the pending `--build-system native` pin for the SwiftPM build
+  invocation and the network-pairing/AFC investigation documentation that were already in
+  the working tree.
+- No command, option, default, or output path changed, so `README.md` and the bundled CLI
+  skill required no surface updates beyond a clarifying comment about automatic App Intents
+  metadata generation.
+
+### Verification
+
+- `swift build -c release` succeeded; `.build/release/stupid-app --version` reports
+  `stupid-app 0.0.17`.
+- BuildCore tests: 39 tests in 9 suites passed, including the new `AppIntentsMetadataTests`.
+- A device and a simulator build of a real app that declares an App Intent each packaged
+  `Metadata.appintents`, and the simulator install registered the App Shortcut vocabulary and
+  a Shortcuts tool-database entry.
+
+### Follow-Up
+
+- Install the published 0.0.17 assets locally and use them for subsequent builds.
+
+## 2026-09-20 - Automatic App Intents Metadata Generation
+
+### Summary
+
+- `stupid-app build` (and therefore `run` and `release archive`) now generates and packages
+  `Metadata.appintents` for the app bundle and for each extension bundle that declares App
+  Intents or an App Shortcuts provider. Previously the only supported path was a checked-in
+  directory supplied through an extension's `appIntentsMetadata` configuration.
+- Why: SwiftPM does not run Apple's App Intents metadata step, and the system cannot discover
+  App Intents or App Shortcuts without `Metadata.appintents/extract.actionsdata`. A confirmed
+  precedent is the widget project, where the system reported `Metadata not found for
+  <Intent>` and hid the surface until metadata was supplied.
+- Xcode-present builds now pass `-Xswiftc -emit-const-values` plus a generated
+  `-Xfrontend -const-gather-protocols-file` list to the Swift compiler, then run
+  `appintentsmetadataprocessor` after assembly. Metadata generation runs only for a module
+  whose const-values declare `AppIntents.AppIntent` or `AppIntents.AppShortcutsProvider`, so
+  ordinary projects and modules are unaffected.
+- A declared extension `appIntentsMetadata` directory remains authoritative and suppresses
+  automatic generation for that extension.
+- Imported-SDK builds cannot run Apple's processor, so a module that declares App Intents
+  fails loudly instead of producing a bundle the system silently cannot discover.
+
+### Decisions
+
+- The const-gather protocol list is pinned in `AppIntentsMetadata.constGatherProtocols`
+  (mirroring Xcode's extract list). It may need extending when a future Xcode adds an App
+  Intents protocol.
+- `Packer.buildFeaturesKey` is included in the cached-scratch layout key so upgrading the
+  toolchain invalidates an existing scratch once and the new compiler flags actually run.
+
+### Files
+
+- `Sources/BuildCore/AppIntentsMetadata.swift` (new): detection, source-list collection,
+  protocol-list writing, and processor invocation.
+- `Sources/BuildCore/Packer.swift`: const-value flags, build-feature scratch key, toolchain
+  resolution, and app/extension generation calls.
+- `Sources/BuildCore/Planner.swift`: `moduleNames` on `BuildPlan`/`ExtensionPlan`.
+- `Tests/BuildCoreTests/AppIntentsMetadataTests.swift` (new) and `PackerCacheTests.swift`.
+
+### Verification
+
+- `swift build` succeeds. `swift build --target BuildCoreTests` and
+  `xcrun xctest .build/out/Products/Debug/BuildCoreTests.xctest` pass with 39 tests in 9
+  suites, including the new `AppIntentsMetadataTests` suite.
+- A device build and a simulator build of a real app that declares one intent each produced
+  `StupidWallet.app/Metadata.appintents/{version.json,extract.actionsdata}`, with the intent
+  and its two App Shortcut phrases present in the extracted metadata.
+- After simulator install, the system registered the shortcut name vocabulary
+  (`LatestVocabulary.plist`) and a Shortcuts tool-database entry for the intent, confirming
+  Siri and Shortcuts discovery through this pipeline.
+- No regressions were observed for the existing checked-in `appIntentsMetadata` extension path.
+
+### Limitations And Follow-Up
+
+- The full `swift test` product does not build on the current host because of a pre-existing,
+  unrelated compiler type-check timeout in `Tests/DeviceKitTests/RemotepairingDiscoveryTests.swift`;
+  BuildCore tests were verified by building that target and running its test bundle directly.
+- A `stupid-app` version bump, release notes, and published artifacts were not produced in
+  this change.
+- Metadata generation requires an Xcode-present host; Linux/imported-SDK builds of
+  App-Intents apps are intentionally unsupported.
+
+## 2026-09-04 - Network Pairing Repair Isolated From Large-IPA Staging Stall
+
+### Summary
+
+- Replaced a physical iPhone's native lockdown and CoreDevice remote-pairing records over USB. Pair-Verify,
+  TCP tunnel establishment, RSD identity resolution, and a small crash-report AFC operation all succeed
+  wirelessly with the phone unplugged.
+- A later network run of an approximately 8 MiB extension-bearing IPA reaches AFC staging but stalls before
+  `Staged the development IPA`. Tunnel packet diagnostics show upload data acknowledged normally, followed by
+  one AFC status payload retransmitted by the device until the inner TCP connection resets. This is a separate
+  large-transfer data-path regression, not stale pairing.
+- Tested smaller AFC write transactions and `TCP_NODELAY` on the outer tunnel socket independently; neither
+  changed the failure, so both experiments were reverted. No product source changes remain from this
+  investigation.
+
+### Verification
+
+- `stupid-app device pair --usb --replace-lockdown-record` completed and stored both fresh records.
+- A bounded `stupid-app device crash --network ... --filter <nonexistent>` probe reached the crash-report
+  service and failed only because the intentionally nonexistent filter matched no report.
+- `stupid-app doctor` reported zero failures and zero warnings. Focused AFC and CoreDevice TLS tests passed
+  during the reverted experiments.
+
+### Follow-Up
+
+- Compare the host inner TCP state and inbound AFC response checksum at the first retransmission, and qualify
+  the eventual fix with the same multi-megabyte IPA plus three consecutive unplugged network runs.
+
 ## 2026-09-04 - Release 0.0.16
 
 `stupid-app 0.0.16` fixes simulator launch rejection for apps carrying newly configured

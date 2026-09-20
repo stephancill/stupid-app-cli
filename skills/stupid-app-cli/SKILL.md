@@ -160,6 +160,9 @@ iconPath: Resources/AppIcon.png
 #     infoPath: WidgetExtension-Info.plist
 #     entitlementsPath: WidgetExtension.entitlements
 #     appIntentsMetadata: WidgetMetadata/Metadata.appintents
+#     # appIntentsMetadata is only for checked-in metadata. When a target declares
+#     # App Intents or App Shortcuts, the packer generates Metadata.appintents
+#     # automatically on Xcode-present hosts.
 # App Store Connect capabilities to enable on a bundle ID. Each entry maps a
 # source entitlement key to the portal capability type that authorizes it; add an
 # entry here for every entitlement that needs portal provisioning (no code

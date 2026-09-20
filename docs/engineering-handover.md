@@ -37,7 +37,11 @@ runtimes/devices and `stupid-app run --simulator [--udid <id>]` builds for
  and `run --usb` are physically qualified on a
  Mac against a connected iPhone; `run --network` runs through a new privileged
  `coredevice-helper run-network` subcommand and the three unplugged install-and-launch
- runs are now solid on this Mac. The earlier AppService launch intermittency was an
+ runs passed the original qualification on this Mac. A later 8 MiB extension-bearing IPA
+ reproduces a distinct AFC staging stall on current macOS/iOS: pairing, tunnel establishment,
+ RSD, and small AFC operations succeed, but the device's next AFC status response is not
+ accepted by the host inner TCP flow and is retransmitted until reset. Treat this as an open
+ large-transfer data-path regression rather than a pairing failure. The earlier AppService launch intermittency was an
  IPv6 neighbor-discovery problem (macOS performed NDP on the on-link `/64` and the device
  never answered, so the host returned "address unreachable" once the neighbor entry aged
  out); the network tunnel now installs a point-to-point host route for the server address
@@ -484,6 +488,11 @@ Initial supported inputs:
 - Explicit raw resources.
 - PNG app icons generated from one square source image.
 - Pure Swift dependencies that cross-compile successfully.
+- App Intents and App Shortcuts declared in the app or an extension target. On
+  Xcode-present hosts the packer emits the compiler const-values and runs
+  `appintentsmetadataprocessor`, packaging `Metadata.appintents` at the bundle root so
+  Siri and the Shortcuts app can discover the declarations. An extension that declares an
+  explicit `appIntentsMetadata` path keeps its checked-in directory instead.
 - Compatible C-family or binary dependencies only after explicit fixture coverage exists.
 
 Inputs that must initially fail loudly:
@@ -495,7 +504,11 @@ Inputs that must initially fail loudly:
 - Metal source requiring Apple tooling.
 - Arbitrary Xcode build phases.
 - Build tool plugins or macros not validated on the host and target pair.
-- App Intents / other Apple build-tool outputs not handled by the declared
+- App Intents declarations on a host without an Xcode toolchain: the packer generates
+  `Metadata.appintents` automatically on Xcode-present hosts, but an imported-SDK build
+  cannot, so a module that declares App Intents then fails loudly rather than producing a
+  bundle the system silently cannot discover.
+- Other Apple build-tool outputs not handled by automatic generation or the declared
   `appIntentsMetadata` extension path (e.g. unrecognized catalogs that still require
   Apple tooling).
 - ExtensionKit products.
@@ -1347,7 +1360,7 @@ These local projects are useful private references for fixtures and failure mode
 | --- | --- | --- |
 | `~/environments/personal/pus/stupid-social` | `Package.swift`, `xtool.yml`, `Info.plist`, `.release/release-manifest.json` | Best simple extension-free project shape and release-manifest comparison candidate |
 | `~/environments/personal/pus/stupid-authenticator` | `xtool.yml`, app/extension entitlements, `docs/implementation-notes.md:23-38` | Future per-bundle profile, capability, entitlement, and versioning requirements |
-| `~/environments/personal/pus/stupid-widgets/stupid-widgets` | `xtool.yml`, widget entitlements, extension plist and metadata | Unsupported Apple build-tool outputs such as App Intents metadata and extension packaging |
+| `~/environments/personal/pus/stupid-widgets/stupid-widgets` | `xtool.yml`, widget entitlements, extension plist and metadata | Extension packaging and App Intents metadata; the packer now generates the metadata on Xcode-present hosts instead of requiring a checked-in directory |
 
 Known-good Xcode-produced release artifacts may be used locally for differential signature inspection, but they are secret-bearing operational data. Never add them to fixtures. Create sanitized synthetic certificate/profile/signature fixtures for committed tests.
 

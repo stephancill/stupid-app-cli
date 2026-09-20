@@ -94,6 +94,7 @@ public struct Planner: Sendable {
                 extensionPlans.append(
                     ExtensionPlan(
                         product: product.name,
+                        moduleNames: product.targets,
                         bundleID: extensionConfig.bundleID,
                         deploymentTarget: extensionDeploymentTarget,
                         infoPlist: extensionInfo,
@@ -107,6 +108,7 @@ public struct Planner: Sendable {
 
         return BuildPlan(
             product: library.name,
+            moduleNames: library.targets,
             deploymentTarget: deploymentTarget,
             bundleID: config.bundleID,
             packageLayoutHash: root.packageLayoutHash,
@@ -250,6 +252,9 @@ public struct Planner: Sendable {
 /// The finalized, independent plan data used by the packer.
 public struct BuildPlan: Sendable {
     public var product: String
+    /// SwiftPM target (module) names that make up the app product. Used to locate the
+    /// module that declares App Intents for metadata generation.
+    public var moduleNames: [String]
     public var deploymentTarget: String
     public var bundleID: String
     public var packageLayoutHash: String
@@ -270,6 +275,8 @@ public struct BuildPlan: Sendable {
 /// A planned nested app extension, assembled into `PlugIns/<product>.appex`.
 public struct ExtensionPlan: Sendable {
     public var product: String
+    /// SwiftPM target (module) names that make up the extension product.
+    public var moduleNames: [String]
     public var bundleID: String
     public var deploymentTarget: String
     public var infoPlist: [String: Sendable]
@@ -279,6 +286,7 @@ public struct ExtensionPlan: Sendable {
 
     public init(
         product: String,
+        moduleNames: [String] = [],
         bundleID: String,
         deploymentTarget: String,
         infoPlist: [String: Sendable],
@@ -287,6 +295,7 @@ public struct ExtensionPlan: Sendable {
         appIntentsMetadata: String? = nil
     ) {
         self.product = product
+        self.moduleNames = moduleNames
         self.bundleID = bundleID
         self.deploymentTarget = deploymentTarget
         self.infoPlist = infoPlist

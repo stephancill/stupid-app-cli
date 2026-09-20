@@ -17,6 +17,7 @@ struct PackerCacheTests {
     )
     let plan = BuildPlan(
       product: "CacheApp",
+      moduleNames: ["CacheApp"],
       deploymentTarget: "17.0",
       bundleID: "net.example.cache-app",
       packageLayoutHash: "layout-v1",

@@ -130,6 +130,14 @@ public struct Packer: Sendable {
     try FileManager.default.createDirectory(at: appDir, withIntermediateDirectories: true)
     try assembleApp(into: appDir, fromBuildBin: appBuildDir)
 
+    let intentsToolchain = try appIntentsToolchain()
+    try AppIntentsMetadata.generate(
+      binDirectory: appBuildDir,
+      modules: plan.moduleNames,
+      bundleDirectory: appDir,
+      toolchain: intentsToolchain
+    )
+
     // Build and assemble each configured extension into PlugIns/<product>.appex.
     if !plan.extensions.isEmpty {
       let pluginsDir = appDir.appendingPathComponent("PlugIns", isDirectory: true)
@@ -142,6 +150,16 @@ public struct Packer: Sendable {
         try FileManager.default.createDirectory(at: appexDir, withIntermediateDirectories: true)
         try assembleAppex(
           into: appexDir, fromBuildBin: extensionBuildDir, extensionPlan: extensionPlan)
+        // A declared checked-in metadata directory is authoritative; only generate
+        // metadata for extensions that do not already supply one.
+        if extensionPlan.appIntentsMetadata == nil {
+          try AppIntentsMetadata.generate(
+            binDirectory: extensionBuildDir,
+            modules: extensionPlan.moduleNames,
+            bundleDirectory: appexDir,
+            toolchain: intentsToolchain
+          )
+        }
       }
     }
 
@@ -166,11 +184,11 @@ public struct Packer: Sendable {
     let builderDir = builderDirectory(for: product)
     let scratch = buildScratchDirectory(for: product)
     try Self.invalidateScratchIfPackageLayoutChanged(
-      scratch, packageLayoutHash: plan.packageLayoutHash)
+      scratch, packageLayoutHash: Self.scratchLayoutKey(plan.packageLayoutHash))
     try writeSyntheticPackage(
       into: builderDir, product: product, sdkVersion: sdkVersion, isExtension: isExtension)
     try build(builderDir: builderDir, scratch: scratch)
-    try Self.recordPackageLayout(plan.packageLayoutHash, in: scratch)
+    try Self.recordPackageLayout(Self.scratchLayoutKey(plan.packageLayoutHash), in: scratch)
     return
       scratch
       .appendingPathComponent(targetTriple, isDirectory: true)
@@ -188,6 +206,16 @@ public struct Packer: Sendable {
       .appendingPathComponent("scratch", isDirectory: true)
       .appendingPathComponent(targetTriple, isDirectory: true)
       .appendingPathComponent(product, isDirectory: true)
+  }
+
+  /// Build features that change compiler invocations must invalidate a cached scratch so
+  /// the new invocation actually runs. `const-values-v2` enables App Intents const-value
+  /// emission with the required const-gather protocol list and App Intents metadata
+  /// generation.
+  static let buildFeaturesKey = "const-values-v2"
+
+  static func scratchLayoutKey(_ packageLayoutHash: String) -> String {
+    "\(packageLayoutHash):\(buildFeaturesKey)"
   }
 
   static func invalidateScratchIfPackageLayoutChanged(
@@ -301,6 +329,14 @@ public struct Packer: Sendable {
         sdkURL = simulatorSDK
       }
       swift = installation.toolchainSwiftURL.path
+      // Emit the const-values App Intents metadata generation consumes. Xcode enables
+      // const-value emission and supplies the protocol list by default; SwiftPM does
+      // neither, and without both the metadata processor finds no App Intent symbols.
+      let constGatherProtocols = buildCacheRoot.appendingPathComponent(
+        "appintents-const-gather-protocols.json")
+      try FileManager.default.createDirectory(
+        at: buildCacheRoot, withIntermediateDirectories: true)
+      try AppIntentsMetadata.writeConstGatherProtocolsFile(to: constGatherProtocols)
       arguments = [
         "build",
         "--package-path", builderDir.path,
@@ -308,7 +344,13 @@ public struct Packer: Sendable {
         "--configuration", buildConfiguration.rawValue,
         "--sdk", sdkURL.path,
         "--triple", targetTriple,
+        "--build-system", "native",
         "--disable-automatic-resolution",
+        "-Xswiftc", "-emit-const-values",
+        "-Xswiftc", "-Xfrontend",
+        "-Xswiftc", "-const-gather-protocols-file",
+        "-Xswiftc", "-Xfrontend",
+        "-Xswiftc", constGatherProtocols.path,
       ]
     case .importedBundle(let sdkID):
       guard plan.platform == .device else {
@@ -321,6 +363,7 @@ public struct Packer: Sendable {
         "--scratch-path", scratch.path,
         "--configuration", buildConfiguration.rawValue,
         "--swift-sdk", sdkID,
+        "--build-system", "native",
         "--disable-automatic-resolution",
       ]
     }
@@ -496,6 +539,44 @@ public struct Packer: Sendable {
     ]
     info["CFBundleIcons"] = ["CFBundlePrimaryIcon": phonePrimaryIcon]
     info["CFBundleIcons~ipad"] = ["CFBundlePrimaryIcon": padPrimaryIcon]
+  }
+
+  /// The App Intents metadata toolchain for this build, or `nil` when the host cannot
+  /// generate metadata. Imported-SDK builds have no Xcode tools, so they cannot process
+  /// App Intents; a module that declares them then fails loudly in the generator.
+  private func appIntentsToolchain() throws -> AppIntentsMetadata.Toolchain? {
+    guard case .xcodeInPlace(let installation) = sdkInput else { return nil }
+    let sdkRoot: URL
+    switch plan.platform {
+    case .device:
+      sdkRoot = installation.iphoneOSSDKURL
+    case .simulator:
+      guard let simulatorSDK = installation.iphoneSimulatorSDKURL else {
+        throw BuildError.missingSimulatorSDK(installation.appURL.path)
+      }
+      sdkRoot = simulatorSDK
+    }
+    return AppIntentsMetadata.Toolchain(
+      processorURL: installation.toolchainBinDirectory
+        .appendingPathComponent("appintentsmetadataprocessor"),
+      toolchainDirectory: installation.toolchainBinDirectory
+        .deletingLastPathComponent()
+        .deletingLastPathComponent(),
+      sdkRoot: sdkRoot,
+      xcodeVersion: Self.numericXcodeVersion(installation.version),
+      platformFamily: "iOS",
+      deploymentTarget: plan.deploymentTarget,
+      targetTriple: appIntentsTargetTriple()
+    )
+  }
+
+  private func appIntentsTargetTriple() -> String {
+    switch plan.platform {
+    case .device:
+      return "arm64-apple-ios\(plan.deploymentTarget)"
+    case .simulator:
+      return "arm64-apple-ios\(plan.deploymentTarget)-simulator"
+    }
   }
 
   /// Resolves the build-system provenance used by App Store Connect. The imported
