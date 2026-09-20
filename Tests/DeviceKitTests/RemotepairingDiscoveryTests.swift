@@ -18,12 +18,15 @@ struct RemotepairingDiscoveryTests {
   @Test("DNS name compression pointers are followed")
   func nameCompression() throws {
     // A base name followed by a name that is simply a pointer to offset 0.
-    let data =
-      Data([0x0E]) + Data("_remotepairing".utf8)
-      + Data([0x04]) + Data("_tcp".utf8)
-      + Data([0x05]) + Data("local".utf8)
-      + Data([0x00])  // end of base name
-      + Data([0xC0, 0x00])  // pointer to offset 0
+    var data = Data()
+    data.append(0x0E)
+    data.append(contentsOf: Data("_remotepairing".utf8))
+    data.append(0x04)
+    data.append(contentsOf: Data("_tcp".utf8))
+    data.append(0x05)
+    data.append(contentsOf: Data("local".utf8))
+    data.append(0x00)  // end of base name
+    data.append(contentsOf: [0xC0, 0x00])  // pointer to offset 0
     let base = try RemotepairingDiscovery.decodeName(data, offset: 0)
     #expect(base.name == "_remotepairing._tcp.local.")
     #expect(base.next == 27)

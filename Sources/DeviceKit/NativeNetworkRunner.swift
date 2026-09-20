@@ -82,7 +82,8 @@ public struct NativeNetworkRunner: Sendable {
     var failures: [String] = []
     for (index, candidate) in candidates.enumerated() {
       do {
-        progress?("Trying remote-pairing candidate \(index + 1).")
+        progress?(
+          "Trying remote-pairing candidate \(index + 1) (\(candidate.address):\(candidate.port)).")
         let pid = try installAndLaunchCandidate(candidate)
         return pid
       } catch {

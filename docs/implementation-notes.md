@@ -20,6 +20,99 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
 
+## 2026-09-20 - Large-IPA AFC Staging Stall Was The Tunnel MTU
+
+### Summary
+
+- Identified and fixed the unplugged-install AFC staging stall. Apple's CoreDevice tunnel
+  advertises a 16 KiB client MTU in `clientParameters.mtu`; the client created its utun with
+  that MTU, so macOS handed the relay 16 KiB TSO super-segments. The iOS peer did not
+  acknowledge that oversized data, so the host upload window filled while the device stalled on
+  its own AFC status segment until the connection reset. Clamping the tunnel utun MTU to 1500
+  (`PersistentCoreDeviceTunnel.maximumTunnelMTU`) makes every segment acceptable in both
+  directions.
+- The earlier packet trace shows the host emitting 16000-byte TCP packets and the device
+  retransmitting the same small segment without an ACK, which is the deadlock, not a pairing or
+  authentication failure.
+- A per-operation socket timeout increase was tried and reverted: it was not the cause and 60
+  seconds is ample for a healthy transfer.
+
+### Verification
+
+- `stupid-app run --network --sudo /usr/bin/sudo --udid <device>` completed twice end to end:
+  `Resolved the remote service discovery peer`, `Staged the development IPA`,
+  `Installation proxy reported completion`, and `Launched the application`.
+- `swift test --filter "RemotepairingDiscoveryTests|USBMuxClientTests|RemotePairingTests|CoreDeviceTunnelTests|CoreDeviceTLSConnectionTests"`
+  passes with 48 tests in 7 suites.
+
+### Follow-Up
+
+- Initial TCP connect to the advertised pairing endpoint is occasionally refused or times out
+  when the device is idle or locked; retrying succeeds. Consider keeping the device awake and
+  unlocked during network runs, and treat a single connect failure as transient.
+- The MTU clamp trades throughput for reliability; if a future protocol version confirms the
+  peer handles large segments, make the clamp configuration-driven instead of a constant.
+
+## 2026-09-20 - Network Discovery Uses DNS-SD; SRV Port Byte Order
+
+### Summary
+
+- Replaced the hand-rolled multicast mDNS browse with the system DNS-SD API
+  (`DNSServiceBrowse` -> `DNSServiceResolve` -> `DNSServiceGetAddrInfo`) on Darwin, keeping the
+  existing multicast implementation for Linux, which has no DNS-SD daemon. A raw `sendto` to
+  `224.0.0.251` from an ordinary process now fails with `EHOSTUNREACH` (no unscoped multicast
+  route, and Local Network privacy does not grant raw multicast to every process), so
+  `run --network` previously failed with `could not send the mDNS query` before trying any
+  candidate. The system resolver daemon, which `dnssd` uses, does have the needed access.
+- Fixed the resolved SRV port: `DNSServiceResolve` returns it in network byte order, so the
+  value must be byte-swapped (`UInt16(bigEndian:)`). A listener on port 49152 was previously
+  read as 192 and every candidate was refused.
+- Raised the network tunnel and RSD socket timeouts to include the install budget (they used
+  only the launch budget), so a slow AFC upload is not cut off by a 60-second per-operation
+  timeout.
+- Fixed a pre-existing test-target compile failure: `RemotepairingDiscoveryTests` chained
+  `Data(...) + Data(...)` into one expression that the compiler could not type-check, which
+  blocked building any `DeviceKitTests` test. Rewrote it as explicit `Data` appends.
+- Added the candidate address and port to the network progress line for diagnosis.
+
+### Verification
+
+- `swift test --filter "RemotepairingDiscoveryTests|USBMuxClientTests|RemotePairingTests|CoreDeviceTunnelTests"`
+  passes with 41 tests in 6 suites (the target now builds).
+- An unreleased diagnostic probe confirmed discovery returns the device host, the correct
+  `49152` port, and its Wi-Fi/link-local addresses; the same information matches `dns-sd -L`,
+  and a direct TCP connection to the advertised IPv4 endpoint succeeds.
+- `stupid-app run --network --sudo /usr/bin/sudo` now discovers the device, verifies remote
+  pairing, establishes the TLS tunnel, resolves the remote-service-discovery peer, and reaches
+  AFC staging before the known large-IPA AFC upload stall.
+
+### Follow-Up
+
+- The large-IPA AFC staging stall over the network tunnel remains open; it is a data-path
+  regression in the tunnel/AFC transfer, not discovery or pairing.
+- USB discovery could not be re-verified in this session because no USB device enumerated at
+  the time; `run --usb` remains the authoritative path with a data-capable cable.
+
+## 2026-09-20 - Release 0.0.18
+
+### Summary
+
+- Released `stupid-app 0.0.18`, which makes unplugged `run --network` work: remote-pairing
+  discovery uses the system DNS-SD API instead of a raw multicast socket, the resolved SRV port
+  is byte-swapped, and the tunnel utun MTU is clamped so the iOS peer accepts every segment.
+- Also fixes the `DeviceKitTests` compile failure that blocked the test target.
+
+### Verification
+
+- `stupid-app run --network --sudo /usr/bin/sudo --udid <device>` completed the full
+  discover → pair → tunnel → AFC staging → install → launch sequence twice.
+- Focused DeviceKit tests pass (48 tests in 7 suites); the test target builds again.
+
+### Follow-Up
+
+- Initial connect to the pairing endpoint is occasionally refused while the device is idle;
+  retry succeeds.
+
 ## 2026-09-20 - Release 0.0.17
 
 ### Summary

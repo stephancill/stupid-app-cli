@@ -45,8 +45,15 @@ runtimes/devices and `stupid-app run --simulator [--udid <id>]` builds for
  IPv6 neighbor-discovery problem (macOS performed NDP on the on-link `/64` and the device
  never answered, so the host returned "address unreachable" once the neighbor entry aged
  out); the network tunnel now installs a point-to-point host route for the server address
-on macOS, and the native mDNS browser re-issues its PTR query periodically to avoid the
-  intermittent discovery miss. The Xcode-present release path (Gate M2) is now
+on macOS. Remote-pairing discovery now uses the system DNS-SD API (`DNSServiceBrowse`,
+`DNSServiceResolve`, `DNSServiceGetAddrInfo`) instead of a hand-rolled multicast socket: a raw
+`sendto` to `224.0.0.251` fails with `EHOSTUNREACH` on current macOS (no unscoped multicast
+route, and Local Network privacy does not grant raw multicast), which made `run --network` fail
+before trying any candidate. The SRV port from `DNSServiceResolve` is network byte order and is
+now byte-swapped. The large-IPA AFC staging stall was the tunnel MTU: Apple advertises a 16 KiB
+client MTU, macOS then hands the TUN 16 KiB TSO super-segments, and the iOS peer stalls on them
+(the device never acknowledges the oversized data, so the upload and the AFC status response
+deadlock). Clamping the tunnel MTU to 1500 makes unplugged install-and-launch complete. The Xcode-present release path (Gate M2) is now
   qualified: a macOS-produced distribution IPA passed `codesign --verify --strict`,
   processed to `VALID`/internal `IN_BETA_TESTING`, and installed and launched through
   TestFlight on the physical device (it had to reuse the WSL-provisioned distribution

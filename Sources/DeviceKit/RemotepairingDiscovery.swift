@@ -288,7 +288,23 @@ public struct RemotepairingDiscovery: Sendable {
 
   /// Discovers remote-pairing advertisements on the local network for up to
   /// `timeout` seconds, returning parsed service instances.
+  ///
+  /// On Darwin this uses the system mDNSResponder through DNS-SD, because a raw
+  /// multicast socket cannot send to `224.0.0.251` from an ordinary process on
+  /// current macOS (`EHOSTUNREACH`). Linux, which has no DNS-SD daemon, keeps the
+  /// multicast implementation.
   public func browse(timeout: Double) throws -> [Advertisement] {
+    #if canImport(dnssd)
+      guard timeout > 0 else {
+        throw DiscoveryError.invalidInput("timeout must be positive")
+      }
+      return try DNSSDDiscoveryBrowser().browse(timeout: timeout)
+    #else
+      return try browseMulticast(timeout: timeout)
+    #endif
+  }
+
+  func browseMulticast(timeout: Double) throws -> [Advertisement] {
     guard timeout > 0 else {
       throw DiscoveryError.invalidInput("timeout must be positive")
     }
@@ -547,6 +563,38 @@ public struct RemotepairingDiscovery: Sendable {
     data.withUnsafeBytes {
       UInt32(bigEndian: $0.loadUnaligned(fromByteOffset: offset, as: UInt32.self))
     }
+  }
+
+  // MARK: - Socket address helpers
+
+  /// Formats a `sockaddr` from DNS-SD into a numeric address string.
+  static func formatSockaddr(_ address: UnsafePointer<sockaddr>) -> String? {
+    switch Int32(address.pointee.sa_family) {
+    case AF_INET:
+      var value = address.withMemoryRebound(to: sockaddr_in.self, capacity: 1) {
+        $0.pointee.sin_addr
+      }
+      var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+      guard inet_ntop(AF_INET, &value, &buffer, socklen_t(buffer.count)) != nil else { return nil }
+      return String(cString: buffer)
+    case AF_INET6:
+      var value = address.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) {
+        $0.pointee.sin6_addr
+      }
+      var buffer = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
+      guard inet_ntop(AF_INET6, &value, &buffer, socklen_t(buffer.count)) != nil else { return nil }
+      return String(cString: buffer)
+    default:
+      return nil
+    }
+  }
+
+  /// Interface name for a DNS-SD interface index, used to scope link-local IPv6.
+  static func interfaceName(_ index: UInt32) -> String? {
+    guard index != 0 else { return nil }
+    var buffer = [CChar](repeating: 0, count: Int(IF_NAMESIZE))
+    guard if_indextoname(index, &buffer) != nil else { return nil }
+    return String(cString: buffer)
   }
 }
 

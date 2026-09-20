@@ -150,10 +150,16 @@ public final class PersistentCoreDeviceTunnel: @unchecked Sendable {
     queue.sync {}
   }
 
+  /// Apple's tunnel advertises a large client MTU (for example 16000), and macOS then hands
+  /// the TUN 16 KiB TSO super-segments. The iOS peer does not reliably accept segments that
+  /// large, so the AFC upload stalls with unacknowledged data. Clamp to a conventional 1500
+  /// so every segment is accepted in both directions.
+  static let maximumTunnelMTU = 1500
+
   private static func makeTUN(handshake: CoreDeviceTLSConnection.Handshake) throws -> TUNDevice {
     var output: OpaquePointer?
     let result = handshake.clientAddress.withCString {
-      stupid_app_tun_create("", $0, Int32(handshake.clientMTU), &output)
+      stupid_app_tun_create("", $0, Int32(min(handshake.clientMTU, maximumTunnelMTU)), &output)
     }
     guard result == STUPID_APP_TUN_OK.rawValue, let output else {
       throw Error.tun("TUN creation failed with public error code \(result)")
