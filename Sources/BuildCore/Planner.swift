@@ -56,7 +56,8 @@ public struct Planner: Sendable {
             deploymentTarget: deploymentTarget,
             platform: platform,
             isExtension: false,
-            infoPath: config.infoPath
+            infoPath: config.infoPath,
+            deviceFamily: config.resolvedDeviceFamily
         )
 
         var extensionPlans: [ExtensionPlan] = []
@@ -89,7 +90,8 @@ public struct Planner: Sendable {
                     deploymentTarget: extensionDeploymentTarget,
                     platform: platform,
                     isExtension: true,
-                    infoPath: extensionConfig.infoPath
+                    infoPath: extensionConfig.infoPath,
+                    deviceFamily: config.resolvedDeviceFamily
                 )
                 extensionPlans.append(
                     ExtensionPlan(
@@ -202,9 +204,9 @@ public struct Planner: Sendable {
         }
     }
 
-    private func synthesizeInfoPlist(
+    func synthesizeInfoPlist(
         product: String, bundleID: String, deploymentTarget: String, platform: TargetPlatform,
-        isExtension: Bool, infoPath: String
+        isExtension: Bool, infoPath: String, deviceFamily: DeviceFamily
     ) throws -> [String: Sendable] {
         var info: [String: Sendable] = [
             "CFBundleInfoDictionaryVersion": "6.0",
@@ -221,17 +223,24 @@ public struct Planner: Sendable {
             // Both apps and bundled app extensions carry the arm64 slice requirement;
             // ASC rejects 64-bit extensions that omit it.
             "UIRequiredDeviceCapabilities": ["arm64"],
+            // The app and every bundled extension declare the same device families so
+            // App Store validation never sees an extension supporting more families than
+            // its containing app.
+            "UIDeviceFamily": deviceFamily.deviceFamilyIdentifiers,
         ]
         if !isExtension {
             info["LSRequiresIPhoneOS"] = true
-            info["UIDeviceFamily"] = [1, 2]
             info["UISupportedInterfaceOrientations"] = ["UIInterfaceOrientationPortrait"]
-            info["UISupportedInterfaceOrientations~ipad"] = [
-                "UIInterfaceOrientationPortrait",
-                "UIInterfaceOrientationPortraitUpsideDown",
-                "UIInterfaceOrientationLandscapeLeft",
-                "UIInterfaceOrientationLandscapeRight",
-            ]
+            // iPad support requires all four orientations (App Store validation
+            // ITMS-90474); an iPhone-only app must not advertise the iPad key.
+            if deviceFamily.includesIPad {
+                info["UISupportedInterfaceOrientations~ipad"] = [
+                    "UIInterfaceOrientationPortrait",
+                    "UIInterfaceOrientationPortraitUpsideDown",
+                    "UIInterfaceOrientationLandscapeLeft",
+                    "UIInterfaceOrientationLandscapeRight",
+                ]
+            }
             info["UILaunchScreen"] = [:] as [String: Sendable]
         }
 

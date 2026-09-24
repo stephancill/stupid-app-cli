@@ -480,12 +480,20 @@ deploymentTarget: "17.0"
 infoPath: Info.plist
 entitlementsPath: App.entitlements
 iconPath: Resources/AppIcon.png
+# Optional; defaults to `universal` (iPhone + iPad). Use `iphone` for a phone-only
+# app that should present the phone layout on iPad and Apple silicon Mac.
+# deviceFamily: iphone
 capabilities:
   - entitlementKey: aps-environment
     type: PUSH_NOTIFICATIONS
   - entitlementKey: com.apple.security.application-groups
     type: APP_GROUPS
 ```
+
+`deviceFamily` (`iphone`, `ipad`, or `universal`) selects the `UIDeviceFamily`
+written into the synthesized `Info.plist` for the app and every bundled extension;
+an iPhone-only app also omits the iPad orientation key. Omitted means `universal`,
+which preserves the historical iPhone-and-iPad default.
 
 Initial supported inputs:
 

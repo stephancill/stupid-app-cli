@@ -140,6 +140,56 @@ struct AppConfigTests {
         #expect(!AppConfig.isValidVersion("abc"))
     }
 
+    @Test("deviceFamily is optional and defaults to universal")
+    func deviceFamilyDefaultsToUniversal() throws {
+        let config = try decode("""
+        version: 1
+        product: App
+        bundleID: net.example.app
+        deploymentTarget: "17.0"
+        infoPath: Info.plist
+        """)
+        #expect(config.deviceFamily == nil)
+        #expect(config.resolvedDeviceFamily == .universal)
+        #expect(config.resolvedDeviceFamily.deviceFamilyIdentifiers == [1, 2])
+    }
+
+    @Test("deviceFamily decodes the supported families")
+    func deviceFamilyDecodes() throws {
+        for (yaml, expected) in [
+            ("iphone", DeviceFamily.iphone), ("ipad", .ipad), ("universal", .universal),
+        ] {
+            let config = try decode("""
+            version: 1
+            product: App
+            bundleID: net.example.app
+            deploymentTarget: "17.0"
+            infoPath: Info.plist
+            deviceFamily: \(yaml)
+            """)
+            #expect(config.resolvedDeviceFamily == expected)
+        }
+        #expect(DeviceFamily.iphone.deviceFamilyIdentifiers == [1])
+        #expect(DeviceFamily.ipad.deviceFamilyIdentifiers == [2])
+        #expect(DeviceFamily.iphone.includesIPad == false)
+        #expect(DeviceFamily.ipad.includesIPad)
+    }
+
+    @Test("unsupported deviceFamily is rejected")
+    func invalidDeviceFamilyRejected() {
+        let yaml = """
+        version: 1
+        product: App
+        bundleID: net.example.app
+        deploymentTarget: "17.0"
+        infoPath: Info.plist
+        deviceFamily: watch
+        """
+        #expect(throws: ProjectError.invalidDeviceFamily("watch")) {
+            try decode(yaml)
+        }
+    }
+
     @Test("extensions decode with product, bundleID, infoPath, and entitlements")
     func extensionsDecode() throws {
         let config = try decode("""

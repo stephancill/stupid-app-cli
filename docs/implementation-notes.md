@@ -20,6 +20,66 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
 
+## 2026-09-24 - Release 0.0.19
+
+### Summary
+
+- Released `stupid-app 0.0.19`, which adds the optional `deviceFamily` project-config key and
+  applies the configured `UIDeviceFamily` to the app and every bundled extension (see the
+  following entry).
+- Bumped `StupidApp.productVersion` from `0.0.18` to `0.0.19`. No command, option, default, or
+  output path changed, so `README.md` and `references/commands.md` needed no surface updates;
+  the bundled CLI skill gained a `deviceFamily` example and note.
+
+### Verification
+
+- `swift build -c release` succeeded; the built binary reports `stupid-app 0.0.19`.
+- `swift test`: all test targets passed.
+- The exact release binary was re-run end to end on a throwaway project: `deviceFamily: iphone`
+  produced `UIDeviceFamily = [1]` with no `UISupportedInterfaceOrientations~ipad` key, and the
+  omitted default produced `[1, 2]`.
+
+### Follow-Up
+
+- Install the published 0.0.19 assets locally and use them for subsequent builds.
+
+## 2026-09-24 - Configurable iOS device family
+
+### Summary
+
+- Added an optional `deviceFamily` key to `stupid-app.yml` (`iphone`, `ipad`, or
+  `universal`; omitted defaults to `universal`) that sets the `UIDeviceFamily` written
+  into the synthesized `Info.plist`.
+- The app and every bundled extension now declare the same `UIDeviceFamily`. Previously
+  only the app received `[1, 2]` and extensions received none; they now inherit the
+  configured family so App Store validation cannot see an extension supporting more
+  families than its containing app.
+- An iPhone-only app omits `UISupportedInterfaceOrientations~ipad`; the `ipad` and
+  `universal` families keep the all-four iPad orientation set required by `ITMS-90474`.
+- `ProjectError.invalidDeviceFamily` rejects any other value loudly, and `new` scaffolds a
+  commented `# deviceFamily: iphone` example.
+
+### Why
+
+- `UIDeviceFamily` was hard-coded to `[1, 2]` in the planner with no config surface, so an
+  iPhone-only app could only override it by hand-editing its source `Info.plist` (which is
+  merged over the baseline). Exposing it in `stupid-app.yml` removes that bypass and keeps
+  the app/extension families consistent.
+
+### Verification
+
+- `swift build` succeeds.
+- `swift test`: all targets pass, including new `AppConfigTests` device-family cases (default
+  `universal`, each supported value, and rejection of an unsupported value) and
+  `InfoPlistDeviceFamilyTests` (iPhone-only `[1]` with no iPad orientations, universal
+  `[1, 2]` with all four iPad orientations, iPad-only `[2]`, and an extension inheriting the
+  app's family without app-only keys).
+
+### Follow-Up
+
+- Released as `0.0.19`; the Stupid Wallet project migrates to `deviceFamily: iphone` after
+  the release is installed.
+
 ## 2026-09-20 - Large-IPA AFC Staging Stall Was The Tunnel MTU
 
 ### Summary

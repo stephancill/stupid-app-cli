@@ -153,6 +153,10 @@ deploymentTarget: "17.0"
 infoPath: Info.plist
 entitlementsPath: App.entitlements
 iconPath: Resources/AppIcon.png
+# Optional iOS device family written to UIDeviceFamily for the app and every
+# bundled extension. Omit for `universal` (iPhone + iPad); use `iphone` for a
+# phone-only app that presents the phone layout on iPad and Apple silicon Mac.
+# deviceFamily: iphone
 # Optional bundled app extensions (each becomes a PlugIns/<product>.appex):
 # extensions:
 #   - product: MyWidgetExtension
@@ -174,6 +178,11 @@ iconPath: Resources/AppIcon.png
 #   - entitlementKey: com.apple.security.application-groups
 #     type: APP_GROUPS
 ```
+
+`deviceFamily` selects the iOS device families the app and its bundled extensions
+declare (`UIDeviceFamily`): `iphone`, `ipad`, or `universal` (the default). An
+iPhone-only app omits the iPad orientation key, so iPadOS and Apple silicon Mac
+present the phone layout instead of a resizable iPad layout.
 
 Extensions share the app's signing identity per kind, are provisioned as their own
 bundle IDs (`signing setup --bundle-id` per bundle, or read all from `stupid-app.yml`),

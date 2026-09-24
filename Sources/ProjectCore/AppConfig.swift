@@ -24,6 +24,11 @@ public struct AppConfig: Codable, Equatable, Sendable {
     /// Declared App Store Connect capability mappings for the app bundle. Each entry
     /// maps a source entitlement key to the portal capability type to enable.
     public var capabilities: [CapabilityConfig]?
+    /// Optional iOS device family written into the built `UIDeviceFamily` for the app
+    /// and every bundled extension. One of `iphone`, `ipad`, or `universal`; omitted
+    /// means `universal` (iPhone and iPad). Use `iphone` for apps that should present
+    /// the phone layout on iPad and on Apple silicon Mac.
+    public var deviceFamily: String?
 
     public init(
         version: Int,
@@ -35,7 +40,8 @@ public struct AppConfig: Codable, Equatable, Sendable {
         iconPath: String? = nil,
         resources: [String]? = nil,
         extensions: [ExtensionConfig]? = nil,
-        capabilities: [CapabilityConfig]? = nil
+        capabilities: [CapabilityConfig]? = nil,
+        deviceFamily: String? = nil
     ) {
         self.version = version
         self.product = product
@@ -47,6 +53,14 @@ public struct AppConfig: Codable, Equatable, Sendable {
         self.resources = resources
         self.extensions = extensions
         self.capabilities = capabilities
+        self.deviceFamily = deviceFamily
+    }
+
+    /// The validated device family, defaulting to `.universal` when omitted. `validate()`
+    /// rejects any other value, so callers that decode through `AppConfig.decode` can
+    /// rely on the resolved value.
+    public var resolvedDeviceFamily: DeviceFamily {
+        deviceFamily.flatMap(DeviceFamily.init(rawValue:)) ?? .universal
     }
 
     /// Decodes and fully validates a `stupid-app.yml` from data.
@@ -81,6 +95,11 @@ public struct AppConfig: Codable, Equatable, Sendable {
         }
         guard Self.isValidVersion(deploymentTarget) else {
             throw ProjectError.invalidDeploymentTarget(deploymentTarget)
+        }
+        if let deviceFamily {
+            guard DeviceFamily(rawValue: deviceFamily) != nil else {
+                throw ProjectError.invalidDeviceFamily(deviceFamily)
+            }
         }
         try Self.validateRelativePath(infoPath, field: "infoPath", projectRoot: projectRoot)
         if let entitlementsPath {
@@ -310,6 +329,30 @@ public struct AppConfig: Codable, Equatable, Sendable {
     }()
 }
 
+/// The iOS device families an app and its bundled extensions declare. Written to the
+/// built `UIDeviceFamily`; `universal` is the default that preserves the prior
+/// iPhone-and-iPad behavior.
+public enum DeviceFamily: String, Equatable, Sendable, CaseIterable {
+    case iphone
+    case ipad
+    case universal
+
+    /// The `UIDeviceFamily` values (1 = iPhone, 2 = iPad) written into the Info.plist.
+    public var deviceFamilyIdentifiers: [Int] {
+        switch self {
+        case .iphone: return [1]
+        case .ipad: return [2]
+        case .universal: return [1, 2]
+        }
+    }
+
+    /// Whether the app must also declare the iPad orientation set. iPad support
+    /// requires all four orientations (App Store validation `ITMS-90474`).
+    public var includesIPad: Bool {
+        self != .iphone
+    }
+}
+
 enum ConfigYAMLDecoder {
     static func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
         let string = String(decoding: data, as: UTF8.self)
@@ -334,6 +377,7 @@ public enum ProjectError: Error, Equatable, Sendable, CustomStringConvertible {
     case invalidExtensionBundleID(String, String)
     case duplicateExtensionBundleID(String)
     case invalidExtensionDeploymentTarget(String, String)
+    case invalidDeviceFamily(String)
     case missingCapabilityField(String, String)
     case duplicateCapabilityKey(String, String)
 
@@ -371,6 +415,8 @@ public enum ProjectError: Error, Equatable, Sendable, CustomStringConvertible {
             return "Duplicate extension bundle identifier '\(id)'. Each extension must have a unique bundle ID."
         case let .invalidExtensionDeploymentTarget(prefix, target):
             return "\(prefix): invalid extension deployment target '\(target)'. Use a numeric version such as '17.0'."
+        case let .invalidDeviceFamily(value):
+            return "Invalid deviceFamily '\(value)'. Use 'iphone', 'ipad', or 'universal'."
         case let .missingCapabilityField(field, capabilityField):
             return "\(field): capability is missing required field '\(capabilityField)'."
         case let .duplicateCapabilityKey(field, key):

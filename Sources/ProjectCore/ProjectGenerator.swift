@@ -112,6 +112,10 @@ public enum ProjectGenerator {
             "deploymentTarget: \"\(options.deploymentTarget)\"",
             "infoPath: Info.plist",
             "entitlementsPath: App.entitlements",
+            // Optional iOS device family written to UIDeviceFamily. Omit for
+            // `universal` (iPhone + iPad); use `iphone` for a phone-only app that
+            // should present the phone layout on iPad and Apple silicon Mac.
+            "# deviceFamily: iphone",
             // Declare the App Store Connect capabilities each bundle needs. Each entry
             // maps a source entitlement key to the portal capability type that
             // authorizes it (for example aps-environment -> PUSH_NOTIFICATIONS for push,
