@@ -2,23 +2,20 @@
 
 ## Objective
 
-Remove administrator access from repeated wireless installs on macOS and Linux.
-This experiment replaces the kernel TUN/utun and host route with a process-local
-IPv6/TCP stack. Existing saved remote pairings are prerequisites; fresh USB pairing
+Qualify repeated wireless installs through a process-local IPv6/TCP stack on macOS
+and Linux. Existing saved remote pairings are prerequisites; fresh USB pairing
 and USB launch remain outside this spike.
 
 Promoted in 0.0.20: `stupid-app run --network` and the GUI's wireless Run now use
 this process-local transport on macOS and Linux. The separate developer proof
-executable remains available for transfer/repeat qualification. There is no sudo
-fallback or Python/Go runtime dependency. USB pairing/launch and wireless crash
-pulls retain their existing kernel transport.
+executable remains available for transfer/repeat qualification.
 
 ## Implementation
 
 1. Existing native mDNS discovery and Pair-Verify establish the TLS-PSK endpoint.
 2. The existing CoreDevice TLS connection exchanges the CDTunnel handshake.
 3. A packet-only variant of the existing TLS relay exchanges bare IPv6 packets over
-   a local datagram socketpair rather than a kernel interface.
+   a local datagram socketpair.
 4. lwIP 2.2.1 handles IPv6/TCP on one joined worker thread. A narrow C API exposes
    create, connect, stop, and destroy. An owned local stream socket is returned for
    each successful TCP connection.
@@ -48,7 +45,7 @@ comparison, and removal; accepted sizes are 0 through 32 MiB. With an IPA it als
 installs, verifies the exact bundle, removes the staged package, and launches.
 The default pairing directory is the ordinary credential store. Omitting `--udid`
 is permitted only when exactly one mapped device exists. Root execution is
-rejected; Linux execution also rejects an effective `CAP_NET_ADMIN`.
+rejected. Run this developer proof as the ordinary deployment account.
 
 For an explicitly authorized copied pairing, supply
 `--pairing-host-id <original-host-uuid>`. Pair-Verify signs the original host
@@ -119,13 +116,13 @@ in deterministic tests; remote temporary-file cleanup is best-effort on failure.
   without trace instrumentation or a delay between runs. Each included the
   12 MiB AFC byte-verified round trip and removal, extension-bearing development
   IPA installation, exact bundle verification, staged-IPA removal, AppService
-  launch, and joined-worker teardown. Execution used an ordinary UID with no
-  TUN/utun or route operations; an independent inventory confirmed zero attached
-  USB devices with no discovery error. This closes the observed repeated-install
+  launch, and joined-worker teardown. Execution used the ordinary deployment
+  account. An independent inventory confirmed zero attached USB devices with no
+  discovery error. This closes the observed repeated-install
   reset; broader failure-mode and minimum-host qualification remain open.
 - Post-release macOS validation checked the installed 0.0.20 binary's checksum,
   then passed three consecutive wireless runs through its `coredevice-helper
-  run-network` entrypoint as an ordinary user without sudo. This calls the same
+  run-network` entrypoint as the ordinary deployment account. This calls the same
   `NativeNetworkRunner` used by normal `run --network`. The existing signed IPA
   installed, verified, had its staged copy removed, and launched each time. USB
   inventory before and after reported zero devices with no error. The normal
@@ -162,5 +159,5 @@ After promotion in 0.0.20, continue qualification in this order:
    stack integration is required for concurrent devices.
 4. Consider migrating wireless crash diagnostics separately. The install path is
    promoted behind `UserspaceCoreDeviceTunnel` in DeviceKit, with README, bundled
-   CLI skill, GUI behavior, and privilege guidance updated together. Keep USB
-   bootstrapping on its separately qualified kernel transport.
+   CLI skill, and GUI behavior updated together. Keep initial device pairing as
+   a separate qualification gate.

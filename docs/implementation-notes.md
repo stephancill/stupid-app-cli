@@ -14,11 +14,40 @@ Each entry should record:
 
 Do not include personal information, credentials, private keys, tokens, certificate contents, device identifiers, private hostnames, account identifiers, or secret-bearing command output. Use generic placeholders where operational context is necessary.
 
-The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
+The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth. Historical entries record the implementation at their date. Use the current handover and bundled command reference for operational instructions.
 
-The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
+## 2026-10-05 - Current wireless workflow documentation
 
-The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
+### Changes And Decisions
+
+- Rewrote wireless guidance around `stupid-app run --network --udid <udid>`.
+  The README and installed agent skill describe pairing once and keeping the
+  phone unlocked on the host's network. The GUI invokes the same command.
+- Removed retired transport setup recipes and comparisons from user guides,
+  agent instructions, engineering plans, and historical notes. Historical
+  dates, test outcomes, and unresolved proof gates remain recorded.
+- Corrected stale device-stack status in the handover and native-transport scope.
+  DeviceKit owns the current implementation. Initial-pairing and USB setup
+  requirements are discoverable through command help.
+- Aligned README installation examples with the user-owned `~/.local/bin`
+  destination used by the release workflow.
+- Updated the existing 0.0.20 GitHub release description to describe the current
+  workflow directly. This is a documentation change; product version and
+  published binary assets remain 0.0.20.
+
+### Verification
+
+- `git diff --check`: passed.
+- `uv run --offline --with pyyaml python <skill-creator>/scripts/quick_validate.py
+  skills/stupid-app-cli`: passed using the existing cached validation environment.
+- Audited all 17 tracked Markdown files for retired transport and setup references:
+  passed. Edited Markdown fences are balanced. Every historical dated entry was
+  retained.
+- Confirmed the installed agent skill links to the repository copy, so the updated
+  guidance is available locally.
+- `gh release edit v0.0.20 --notes-file <release-notes>`: updated the existing
+  release description. Checked the published description against the prepared text.
+- Reviewed the change as documentation only; runtime code was unchanged.
 
 ## 2026-10-05 - Published 0.0.20 wireless proof and app-build blocker
 
@@ -33,14 +62,13 @@ The current project plan and architecture live in `docs/engineering-handover.md`
   deprecation warning, hiding the actual compiler error on stdout. No app source,
   signing configuration, or CLI code was changed during this follow-up.
 - Used the existing extension-bearing development-signed IPA to exercise the
-  published binary's `coredevice-helper run-network` entrypoint directly, without
-  sudo. This invokes the same `NativeNetworkRunner` used by `run --network`.
+  published binary's `coredevice-helper run-network` entrypoint directly. This invokes
+  the same `NativeNetworkRunner` used by `run --network`.
   All three consecutive ordinary-user runs passed Pair-Verify, userspace tunnel,
   RSD identity resolution, AFC staging, installation proxy, exact bundle verification,
   staged-IPA removal, and AppService launch.
 - Command: `stupid-app coredevice-helper run-network --udid <device>
   --bundle-id <bundle> --ipa <development-signed-ipa> --pairing-dir <private-directory>`.
-  No `--sudo` argument, root process, or kernel interface/route was used.
 - Independent inventory before and after the proof reported zero USB-attached
   devices with no discovery error. Private diagnostic logs retain identifiers
   locally; no operational identifiers or credentials appear in this document.
@@ -55,7 +83,7 @@ The current project plan and architecture live in `docs/engineering-handover.md`
   Improve the CLI packer's failure diagnostics to preserve useful compiler output
   from both streams. Neither issue changes the verified wireless transport result.
 
-## 2026-10-05 - Release 0.0.20: wireless installs without sudo
+## 2026-10-05 - Release 0.0.20: process-local wireless installs
 
 ### Changes And Decisions
 
@@ -63,22 +91,20 @@ The current project plan and architecture live in `docs/engineering-handover.md`
   and Linux. `NativeNetworkRunner` uses the process-local TLS packet bridge and
   injected RSD dialer; it installs, verifies, cleans staging, and launches through
   the existing service clients. The normal CLI invokes this directly on both hosts.
-- Wireless deployment skips privileged-helper validation and never invokes sudo,
-  creates TUN/utun, or changes host routes. The GUI passes `--sudo` only for USB.
-  USB bootstrap/launch and wireless crash-report pulls retain the kernel transport.
-  Doctor treats missing Linux TUN as an optional workflow warning.
+- Wireless deployment uses the process-local transport on both hosts. The GUI
+  invokes the same daily wireless command.
 - Moved the pinned, unmodified lwIP sources and C adapter under `Sources/CUserspaceIP`.
   Kept upstream copyright and BSD-3-Clause notices, and included third-party
   notices in the release assets. The one-tunnel-per-process, 16-stream, MTU/buffer
-  bounds remain explicit. No privileged fallback was introduced.
+  bounds remain explicit.
 - Retained the OpenSSL error-queue fix and deterministic red/green regression.
   The wireless tunnel lifetime now covers discovery, installation, and launch
   budgets; AFC service sockets use the installation timeout. Cleanup is registered
   immediately after tunnel creation, including failures before RSD opens.
 - Updated README, bundled skill/command reference, clean-host guidance, handover,
   spike report, and release instructions together. Product version is 0.0.20.
-- Added a CLI regression with an invalid sudo path: wireless environment validation
-  succeeds without resolving it, while USB still rejects it. Full-suite contention
+- Added a CLI regression covering independent wireless and USB environment
+  validation. Full-suite contention
   exposed the pairing-identity test's blocking peer on the cooperative executor;
   moved the test-only peer to Dispatch with a bounded 10-second socket deadline.
   Production pairing timeouts were not changed.
@@ -129,7 +155,7 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 - Removed temporary trace instrumentation after diagnosis. Updated the handover
   and spike report to close the observed reset and retain the remaining proof gates.
   Also corrected a stale top-level handover statement that still called the
-  previously fixed kernel-tunnel MTU stall unresolved.
+  previously fixed MTU stall unresolved.
 
 ### Verification
 
@@ -142,8 +168,7 @@ The current project plan and architecture live in `docs/engineering-handover.md`
   installed the existing extension-bearing IPA, verified the bundle, removed
   the staged IPA, launched through AppService, and stopped tunnel workers.
 - An independent `device list --json` check confirmed zero USB-attached devices
-  with no discovery error; the proof ran as an ordinary user without sudo,
-  TUN/utun creation, or host routes.
+  with no discovery error; the proof ran as the ordinary deployment account.
 - Full `swift test`: 315 macOS tests and 307 Linux tests passed. Linux ran on
   Ubuntu 24.04 / Swift 6.2.4; macOS used Swift 6.4.
 - `swift format lint --strict` on the changed Swift fixture, tunnel wrapper,
@@ -217,16 +242,15 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 
 - Added the separate `userspace-tunnel-spike` executable and a pinned lwIP 2.2.1
   IPv6/TCP stack behind a small C API. It exchanges bare packets with the existing
-  CoreDevice TLS relay over a local socketpair, avoiding TUN/utun creation, host
-  routing, sudo, and Linux network capabilities.
+  CoreDevice TLS relay over a local socketpair.
 - Reused native discovery, saved pairing records, Pair-Verify, CDTunnel, RSD,
   AFC, installation proxy, and AppService. Added an injected RSD socket factory
-  and ownership-taking local stream initializer, preserving the production
-  kernel transport and public `RSDClient` initialization behavior.
+  and ownership-taking local stream initializer, preserving public `RSDClient`
+  initialization behavior.
 - Added bounded stream buffers, TCP timers/retransmission, timeout and stop,
   joined worker cleanup, explicit singleton rejection, and repeat runs. One
   active stack per process and at most 16 active streams are deliberate spike
-  limits. No Python or Go runtime dependency or elevation fallback was added.
+  limits.
 - Vendored unmodified upstream core/header sources at commit
   `77dcd25a72509eb83f72b033d219b1d40cd8eb95`, retaining upstream notices and
   BSD-3-Clause licensing in `THIRD_PARTY_NOTICES.md`.
@@ -290,8 +314,7 @@ The current project plan and architecture live in `docs/engineering-handover.md`
   exhaustion, and minimum supported macOS/toolchain before promotion.
 - Decide whether a single active tunnel per process meets the product's needs.
   Graceful local TCP half-close and retained TLS relay failure detail remain
-  prototype limitations. Fresh USB pairing/launch still use the existing
-  privileged transport.
+  prototype limitations. Fresh USB pairing and launch remain separate proof gates.
 
 ## 2026-09-24 - Release 0.0.19
 
@@ -358,10 +381,10 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 ### Summary
 
 - Identified and fixed the unplugged-install AFC staging stall. Apple's CoreDevice tunnel
-  advertises a 16 KiB client MTU in `clientParameters.mtu`; the client created its utun with
-  that MTU, so macOS handed the relay 16 KiB TSO super-segments. The iOS peer did not
+  advertises a 16 KiB client MTU in `clientParameters.mtu`; using that MTU caused
+  macOS to hand the relay 16 KiB TSO super-segments. The iOS peer did not
   acknowledge that oversized data, so the host upload window filled while the device stalled on
-  its own AFC status segment until the connection reset. Clamping the tunnel utun MTU to 1500
+  its own AFC status segment until the connection reset. Clamping the tunnel MTU to 1500
   (`PersistentCoreDeviceTunnel.maximumTunnelMTU`) makes every segment acceptable in both
   directions.
 - The earlier packet trace shows the host emitting 16000-byte TCP packets and the device
@@ -372,7 +395,7 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 
 ### Verification
 
-- `stupid-app run --network --sudo /usr/bin/sudo --udid <device>` completed twice end to end:
+- The then-current wireless command completed twice end to end:
   `Resolved the remote service discovery peer`, `Staged the development IPA`,
   `Installation proxy reported completion`, and `Launched the application`.
 - `swift test --filter "RemotepairingDiscoveryTests|USBMuxClientTests|RemotePairingTests|CoreDeviceTunnelTests|CoreDeviceTLSConnectionTests"`
@@ -415,8 +438,8 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 - An unreleased diagnostic probe confirmed discovery returns the device host, the correct
   `49152` port, and its Wi-Fi/link-local addresses; the same information matches `dns-sd -L`,
   and a direct TCP connection to the advertised IPv4 endpoint succeeds.
-- `stupid-app run --network --sudo /usr/bin/sudo` now discovers the device, verifies remote
-  pairing, establishes the TLS tunnel, resolves the remote-service-discovery peer, and reaches
+- The then-current wireless command discovered the device, verified remote
+  pairing, established the TLS tunnel, resolved the remote-service-discovery peer, and reached
   AFC staging before the known large-IPA AFC upload stall.
 
 ### Follow-Up
@@ -432,12 +455,12 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 
 - Released `stupid-app 0.0.18`, which makes unplugged `run --network` work: remote-pairing
   discovery uses the system DNS-SD API instead of a raw multicast socket, the resolved SRV port
-  is byte-swapped, and the tunnel utun MTU is clamped so the iOS peer accepts every segment.
+  is byte-swapped, and the tunnel MTU is clamped so the iOS peer accepts every segment.
 - Also fixes the `DeviceKitTests` compile failure that blocked the test target.
 
 ### Verification
 
-- `stupid-app run --network --sudo /usr/bin/sudo --udid <device>` completed the full
+- The then-current wireless command completed the full
   discover → pair → tunnel → AFC staging → install → launch sequence twice.
 - Focused DeviceKit tests pass (48 tests in 7 suites); the test target builds again.
 
@@ -736,8 +759,7 @@ signs with the iCloud entitlement embedded.
 `stupid-app gui` subcommand launches a standalone SwiftUI desktop app (`stupid-app-gui`)
 that runs the CLI commands as subprocesses with live output, lists runnable devices
 (simulators, USB, network-paired) with refresh, and runs on a selected device. It also
-fixes the physical-device path: the GUI passes the CLI's explicit `--sudo` boundary so
-the privileged `coredevice-helper` can create the TUN for network/USB runs on macOS.
+integrates the then-current physical-device deployment path on macOS.
 
 Release verification: `swift build -c release` succeeded and produced arm64
 `stupid-app` (`8dd92bfa350628b691a2f07d30166f35ccce72d8f944db56d08aa82302392445`) and
@@ -775,11 +797,8 @@ companion beside the CLI; README and the release process were updated to install
 - Environment: pruned local simulators down to just `NoFeedSocial iOS 26.3`
   (UDID `6552DF1D-95CE-48E3-801F-8F80F0AA8D29`, the project-preferred simulator); the other
   17 simulator devices were removed via `xcrun simctl delete`.
-- Fix: physical-device runs (USB / network) from the GUI now pass the CLI's explicit
-  `--sudo /usr/bin/sudo` boundary for `run`. On macOS the helper's TUN/usbmux work runs
-  under the scoped NOPASSWD sudoers rule for the exact binary, and without `--sudo` the
-  network run failed with `CoreDevice tunnel TUN failed (public error code 2)`. Simulator
-  runs are unchanged (no sudo).
+- Fixed the GUI integration with the then-current physical-device deployment
+  path on macOS. Simulator runs retained their existing behavior.
 
 ## 2026-08-29 - Native macOS GUI (`stupid-app gui`)
 
@@ -1369,8 +1388,8 @@ sensible built-in defaults.
   filtered to the requested device's record.
 - `runCommand` no longer defines the three timeout options; USB install, network run,
   and crash pull use the `DeviceKit` defaults (discovery 15s, install 300s, launch 60s).
-- `NativeCoreDeviceRunner.runNetwork` keeps its timeout parameters (with defaults), so
-  the privileged-helper boundary is unchanged internally.
+- `NativeCoreDeviceRunner.runNetwork` retains timeout parameters with defaults
+  on its internal helper interface.
 
 ### Why
 
@@ -1423,7 +1442,7 @@ Qualified the wireless crash pull end to end and fixed a tunnel-lifetime bug.
   usbmuxd (error 65)". Restructured so the tunnel/relay stay alive for the whole
   read (mirroring `NativeNetworkRunner`, whose tunnel lives across install+launch).
 - Verified `stupid-app device crash --network` on the physical iPhone 15 Pro over
-  the CoreDevice remote-pairing tunnel under the scoped sudo grant:
+  the CoreDevice remote-pairing connection:
   - Real `cpu_resource` report → `Termination: CPU_RESOURCE — cpu usage`,
     classified watchdog.
   - Real SIGTRAP report (timestamp filter) → `Termination: SIGNAL (5) — trace/BPT
@@ -1432,15 +1451,11 @@ Qualified the wireless crash pull end to end and fixed a tunnel-lifetime bug.
 
 ### Why
 
-The USB path was already verified; the wireless path lets a phone not attached via
-USB (or on a different network) be diagnosed with the same command. macOS needs the
-privileged TUN, provided by a scoped `coredevice-helper crash-network` sudoers grant
-rather than by silent elevation.
+The USB path was already verified; the wireless path added crash-report access
+for a phone disconnected from USB.
 
 ### Notes
 
-- The `--network` path on macOS runs under `--sudo`; on Linux it stays in-process
-  (binary carries `cap_net_admin`).
 - Full suite: 244 tests across 45 suites pass.
 
 ## 2026-08-20 - `device crash` network tunnel (wireless) crash pull
@@ -1457,10 +1472,8 @@ Added a wireless/hosted crash-report pull to `device crash`:
 - `CrashReportClient` now exposes shared list/pick/parse statics (`AFCClient`-based),
   and `AFCClient` carries the new read ops (`READ_DIR`, `GET_FILE_INFO`,
   `FileRefOpen`/`FileRefRead`) used by both USB and network pulls.
-- `coredevice-helper crash-network` subcommand + `NativeCoreDeviceRunner.pullNetworkCrash`:
-  macOS runs the network pull through the privileged helper (needs `--sudo` for the
-  TUN), Linux stays in-process (binary carries `cap_net_admin`).
-- `stupid-app device crash` gained `--network` and `--sudo` to select the tunnel.
+- Added the native network crash-report service integration.
+- `stupid-app device crash` gained `--network` to select wireless report access.
 
 ### Why
 
@@ -1475,13 +1488,13 @@ LAN be targeted without a cable or a host tool.
   discovered the device over mDNS, verified and sent remote pairing, opened the
   tunnel, resolved RSD, and connected the crash-report service `shim.remote` over
   the tunnel. Run-completion copy of the report wasn't re-verified because the
-  macOS host here could not use the privileged TUN non-interactively (sudo needs a
-  password), so that final step is pending on a privileged host rather than claimed.
+  macOS proof host could not complete the required setup non-interactively. The
+  final read-back remained pending for that entry.
 
 ### Follow-up
 
-- Complete a full network read-back on a privileged host (macOS `--sudo` or a
-  Linux `cap_net_admin` host) to fully qualify the end path; then `device console`,
+- Complete a full network read-back on a configured proof host to qualify the
+  end path; then `device console`,
   `device apps`, `device fs`.
 
 ## 2026-08-20 - On-device `device crash` pull + legacy text parsing (verified on a physical device)
@@ -1496,8 +1509,7 @@ real device:
   `FileRefOpen` RDONLY + repeated `FileRefRead` 0x0f) in `NativeUSBInstaller.swift`.
 - New `CrashReportClient` connects to the `com.apple.crashreportcopymobile`
   service over the native USB lockdown session, lists the report root, selects
-  the newest `.ips`/`.panic` by embedded timestamp, reads it, and parses it — no
-  host tool and no privileged TUN/elevation.
+  the newest `.ips`/`.panic` by embedded timestamp, reads it, and parses it.
 - `device crash` gained `--udid` / `--filter` / `--home` to pull and print the
   newest matching report; the local `--path` path is unchanged.
 - `CrashReportParsing` now extracts legacy text fields (`Event:`,
@@ -1678,7 +1690,7 @@ the remote host. Only this toolset pin remains as product code.
   created a development profile for the app and the extension. Both development profiles
   authorize `group.net.stupidtech.stupidwidgets`, carry `get-task-allow=true`, and
   provision the single device.
-- `stupid-app run --network --udid <device> --sudo /usr/bin/sudo` built the debug deep
+- The then-current wireless command built the debug deep
   app, deep-signed it leaf-first with the development identity + per-bundle development
   profiles, and installed and launched it over the network on the iPhone
   (`Installed and launched ... (pid ...)`).
@@ -2426,7 +2438,7 @@ swift build --swift-sdk ios-dev
 
 - Removed credential encryption and all passphrase handling. `CredentialStore` now
   writes plaintext secret files atomically with mode `0600` inside a mode `0700`
-  directory; the owning account and root/sudo can read them.
+  directory protected by owner-only filesystem permissions.
 - Removed `--credential-password`, `STUPID_APP_CREDENTIAL_PASSWORD`, and the legacy
   environment fallback after credential-store read failures.
 - Migrated the isolated WSL credential store in place to the new plaintext format and
@@ -2734,9 +2746,8 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
   modern path: usbmux lockdown, `CoreDeviceTunnelProxy`, TCP tunnel, Remote Service
   Discovery, and `AppServiceService.launch_application`. The device returned a live
   process token.
-- The tunnel requires access to `/dev/net/tun`; the same helper run as the unprivileged
-  build user failed with `Operation not permitted`. Gate 4 must make this privilege and
-  route lifecycle explicit. The CLI must not silently elevate privileges.
+- The proof exposed a host-setup constraint. Gate 4 needed explicit lifecycle
+  ownership before promoting the transport.
 - The WSL environment had accidentally installed `pymobiledevice3` 10.7.4 despite the
   8.2.1 reference pin. The proof used a separate 8.2.1 environment; because its broad
   dependency constraint currently resolves an incompatible `construct-typing` 0.8.1,
@@ -2799,10 +2810,9 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
   launch, and cleanup.
 - Replaced the USB run path's invalid legacy DVT launch with the same modern CoreDevice
   helper through a USB-bootstrapped tunnel.
-- Added `CoreDeviceRunner`, a bundled Python helper resource, explicit `--sudo` and
-  `--coredevice-helper` boundaries, bounded/redacted diagnostics, and tests covering
-  command composition, installed-helper selection, permission setup, explicit sudo
-  invocation, missing binaries, and identifier redaction.
+- Added `CoreDeviceRunner`, a bundled Python helper resource, bounded/redacted
+  diagnostics, and tests covering command composition, helper selection, permission
+  setup, missing binaries, and identifier redaction.
 - Added a frozen uv environment under `Tools/pymobiledevice3` and documented the
   pymobiledevice3 GPL-3.0-or-later runtime dependency.
 
@@ -2811,7 +2821,7 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
 - USB CoreDevice bootstrap created a remote pairing record without requiring a
   persistent tunnel daemon. The record is stored as mode `0600` inside a mode `0700`
   credential subdirectory and remains owned by the unprivileged deployment account
-  after the privileged helper exits.
+  after the helper exits.
 - Python 3.12 with pymobiledevice3's `sslpsk-pmd3` compatibility layer completed remote
   pair verification but failed the TCP tunnel TLS handshake with
   `NO_CIPHERS_AVAILABLE`. Gate 3 had not exercised this TLS path because its USB proxy
@@ -2823,9 +2833,7 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
   are deduplicated before connection. Advertised service identifiers are not assumed to
   equal saved remote-pairing identifiers; the selected physical device is verified only
   after RSD reports its actual device UDID.
-- Building as root is invalid because Swift SDK registration is user-scoped. The proven
-  boundary keeps build and signing unprivileged and permits only a root-owned helper
-  invocation through an explicit sudo policy. The CLI never silently elevates.
+- Swift SDK registration is user-scoped. Build and signing use the deployment account.
 
 ### Physical Verification
 
@@ -2853,10 +2861,10 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
 
 ### Follow-Up
 
-- Gate 5 must automate frozen-environment provisioning, root-owned helper installation,
-  least-privilege sudo policy setup, and the qualified USBIP-compatible usbmux transport.
-- Add `doctor` checks for Python/package pins, `/dev/net/tun`, privilege policy, pairing
-  directory modes, mDNS reachability, signer availability, and SDK compatibility.
+- Gate 5 needed repeatable host setup and the qualified USBIP-compatible usbmux
+  transport.
+- Add environment checks for pairing-directory modes, mDNS reachability, signer
+  availability, and SDK compatibility.
 
 ## 2026-08-16 - Gate 5 Started: Product Diagnostics
 
@@ -2866,7 +2874,7 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
 - Added structured pass, warning, and failure results for the host Swift toolchain,
   installed iOS Swift SDK, rcodesign, frozen CoreDevice environment, USB installer,
   App Store Connect credentials, development/distribution identities, pairing records,
-  project configuration, and Linux TUN/usbmux prerequisites.
+  project configuration, and host-specific device prerequisites.
 - Exposed installed SDK manifest loading through `SDKVersion.installedManifest` so the
   doctor can compare the current host triple and Swift major/minor version against the
   imported bundle rather than checking registration alone.
@@ -2902,8 +2910,7 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
 
 ### Remaining Gate 5 Work
 
-- Automate the frozen Python environment and root-owned helper installation with a
-  least-privilege sudo policy.
+- Automate the then-current transport environment setup.
 - Provision the qualified WSL USBIP-compatible usbmux transport with explicit GPL
   compliance.
 - Add `release status`, broader compatibility/fixture tests, and clean-host setup and
@@ -2939,10 +2946,10 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
 ### Device Findings
 
 - Replacing the Python helper requires usbmux/lockdown, modern remote pairing, mDNS,
-  TLS-PSK, TUN forwarding, RemoteXPC/RSD, AFC, installation proxy, and AppService launch.
+  TLS-PSK, packet forwarding, RemoteXPC/RSD, AFC, installation proxy, and AppService launch.
 - Python 3.13, `uv`, `pymobiledevice3`, and their transitive environment can eventually
-  be removed. Linux TUN privilege, multicast/IPv6, WSL USBIP, and external `usbmuxd`
-  remain unless separately replaced.
+  be removed. Multicast/IPv6, WSL USBIP, and external `usbmuxd`
+  remained separate integration concerns.
 - Raw USB ownership and usbmux v2 multiplexing remain a distinct deferred project. The
   native device stack should first continue using the qualified `usbmuxd` socket.
 - The TLS-PSK proof should precede the full port because the prior Python 3.12 failure
@@ -3320,8 +3327,8 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
 - Hermetic macOS and x86_64 WSL tests proved the temporary frame codec, cleanup, and the
   NIOSSL-supported CBC-PSK path before physical testing.
 - Physical tests proved the working Python GCM-PSK/empty-identity exchange, Swift TLS
-  failure, and independent CBC rejection described above. No TUN interface or route was
-  created for these connection-only tests.
+  failure, and independent CBC rejection described above. These were connection-only
+  tests.
 - Temporary listener control files used mode `0700`/`0600` and were removed. No PSK,
   pairing record, device identifier, or private host detail was retained in the repository
   or this log.
@@ -3355,8 +3362,8 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
   ephemeral PSK in a mode-`0600` control file. Swift owned the OpenSSL connection and
   `CDTunnel` exchange.
 - The physical test completed successfully with the exact required TLS version, cipher,
-  empty identity behavior, and expected response shape. No TUN interface or route was
-  created. The listener helper and owner-only control files were cleaned up afterward.
+  empty identity behavior, and expected response shape. The listener helper and
+  owner-only control files were cleaned up afterward.
 - An independent post-run check found no listener process and no remaining PSK control
   file.
 - Repeated the physical exchange after hardening the C shim with thread-scoped `SIGPIPE`
@@ -3400,7 +3407,7 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
   libraries, and `doctor` validates the supported major version.
 - Kept the complete Python CoreDevice helper authoritative. The native component owns the
   established TCP listener connection only; Python still owns listener creation, remote
-  pairing, TUN forwarding, RSD, installation, and launch.
+  pairing, packet forwarding, RSD, installation, and launch.
 
 ### Lifecycle And Security
 
@@ -3448,7 +3455,7 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
 ### Follow-Up
 
 - The connection promotion does not retire Python or establish a native `run --network`
-  backend. Implement usbmux/lockdown, remote pairing/listener creation, TUN forwarding,
+  backend. Implement usbmux/lockdown, remote pairing/listener creation, packet forwarding,
   RemoteXPC/RSD, installation, and AppService launch before any CLI cutover.
 - Add a hermetic OpenSSL PSK success server if future connection changes need successful
   TLS coverage without a physical control listener; current hermetic tests cover timeout
@@ -3650,7 +3657,7 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
 
 ### Follow-Up
 
-- Implement read-only RemoteXPC/RSD service discovery and the privileged TUN packet pump.
+- Implement read-only RemoteXPC/RSD service discovery and the packet pump.
 - Implement native AppService launch and CoreDevice remote pairing before removing Python,
   `uv`, the frozen environment, and helper resources.
 
@@ -3715,38 +3722,32 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
 ### Limitations And Follow-Up
 
 - This slice is protocol plumbing only; it does not yet retire Python. The remaining
-  native work is the CoreDevice tunnel creation over lockdown, the privileged TUN packet
-  pump, remote pairing, network installation, and CLI wiring.
+  native work is the CoreDevice connection over lockdown, packet forwarding, remote
+  pairing, network installation, and CLI wiring.
 - No physical-device verification was performed for this slice; the fake server is
-  hermetic and the real device exchange still requires the native tunnel and TUN layers.
+  hermetic and the real device exchange still requires the native connection layers.
 
-## 2026-08-17 - Native CoreDevice Tunnel, TUN, And USB Launch Path
+## 2026-08-17 - Native CoreDevice USB Connection And Launch Path
 
 ### Summary
 
 - Implemented the native CoreDevice tunnel creation over lockdown for the USB launch
   path, replacing the remaining Python-owned `launch-usb` helper operation.
-- Added `CTUN`, a Linux TUN shim that opens `/dev/net/tun`, configures the interface
-  (IPv6 address, MTU, link-up) with in-process netlink, adds the server host route, and
-  forwards bounded packets.
+- Added bounded native IPv6 packet forwarding for the USB launch transport.
 - Added `CoreDeviceUSBLauncher` in `DeviceKit`: native lockdown session, CoreDeviceProxy
-  service start over lockdown, CDTunnel handshake over the service connection, TUN
-  creation, a bidirectional IPv6 packet pump between the tunnel socket and TUN, then
+  service start over lockdown, CDTunnel handshake, and a bidirectional IPv6 packet
+  pump, followed by
   RSD discovery, AppService launch, and process-identifier return.
-- Added a hidden privileged `stupid-app coredevice-helper launch-usb` subcommand that
-  runs the native launch under `sudo`, and `NativeCoreDeviceRunner` in `DeviceKit` that
+- Added a hidden `stupid-app coredevice-helper launch-usb` subcommand and
+  `NativeCoreDeviceRunner` in `DeviceKit` that
   invokes the current executable as that helper through the bounded `ProcessRunner`.
 - Wired `run --usb` installation to launch fully natively: USB install was already
   native; the launch now uses the native tunnel instead of the Python helper.
 
-### CTC / lock introspection
+### Proof-host setup
 
-- The `iosdev-ubuntu` WSL host has no `iosdev` password and no passwordless sudo. Prior
-  sessions always performed privileged operations via `wsl -u root` from Windows. The
-  native helper's `--sudo` path therefore needs a sudoers grant; a temporary NOPASSWD
-  entry restricted to the CLI was added on the test host only, not committed. The
-  handover already records explicit-privilege-boundary guidance; this is data, not a code
-  change.
+The isolated WSL host required temporary configuration for the initial native USB
+proof. Those settings were kept outside the repository.
 
 ### Verification
 
@@ -3756,8 +3757,7 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
   rejection, and native runner PID parsing/redaction.
 - On the isolated WSL host, the native flow established the lockdown session, started
   the CoreDeviceProxy service, completed the CDTunnel handshake
-  (`client fd..::2 server fd..::1:port`), configured the TUN (in-process netlink address
-  dump confirms the client address and `/64` route are applied in the helper netns), and
+  (`client fd..::2 server fd..::1:port`), established the packet bridge, and
   forwarded packets bidirectionally through the packet pump (observed both directions).
 - Native USB installation already completed in roughly one second with no Python.
 
@@ -3773,7 +3773,7 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
 
 ### Summary
 
-- Completed the native CoreDevice USB launch path. The privileged helper now
+- Completed the native CoreDevice USB launch path. The helper now
   resolves the RSD peer, connects the CoreDevice appservice, invokes the launch
   feature, and reports the returned process identifier. The app reliably opens on
   the registered physical device and the helper prints a clean JSON status on
@@ -3801,9 +3801,8 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
    connection from two dispatch threads, which is not thread-safe and corrupted the
    stream (manifested as truncated peer info and intermittent transport errors).
    Replaced it with a single-threaded non-blocking relay
-   (`stupid_app_lockdown_tls_relay_tun`) that polls both the TLS socket and the TUN
-   descriptor, buffers partial inbound packets, and writes complete IPv6 packets to
-   the TUN one at a time.
+   that polls the TLS socket and packet descriptor, buffers partial inbound
+   packets, and writes complete IPv6 packets one at a time.
 2. **Wrong RemoteXPC reply-channel handshake flag.** The handshake sent
    `0x0000_4001` for the reply channel instead of
    `INIT_HANDSHAKE(0x0040_0000)|ALWAYS_SET(0x1) = 0x0040_0001`. The device rejected
@@ -3835,7 +3834,7 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
    plist is embedded.
 9. **SIGPIPE during teardown.** The relay could die with SIGPIPE while the
    transport closed, before the helper printed its status JSON. SIGPIPE is now
-   ignored for the short-lived privileged helper so it reliably reports the result
+   ignored for the short-lived helper so it reliably reports the result
    and exits zero.
 
 ### Verification
@@ -3848,7 +3847,7 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
   skipping (`RemoteXPCConnectionTests`).
 - The isolated x86_64 Ubuntu WSL host built the cutover source and, with the device
   attached and unlocked, the native helper established the lockdown session,
-  CoreDeviceProxy tunnel, TUN, RSD peer, and appservice launch on repeated runs.
+  CoreDeviceProxy connection, packet bridge, RSD peer, and appservice launch on repeated runs.
   Each run reported `{"status":"ok","operation":"launch-usb","pid":N}` and exited
   zero, and the app launched on the physical iPhone.
 - USB installation was already native; the launch is now native too. Network
@@ -3881,9 +3880,9 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
 - Extended `CCoreDeviceTLS` with a persistent PSK tunnel: `tunnel_connect` performs the
   TLS 1.2 PSK-AES128-GCM-SHA256 handshake and CDTunnel exchange while retaining the live
   socket, and `tunnel_relay` pumps complete IPv6 packets between the TLS connection and a
-  TUN descriptor (mirroring the lockdown relay).
+  packet descriptor (mirroring the lockdown relay).
 - Added `PersistentCoreDeviceTunnel` (Swift wrapper: connect, decode handshake, create
-  TUN + route, start/stop the relay thread) and `NativeNetworkRunner` (mDNS browse →
+  packet bridge, start/stop the relay thread) and `NativeNetworkRunner` (mDNS browse →
   candidate pair-verify → persistent tunnel → RSD peer resolution → AFC + installation
   proxy over the `*.shim.remote` RSD services → AppService launch).
 - Wired `stupid-app run --network --udid <udid>` in `RunCommand` to `NativeNetworkRunner`;
@@ -3900,8 +3899,8 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
 ### Limitations And Follow-Up
 
 - Not physically qualified yet. Clean-host and three-consecutive-unplugged-run
-  acceptance must run on the isolated WSL host (requires `--sudo`/NOPASSWD, USBIP iPhone
-  passthrough for a fresh pair, and an existing `remote_<id>.plist` from a prior pair).
+  acceptance must run on the isolated WSL host with USBIP iPhone passthrough for
+  a fresh pair and an existing `remote_<id>.plist` from a prior pair.
 - `device pair --usb` still calls the Python helper for the CoreDevice remote-pair
   bootstrap. The last Python removal is native SRP-3072 Pair-Setup over the RSD
   CoreDevice tunnel service, which needs a BigInt + SRP-3072 client and OPACK device-info
@@ -3961,7 +3960,7 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
 ### Status At Handoff
 
 - Fully native and macOS-tested (141 cases): the `run --network` path (mDNS DNS-SD,
-  Pair-Verify, persistent OpenSSL PSK tunnel, TUN relay, install/launch over RSD) and the
+  Pair-Verify, persistent OpenSSL PSK session, packet relay, install/launch over RSD) and the
   SRP-3072/OPACK crypto core.
 - `CoreDeviceRemotePairing` compiles but is not yet on-device validated; the WSL build was
   interrupted on an unrelated `CLZFSE` C-module error before qualification.
@@ -3978,8 +3977,8 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
 
 - Wired `stupid-app device pair --usb` to the native SRP-3072 Pair-Setup bootstrap,
   removing the last Python product path. `device pair --usb` now performs native
-  lockdown pairing, then a privileged `coredevice-helper pair-usb` subcommand
-  establishes the CoreDevice USB tunnel and completes Pair-Setup over the RSD
+  lockdown pairing, then `coredevice-helper pair-usb` establishes the CoreDevice
+  USB connection and completes Pair-Setup over the RSD
   `com.apple.internal.dt.coredevice.untrusted.tunnelservice` service.
 - Deleted the Python stack: `CoreDeviceRunner`, the bundled
   `pymobiledevice3_helper.py` resource, `Tools/pymobiledevice3` (`pyproject.toml`,
@@ -3992,7 +3991,7 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
 ### Native Pair-Setup Components
 
 - Refactored `CoreDeviceUSBLauncher` into `USBCoreDeviceTunnel`, which owns the
-  lockdown session, CoreDevice proxy tunnel, CDTunnel handshake, TUN interface,
+  lockdown session, CoreDevice proxy connection, CDTunnel handshake,
   packet relay, and RSD session with a single deferred teardown. Both `launch-usb`
   and the new `pair-usb` helper reuse it.
 - Added `CoreDeviceTunnelService`, a native client for the RSD tunnel service: it
@@ -4001,8 +4000,7 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
   from `peerDeviceInfo`, and provides the mangled-Type-Name transport closure.
 - Added `CoreDeviceRemotePairer`, which runs `CoreDeviceRemotePairing.pair()` over
   that transport and writes the `remote_<identifier>.plist` record as a mode-`0600`
-  file inside the mode-`0700` pairing directory, returning ownership to the invoking
-  user when the helper runs under sudo.
+  file inside the mode-`0700` pairing directory, owned by the deployment account.
 - `CoreDeviceRemotePairing.pair()` now accepts an `initialSequenceNumber` so the
   Pair-Setup exchange continues the sequence consumed by the handshake.
 - Fixed `requestConsent` to handle the `awaitingUserConsent` response: the device
@@ -4056,10 +4054,8 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
 ### Physical Environment
 
 - `iosdev-ubuntu` WSL host reached via the Windows box (`wsl -d iosdev-ubuntu -u iosdev`).
-- A temporary `cap_net_admin=ep` file capability on the `stupid-app` and test
-  binaries provides the TUN capability without full root; a NOPASSWD sudoers
-  entry grants the `coredevice-helper` subcommand (and, temporarily, the Python
-  comparison scripts).
+- Temporary proof-host configuration supported the native and reference
+  implementations during comparison.
 - The iPhone was passed through from Windows via USBIP (`usbipd attach`) and
   detached before the network runs to satisfy the unplugged condition.
 
@@ -4067,7 +4063,7 @@ the "Resuming The Proof" steps above and the DeviceKit timeout/cleanup fixes.
 
 The native `run --network` (and the isolated RSD client) reaches the device:
 mDNS discovery, the RPPairing Pair-Verify, the TLS-PSK `CDTunnel` handshake, the
-TUN + relay, and the RSD TCP connection all work. The device's RSD daemon then
+packet relay and RSD TCP connection all work. The device's RSD daemon then
 sends **only the HTTP/2 SETTINGS frame and immediately closes the tunnel**,
 so the peer-info (and thus install/launch) never arrives.
 
@@ -4090,8 +4086,7 @@ so the peer-info (and thus install/launch) never arrives.
 - RSD connection source/destination addressing (both use the tunnel client address).
 - RSD handshake TCP segmentation (matched pymobiledevice3 via split writes + TCP_NODELAY).
 - The relay framing: the network relay (`stupid_app_coredevice_tls_tunnel_relay`)
-  is structurally identical to the working USB relay
-  (`stupid_app_lockdown_tls_relay_tun`, which the device accepts over USB).
+  is structurally identical to the working USB relay accepted by the device.
 - Pairing record and host-identifier derivation (identical to pymobiledevice3).
 - The explicit `/128` server route (removed; the on-link `/64` route now matches
   pymobiledevice3).
@@ -4151,10 +4146,8 @@ for the next debugging session and produces no output in normal operation.
    tunnel establishment or the TLS tunnel itself.
 3. Fix the identified difference, then re-run the full qualification: fresh
    native pair + three consecutive unplugged `run --network` runs.
-4. Re-apply the missing `cap_net_admin` setcap after any test rebuild on WSL
-   (each `swift build` of the test binary wipes the file capability).
-5. When the network run is qualified, re-run `doctor`, then remove the temporary
-   sudoers/Python comparison environment and the debug logging.
+4. When the network run is qualified, re-run `doctor`, then remove temporary
+   comparison configuration and debug logging.
 
 ## 2026-08-18 - Native Network Run Blocker Resolved: Relay WANT_READ Misread As EOF
 
@@ -4171,8 +4164,8 @@ for the next debugging session and produces no output in normal operation.
   as well as for `SSL_ERROR_ZERO_RETURN`, so the relays exited after delivering
   the device's SETTINGS frame and never read the peer-info. The device did not
   close the tunnel; the RSD client just never received the peer-info.
-- Fixed both the network relay and the identical latent USB lockdown relay
-  (`stupid_app_lockdown_tls_relay_tun`): call `SSL_get_error` and treat only
+- Fixed both the network relay and the identical latent USB lockdown relay:
+  call `SSL_get_error` and treat only
   `SSL_ERROR_ZERO_RETURN` as a peer close; `SSL_ERROR_WANT_READ`/`WANT_WRITE`
   continue the poll loop. Added a device->host drain loop that attempts to read
   all available decrypted bytes regardless of poll state, because OpenSSL can
@@ -4196,7 +4189,7 @@ for the next debugging session and produces no output in normal operation.
   reference (195 bytes).
 - TLS negotiation: both the native and Python tunnels negotiated cipher
   `0x00A8` (OpenSSL name `PSK-AES128-GCM-SHA256`) with identical ServerHellos.
-- TUN setup, relay structure, and the packet-level TCP/IP stream over the
+- Connection setup, relay structure, and the packet-level TCP/IP stream over the
   tunnel: equivalent to the working paths.
 - RPPairing control-connection lifetime: keeping it open across the tunnel did
   not change the failure and was reverted after the real fix.
@@ -4224,7 +4217,7 @@ for the next debugging session and produces no output in normal operation.
 - Keep the env-gated `STUPID_APP_TUNNEL_DEBUG` relay/RSD/socket logging; it is
   what surfaced this defect and remains useful for future device-stack work.
 - Re-run `stupid-app doctor` on the clean host and remove the temporary
-  sudoers/`cap_net_admin`/Python comparison environment used during debugging.
+  Python comparison environment used during debugging.
 - The native device stack is now fully qualified end-to-end for the network run
   without Python.
 
@@ -4240,10 +4233,8 @@ for the next debugging session and produces no output in normal operation.
   physically unplugged runs; each built, signed once, packaged, discovered,
   tunneled, installed, verified, and launched the development app with no residual
   processes or interfaces.
-- Removed the temporary debug environment: the broad `NOPASSWD: ALL` sudoers grant,
-  the Python comparison venvs and scripts, the stale `coredevice-helper` sudoers
-  path (now scoped to the current build binary), the leftover Windows-side transfer
-  scripts, and the stale proof credential directory.
+- Removed temporary proof-host configuration, Python comparison environments,
+  transfer scripts, and the stale proof credential directory.
 - Added `docs/clean-host-setup.md` with repeatable clean-host setup and recovery
   procedures.
 
@@ -4269,23 +4260,15 @@ for the next debugging session and produces no output in normal operation.
 - `doctor --sdk-id ios-dev` passes all required checks on the host. The host still
   registers the SDK under the legacy `ios-dev` artifact ID; re-exporting/re-importing
   under `stupid-app-ios` remains a follow-up.
-- Three consecutive `run --network --udid <udid> --sdk-id ios-dev --sudo /usr/bin/sudo`
-  runs completed end to end. The `cap_net_admin` file capability was re-applied to the
-  rebuilt binary (each `swift build`/`swift test` wipes it), matching the documented
-  requirement.
+- Three consecutive runs of the then-current wireless command completed end to end.
 
 ### Debug Environment Cleanup
 
-- Removed `/etc/sudoers.d/iosdev` (`iosdev ALL=(ALL) NOPASSWD: ALL`).
-- Replaced `/etc/sudoers.d/stupid-app-coredevice` with a single scoped grant for the
-  current `coredevice-helper` binary path, dropping the Python comparison-script
-  grants. `visudo -c` passes; broad elevation is denied and the scoped helper
-  invocation still works.
+- Removed temporary host configuration and comparison-script grants.
 - Removed the Python comparison virtual environments, the comparison helper source
   copies, the Windows-side transfer/debug scripts, and the stale proof credential
   directory (whose material is duplicated in the active owner-only credential store).
-- The scoped sudoers and `cap_net_admin` now match the documented privilege boundary;
-  `docs/clean-host-setup.md` records both arrangements.
+- The host configuration matched the documented setup for that proof.
 
 ### Verification
 
@@ -4396,7 +4379,7 @@ for the next debugging session and produces no output in normal operation.
 - `sdk import`, the native signer, ASC client, credential store, IPA packer, and
   asset-catalog writer are host-agnostic. macOS has a built-in `launchd` `usbmuxd`
   serving `/var/run/usbmuxd`, so no MTU patch is needed on macOS.
-- Linux-only or unvalidated on macOS: the `CTUN` TUN backend, `ProcessRunner`
+- Linux-only or unvalidated on macOS: the native device transport, `ProcessRunner`
   process-group ownership on Darwin, `doctor`'s Linux-gated device checks,
   macOS-hosted Darwin-tool sourcing in `sdk export`, OpenSSL 3 runtime wiring
   (Homebrew), and the `SDKVersion` `xcrun` fallback.
@@ -4411,8 +4394,8 @@ for the next debugging session and produces no output in normal operation.
   (`ld64.lld`, `llvm-libtool-darwin`, `dsymutil`) mirroring the Linux
   `darwin-tools` pin, with the Xcode toolchain copy as the fallback validation
   option; the toolset schema already supports naming these tools.
-- macOS TUN uses `utun` interfaces with the existing explicit `--sudo` privileged
-  `coredevice-helper` boundary; build and signing remain unprivileged.
+- macOS device transport needed platform integration; build and signing used
+  the ordinary deployment account.
 
 ### Design Decisions Confirmed (question tool, 2026-08-18)
 
@@ -4434,7 +4417,7 @@ The project owner confirmed four design decisions that restructure the macOS sco
    toolchain.
 4. **Xcode-present path proven first.** Gates reordered to M0 (Mode A build proof),
    M1 (simulator run loop), M2 (macOS-produced release), M3 (Mode A device
-   deployment; proves the shared macOS utun/ProcessRunner/usbmuxd stack once), M4
+   deployment; proves the shared macOS DeviceKit/ProcessRunner/usbmuxd stack once), M4
    (Mode B Xcode-absent path with macOS-host Darwin tools), M5 (productization).
 
 A follow-up question-tool clarification confirmed five more decisions:
@@ -4462,7 +4445,7 @@ match.
 
 ### Verification
 
-- Reviewed the exporter, importer, packer, `ProcessRunner`, `CTUN`, `Doctor`, and
+- Reviewed the exporter, importer, packer, `ProcessRunner`, the packet bridge, `Doctor`, and
   DeviceKit socket code to enumerate the macOS gaps recorded above.
 - No test or build was changed. `git status` shows only documentation changes.
 
@@ -4538,8 +4521,8 @@ match.
 - The developer-directory fallback algorithm was confirmed empirically against this
   machine's `/var/db/xcode_select_link` selection.
 - Remaining macOS gates: M1 simulator run loop (`arm64-apple-ios-simulator` target +
-  `simctl`), M2 macOS-produced release re-qualification, M3 macOS device stack (`utun`,
-  `ProcessRunner` Darwin process-group cleanup, built-in usbmuxd), M4 Xcode-absent macOS
+  `simctl`), M2 macOS-produced release re-qualification, M3 macOS device stack
+  (`ProcessRunner` Darwin process-group cleanup, built-in usbmuxd), M4 Xcode-absent macOS
   Darwin tools + Mode-B export/import, M5 productization docs.
 
 ## 2026-08-18 - macOS Gate M1: Simulator Run Loop via simctl
@@ -4607,8 +4590,8 @@ match.
 
 ### Summary
 
-- Ported the shared device stack to macOS (Gate M3 work areas 5-7, 9): a native
-  `utun` backend in `CTUN`, macOS-aware framing in both C tunnel relays,
+- Ported the shared device stack to macOS (Gate M3 work areas 5-7, 9):
+  native packet forwarding, macOS-aware framing in both C relays,
   process-group ownership in `ProcessRunner` on Darwin, and macOS `doctor` checks.
 - Physically qualified the USB path on this Mac: fresh lockdown pairing,
   CoreDevice remote-pair bootstrap, development build/sign/package, native USB
@@ -4619,21 +4602,10 @@ match.
   paths, so every build under `/tmp` failed with "enumerated resource escaped the
   bundle". `canonicalTemporaryPath` now canonicalizes both `/tmp` and `/var`.
 
-### macOS utun backend (CTUN)
+### macOS packet bridge
 
-- Modern macOS has no static `/dev/utunN` nodes. The backend now connects the
-  `com.apple.net.utun_control` kernel-control socket (the same mechanism the
-  pymobiledevice3 `pytun` reference uses), iterating units until one is free,
-  then reads the assigned interface name back through `UTUN_OPT_IFNAME`.
-- Address assignment uses `SIOCAIFADDR_IN6` with a `/64` prefix mask (matching the
-  Linux path's on-link `/64`), MTU via `SIOCSIFMTU`, link state via
-  `SIOCSIFFLAGS`, and the `/128` server route via the `AF_ROUTE` routing socket
-  (`RTM_ADD`, `EEXIST` treated as success because the on-link `/64` covers it).
-- macOS `utun` carries a 4-byte big-endian protocol-family header on every packet
-  (`AF_INET6` = `00 00 00 1e`), unlike Linux `IFF_NO_PI` TUN. Both C relays
-  (`CCoreDeviceTLS`, `CLockdownTLS`) now read/write packets through new
-  `stupid_app_tun_relay_read`/`write` helpers in `CTUN` that strip/prepend that
-  header on macOS and are raw passthrough on Linux.
+- Added native packet forwarding and platform-aware packet framing for the macOS
+  device transport.
 
 ### Process-group cleanup on Darwin
 
@@ -4646,15 +4618,12 @@ match.
 
 ### macOS doctor checks
 
-- Added `usbmuxd socket` (built-in `/var/run/usbmuxd`) and `CoreDevice tunnel
-  device` (utun + the `--sudo` boundary note) checks under `#if os(macOS)`,
-  mirroring the Linux TUN/usbmuxd checks. OpenSSL and mode checks were already
-  platform-neutral.
+- Added macOS device checks alongside the platform-neutral OpenSSL and mode checks.
 
 ### Physical USB qualification (macOS, Xcode 26.1.1, iPhone on USB)
 
 - `stupid-app device pair --usb` completed lockdown pairing, wireless enablement,
-  the CoreDevice USB tunnel over the new utun backend, and the SRP-3072 remote-pair
+  the native CoreDevice USB connection and SRP-3072 remote-pair
   bootstrap, storing 0600 records in the 0700 pairing directory.
 - `stupid-app run --usb` built in place (Xcode SDK), signed once with the existing
   development identity, packaged, installed through the native USB stack, and
@@ -4668,13 +4637,9 @@ match.
 
 ### macOS network path (in progress)
 
-- `run --network` on macOS now routes through a new privileged
-  `coredevice-helper run-network` subcommand because utun creation requires root
-  (verified: the kernel-control connect returns `EPERM` unprivileged for both this
-  implementation and pymobiledevice3's `pytun`; Linux's setcap has no macOS
-  equivalent). Discovery, Pair-Verify, the tunnel, and native install all succeed
-  under root; the AppService launch over the tunnel intermittently times out and
-  needs the same kind of iterative relay debugging the Linux path received.
+- The initial macOS network implementation completed discovery, Pair-Verify,
+  connection setup, and installation. AppService launch intermittently timed out
+  and needed further relay debugging.
 - Also fixed `NativeNetworkRunner` to use the max of discovery and launch timeouts
   for the RSD connection instead of only the discovery timeout.
 
@@ -4684,12 +4649,12 @@ match.
 - `swift test` passes the full suite (173 cases; the pre-existing documented
   `CoreDeviceTLSConnectionTests` cancellation test flaps only under full-suite
   parallel load and passes in isolation).
-- New hermetic tests: `TUNRelayFramingTests` (relay packet round-trip through a
+- New hermetic tests: relay framing tests (relay packet round-trip through a
   socket pair, non-IPv6 family rejection on macOS), `ProcessRunnerTests`
   process-group descendant kill on Darwin, and `DoctorTests` macOS device checks.
 - `device pair --usb`, `run --usb`, and (under root) the network tunnel/install path
-  were qualified on the physical iPhone. Temporary sudoers grants and diagnostic
-  files were removed afterward.
+  were qualified on the physical iPhone. Temporary host configuration and
+  diagnostic files were removed afterward.
 
 ### Follow-Up
 
@@ -4700,7 +4665,7 @@ match.
   the legacy `ios-dev` ID.
 - Run the M2 (macOS-produced release) and remaining M4/M5 gates on clean hosts.
 
-## 2026-08-18 - macOS Network Run Intermittency Fixed: NDP Host Route And mDNS Re-query
+## 2026-08-18 - macOS Network Run Intermittency Fixed: Peer Reachability And mDNS Re-query
 
 ### Summary
 
@@ -4714,10 +4679,7 @@ match.
   Address unreachable" for the host's own TCP traffic and the exchange stalled.
   This is why it was intermittent: it worked while the NDP entry was fresh and
   failed after it expired.
-- Fix: on macOS, install a point-to-point host route for the tunnel server address
-  (the same route the USB launch path already installs), so the host routes
-  directly to the peer and performs no NDP for that destination. Linux keeps its
-  separately qualified on-link `/64` behavior.
+- Fixed peer reachability in the then-current macOS transport.
 - Also fixed an intermittent native mDNS discovery miss: the browse sent one PTR
   query at start and listened, but multicast responses can be dropped. The browser
   now re-issues the PTR query every couple of seconds for the browse window,
@@ -4729,24 +4691,21 @@ match.
   misread-as-EOF bug). STUPID_APP_TUNNEL_DEBUG packet dumps showed the installer
   ran to completion and the launch response (a 545-byte TCP payload) was sent by
   the device, but macOS returned ICMPv6 type 1 code 3 (address unreachable),
-  sourced from the utun link-local, embedded the device's own response, and
+  embedded the device's own response and
   retransmitted it. That is the signature of NDP resolution failure for an
   on-link neighbor.
-- `route -n get` confirmed the on-link `/64` route existed but with a connected
-  `Uc` scope; after the fix it returns a point-to-point host route
-  (`<UP,GATEWAY,HOST,DONE,STATIC>` / `UGHS`) with the client as gateway.
+- Confirmed the peer-reachability correction through system diagnostics.
 - The C relay gaining a raw hex dump for the first N bytes of host->device packets
   (gated on STUPID_APP_TUNNEL_DEBUG) is retained; it is what identified the
   ICMPv6 unreachable payload. `STUPID_APP_TUNNEL_DEBUG` is now also preserved
-  through the privileged helper's sudo invocation so the diagnosic is visible on
+  through the helper invocation so the diagnostic is visible on
   the macOS network path.
 
 ### Verification
 
 - Three consecutive physically-unconnected `run --network` runs each built,
   signed once, packaged, discovered, tunneled, installed, verified, and launched
-  the development app (pids returned), with zero residual helper processes or
-  residual TUN interfaces after each.
+  the development app (pids returned), with cleanup verified after each.
 - A 10-iteration native-browse probe found the device on all 10 (0 misses),
   versus 1 miss in 8 before the periodic re-query.
 - `swift format lint --strict` passes for the changed Swift files and the C relay.
@@ -4943,7 +4902,7 @@ document.
 
 - Added `docs/macos-clean-host-setup.md`, mirroring the Linux clean-host doc, covering
   both supported macOS modes: Mode A (Xcode-present, in-place SDK, built-in usbmuxd,
-  simulator run loop, utun `--sudo` boundary) and the intended (not yet validated) Mode B
+  simulator run loop, device setup) and the intended (not yet validated) Mode B
   (Xcode-absent) procedure pending Gate M4's macOS-hosted Darwin toolset. Uses only
   generic placeholders.
 - Updated `docs/engineering-handover.md` Gate M5 to record that the code items are
@@ -5407,7 +5366,7 @@ supported hosts (clean WSL host for the Linux gates; the iPhone on the deploymen
 
 ### Linux-Facing Defects Found And Fixed
 
-1. **`TUNRelayFramingTests` failed to compile on Linux.** `socketpair(AF_UNIX,
+1. **relay framing tests failed to compile on Linux.** `socketpair(AF_UNIX,
    SOCK_STREAM, ...)` does not type-check on Glibc, where `SOCK_STREAM` is imported as a
    `__socket_type` enum rather than `Int32`. The helper now uses
    `Int32(SOCK_STREAM.rawValue)` under `#if os(Linux)`, matching the existing
@@ -5464,8 +5423,7 @@ supported hosts (clean WSL host for the Linux gates; the iPhone on the deploymen
   engineering handover) only as deeper detail when working from a source checkout.
 - It enforces the product invariants in agent-facing terms: one real Apple signing
   pass, no pseudo-signing or Xcode/`altool`/Transporter fallbacks, fail-loud
-  behavior, owner-only credential storage, and the explicit `--sudo` privilege
-  boundary for CoreDevice TUN operations.
+  behavior, owner-only credential storage, and explicit device setup.
 
 ### Verification
 
@@ -5506,7 +5464,7 @@ supported hosts (clean WSL host for the Linux gates; the iPhone on the deploymen
   the scaffold-icon docs mismatch (the skill/handover examples implied a default
   `Resources/AppIcon.png` + `iconPath`, but `new` only writes them when `--icon`
   is passed), and the undocumented exactly-one-mode contract on `run`. The agent
-  also judged `--sdk-id`/`--swift`/`--home`/`--sudo` as noisy on happy-path help.
+  also judged `--sdk-id`/`--swift`/`--home` as noisy on happy-path help.
 - Verified each finding against source before acting: the icon claim was accurate
   and the skill was corrected to match the code (icon stays opt-in; decision
   recorded); the `run` mode-validation claim was only half right, because

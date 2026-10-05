@@ -24,9 +24,11 @@ Each phase has a verification command that must pass before the next phase.
 
 ### 1. System packages
 
+Have the host administrator install the system dependencies:
+
 ```bash
-sudo apt-get update
-sudo apt-get install -y \
+apt-get update
+apt-get install -y \
   build-essential clang cmake ninja-build git curl \
   libssl-dev libicu-dev libxml2-dev libsqlite3-dev \
   libzstd-dev python3 zip unzip
@@ -69,37 +71,20 @@ network runs.
 Verification: `stupid-app doctor` reports the pairing records check as
 `PASS`.
 
-### 5. Privilege boundary for TUN
+### 5. Wireless development
 
-USB CoreDevice pairing/launch and wireless crash pulls create a TUN interface and
-need privileged access. Wireless installs use an in-process tunnel and need neither
-TUN nor `CAP_NET_ADMIN`. The CLI
-never elevates implicitly. Two supported arrangements:
-
-- **Setcap on the binary (proof-host arrangement):** the USB/diagnostic operation stays
-  unprivileged and the binary is granted the capability.
-  ```bash
-  sudo setcap cap_net_admin=ep .build/debug/stupid-app
-  ```
-  Every rebuild wipes the capability; re-apply after `swift build`/`swift test`.
-- **Scoped sudo grant (product arrangement):** install the binary root-owned and grant
-  only the helper subcommand in sudoers.
-  ```bash
-  sudo install -o root -g root -m 755 .build/release/stupid-app /usr/local/bin/stupid-app
-  echo 'iosdev ALL=(root) NOPASSWD: SETENV: /usr/local/bin/stupid-app coredevice-helper *' \
-    | sudo tee /etc/sudoers.d/stupid-app-coredevice
-  sudo chmod 440 /etc/sudoers.d/stupid-app-coredevice
-  sudo visudo -c
-  ```
-  The CLI then runs with `--sudo /usr/bin/sudo`. Do not grant broad `NOPASSWD: ALL`.
+Pair the phone once, then run `stupid-app run --network --udid <udid>` with the
+phone unlocked on the host's network. The CLI manages the process-local connection
+for each deployment. Initial pairing and USB operations have host-specific setup;
+consult the relevant command's `--help` before using them.
 
 ### 6. USB transport (MTU-patched usbmuxd)
 
 Stock Ubuntu `usbmuxd` 1.1.1 uses a 49,152-byte USB transfer unit whose zero-length
 packet boundary is lost through WSL USBIP, so large IPA transfers stall. The qualified
 `USB_MTU=16383` build forces a physical short-packet boundary and completes installs. It
-links against the current system libplist and is provisioned as a persistent systemd
-service:
+links against the current system libplist. Have the host administrator provision it
+as a persistent systemd service:
 
 ```bash
 # Build once from the ignored usbmuxd-1.1.1-patched source with USB_MTU=16383,
@@ -149,15 +134,13 @@ stupid-app release status
 ### The network run stops discovering the device
 
 1. Confirm the iPhone is unlocked, on the same LAN, and disconnected from USB.
-2. Confirm the phone is unlocked and the saved remote pairing still exists;
-   wireless installs need no capability or sudo grant after a rebuild.
-3. Confirm the pairing record still exists:
+2. Confirm the pairing record still exists:
    `ls ~/.stupid-app/credentials/pairing/remote_*.plist`.
-4. If the record is gone or a fresh device was introduced, run
+3. If the record is gone or a fresh device was introduced, run
    `stupid-app device pair --usb` once (requires USB) then retry. A fresh pair shows
    an on-device Trust dialog; pass a generous `--timeout` (e.g. `--timeout 180`)
    because the default 30 seconds can expire before the dialog is answered.
-5. Re-run `stupid-app doctor` and fix any failures.
+4. Re-run `stupid-app doctor` and fix any failures.
 
 ### The host was re-imported or restored from an image
 
@@ -169,9 +152,8 @@ so after restore:
 2. Re-run `credentials add` and `signing setup` (phase 3) or restore the credential
    directory from a secure owner-only backup.
 3. Re-pair the device (phase 4) or restore the pairing directory.
-4. Re-apply the privilege boundary (phase 5).
-5. Re-enable the MTU-patched usbmuxd service (phase 6).
-6. Run `doctor` (phase 7).
+4. Re-enable the MTU-patched usbmuxd service (phase 6).
+5. Run `doctor` (phase 7).
 
 Treat WSL exports, virtual disks, and backups as secret-bearing once credentials are
 present, and store them with equivalent protection to the credential directory.
@@ -182,12 +164,11 @@ Keep the VM alive with `vmIdleTimeout=-1` in the Windows `.wslconfig`. A stopped
 invalidates the non-persistent USBIP attach and kills `usbmuxd`, which appears as
 mux/lockdownd failures on USB paths.
 
-### A residual process or TUN interface is left behind
+### A deployment does not stop cleanly
 
-The native stack cleans up on success, failure, timeout, and cancellation. If a stale
-interface appears, find it with `ip -o link show type tun` and remove it as root
-(`sudo ip link delete <ifname>`), then re-run `doctor`. Report any reproducible leak as
-a defect; manual `pkill` should never be a routine step.
+The CLI owns the wireless connection for the deployment. Stop the command and
+check that its process exits. Retain the command output when reporting a
+reproducible cleanup defect.
 
 ## References
 

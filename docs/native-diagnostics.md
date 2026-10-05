@@ -44,7 +44,7 @@ machinery is present — the diagnostic layer reuses it rather than adding a dep
 Routes under `device`, matching the existing `device pair` shape:
 
 ```text
-stupid-app device crash [--path <file>] [--udid <udid>] [--filter <name>] [--network] [--sudo <path>] [--json] [--home <dir>]
+stupid-app device crash [--path <file>] [--udid <udid>] [--filter <name>] [--network] [--json] [--home <dir>]
 stupid-app device console [--udid <udid>] [--filter <predicate>] [--process <name>] [--timeout <sec>] [--usb|--network]
 stupid-app device apps [--udid <udid>] [--bundle-id <id>] [--usb|--network]
 stupid-app device fs --domain <crash|app|container> [--udid <udid>] [--usb|--network] (<fetch>|<backup>|<restore>) ...
@@ -59,8 +59,7 @@ Highlights:
   `--network`, over the wireless CoreDevice tunnel (`shim.remote`), and parses both
   the JSON `.ips` payload and the legacy text (`cpu_resource`/`jetsam`) reports.
   `--json` emits machine-readable fields. The network pull runs through the
-  privileged `coredevice-helper crash-network` subcommand and needs `--sudo` on
-  macOS (TUN creation) but is in-process on Linux.
+  native diagnostic service implementation.
 - `device console` streams framed logs and prints `App terminated due to signal N`;
   `--filter`/`--process` drop chatty frames at the source.
 - `device apps` reports installed version/build for the project bundle, immediately

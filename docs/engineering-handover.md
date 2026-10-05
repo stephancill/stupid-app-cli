@@ -21,47 +21,31 @@ build through Xcode's SDK in place with the real `LC_BUILD_VERSION` SDK value. T
 simulator run loop is also implemented (Gate M1): `stupid-app simulators` lists
 runtimes/devices and `stupid-app run --simulator [--udid <id>]` builds for
 `arm64-apple-ios-simulator` in place, ad-hoc signs the app, and boots/installs/launches
- through `simctl`. The macOS device stack (Gate M3) is now ported: a native `utun`
- backend in `CTUN` (kernel-control socket), macOS-aware 4-byte framing in both C tunnel
- relays, Darwin process-group cleanup in `ProcessRunner` (posix_spawn group leader), and
-  macOS `doctor` checks. Apple Silicon local compatibility execution is implemented as
-  `stupid-app run --mac`: it retains the ordinary
-  `arm64-apple-ios` build and development profile, creates the `Wrapper/<app>.app` plus
-  `WrappedBundle` install shape, registers it with LaunchServices, registers each nested
-  `.appex` with PlugInKit through the public `pluginkit -a`, and launches through
-  UIKitSystem. Nested Safari Web Extension web content (provider, content scripts, background
-  page, EIP-6963 announce) is elected and runs in Safari, but native messaging is not available:
-  Safari cannot spawn the iOS appex plugin for `sendNativeMessage` because the install does not
-  register it with launchd/RBS (only the entitled installer/Xcode/TestFlight creates that
-  registration). `device pair --usb`
- and `run --usb` are physically qualified on a
- Mac against a connected iPhone. In 0.0.20, `run --network` and the GUI's wireless
- Run use the process-local lwIP tunnel without sudo/TUN/routes on both hosts.
- The prior kernel helper remains for USB and wireless crash diagnostics; its
- original three-run wireless qualification is historical. A later 8 MiB extension-bearing IPA
- exposed an AFC staging stall caused by oversized tunnel segments; the MTU fix
- described below resolved that regression. The earlier AppService launch intermittency was an
- IPv6 neighbor-discovery problem (macOS performed NDP on the on-link `/64` and the device
- never answered, so the host returned "address unreachable" once the neighbor entry aged
- out); the network tunnel now installs a point-to-point host route for the server address
-on macOS. Remote-pairing discovery now uses the system DNS-SD API (`DNSServiceBrowse`,
-`DNSServiceResolve`, `DNSServiceGetAddrInfo`) instead of a hand-rolled multicast socket: a raw
-`sendto` to `224.0.0.251` fails with `EHOSTUNREACH` on current macOS (no unscoped multicast
-route, and Local Network privacy does not grant raw multicast), which made `run --network` fail
-before trying any candidate. The SRV port from `DNSServiceResolve` is network byte order and is
-now byte-swapped. The large-IPA AFC staging stall was the tunnel MTU: Apple advertises a 16 KiB
-client MTU, macOS then hands the TUN 16 KiB TSO super-segments, and the iOS peer stalls on them
-(the device never acknowledges the oversized data, so the upload and the AFC status response
-deadlock). Clamping the tunnel MTU to 1500 makes unplugged install-and-launch complete. The Xcode-present release path (Gate M2) is now
-  qualified: a macOS-produced distribution IPA passed `codesign --verify --strict`,
-  processed to `VALID`/internal `IN_BETA_TESTING`, and installed and launched through
-  TestFlight on the physical device (it had to reuse the WSL-provisioned distribution
-  identity and App Store profile because Apple's distribution-certificate limit blocks
-  minting a new one). The Xcode-absent
-  macOS path (M4) remains. Linux remains the validated reference host and macOS must pass
-  its own clean-host proof gates (Gate M0: Xcode-present build; M1: simulator run loop; M2:
-  macOS-produced release; M3: Xcode-present device deployment; M4: Xcode-absent path; M5:
-  productization).
+through `simctl`. The shared DeviceKit stack supports macOS device deployment
+(Gate M3), with platform-aware process cleanup and `doctor` checks. Wireless
+deployment uses the process-local lwIP transport on macOS and Linux as of 0.0.20.
+The GUI's wireless Run invokes the same CLI command.
+
+Apple Silicon local compatibility execution uses `stupid-app run --mac`. It
+retains the device build and development profile, creates the
+`Wrapper/<app>.app` plus `WrappedBundle` layout, registers the app and nested
+extensions, and launches through UIKitSystem. Safari Web Extension web content
+runs in Safari. Native messaging requires the plugin registration created by an
+Apple installer, so use TestFlight or an Xcode-installed build for that flow.
+
+`device pair --usb` and `run --usb` are physically qualified on a connected
+iPhone. Wireless discovery uses the system DNS-SD API. The process-local
+transport caps the MTU at 1500 and uses the advertised RSD service ports.
+The Xcode-present release path (Gate M2) is now
+qualified: a macOS-produced distribution IPA passed `codesign --verify --strict`,
+processed to `VALID`/internal `IN_BETA_TESTING`, and installed and launched through
+TestFlight on the physical device (it had to reuse the WSL-provisioned distribution
+identity and App Store profile because Apple's distribution-certificate limit blocks
+minting a new one). The Xcode-absent
+macOS path (M4) remains. Linux remains the validated reference host and macOS must pass
+its own clean-host proof gates (Gate M0: Xcode-present build; M1: simulator run loop; M2:
+macOS-produced release; M3: Xcode-present device deployment; M4: Xcode-absent path; M5:
+productization).
 
 The project is in technical validation. Gate 0 (SDK and compiler proof) is complete: a
 device-only, checksummed iPhoneOS Swift SDK bundle is exported on macOS by
@@ -109,23 +93,19 @@ registration, development certificate/profile creation, entitlement reconciliati
 one-pass signing, IPA packaging, USB installation, and launch were exercised on a
 physical iPhone. WSL USBIP required a qualified `usbmuxd` 1.1.1 build using 16,383-byte
 short-packet transfers; the stock 49,152-byte transfer size is corrupted by USBIP.
-Launch on iOS 26.6 required a privileged USB-bootstrapped CoreDevice tunnel because
-the legacy DVT lockdown service returns `InvalidService`. The proof is complete, but
-integrating that privileged tunnel lifecycle into `run --usb` remained Gate 4 work.
+Launch on iOS 26.6 uses the native CoreDevice USB services because the legacy DVT
+lockdown service returns `InvalidService`. The lifecycle is integrated into `run --usb`.
 
-Gate 4 (wireless transport proof) is complete on the isolated WSL host. The CLI now
-bootstraps CoreDevice remote pairing through `stupid-app device pair --usb`, stores the
-record under the permission-hardened credential directory, and performs discovery,
-one-shot TCP tunneling, development installation verification, and launch through
-`stupid-app run --network --udid <udid>`. Three consecutive physically unplugged runs
-completed with no surviving helper process or tunnel interface. The frozen helper uses
-Python 3.13, pymobiledevice3 8.2.1, and construct-typing 0.7.0; Python 3.12's compatibility
-TLS-PSK path failed against the remote TCP listener with `NO_CIPHERS_AVAILABLE`.
+Gate 4 (wireless transport proof) is complete on the isolated WSL host. The CLI
+bootstraps CoreDevice remote pairing through `stupid-app device pair --usb` and
+stores the record under the permission-hardened credential directory. Wireless
+installation and launch use `stupid-app run --network --udid <udid>`. Version 0.0.20
+uses the process-local lwIP transport; current qualification is recorded below.
 
 Gate 5 (product CLI) is in progress. `stupid-app doctor` now performs structured
 pass/warning/failure checks for the host Swift and imported SDK compatibility pair,
-native signing trust, the native CoreDevice TLS and privileged helper,
-credential/signing/pairing presence and permissions, Linux tunnel/usbmux prerequisites,
+native signing trust, the native CoreDevice TLS and helper availability,
+credential/signing/pairing presence and permissions, host-specific device prerequisites,
 and project configuration. It exits unsuccessfully for required-environment failures
 without reading or printing secret contents. The proposed command surface is complete
 including `release status`. The temporary debug environment was removed and `doctor`
@@ -167,8 +147,7 @@ The network run path is now fully native: a Swift mDNS DNS-SD browser discovers
 saved remote pairing record and performs the X25519/HKDF-SHA512/ChaCha20-Poly1305
 Pair-Verify over the advertised listener, and a persistent OpenSSL TLS-PSK tunnel
 (added to `CCoreDeviceTLS`) relays IPv6 packets to the process-local lwIP stack
-for installs as of 0.0.20. USB and wireless crash diagnostics retain kernel TUN. `device pair --usb` is
-also fully native: it performs fresh native lockdown pairing, then a privileged helper
+for installs as of 0.0.20. `device pair --usb` performs native lockdown pairing, then
 establishes the CoreDevice USB tunnel, runs the SRP-3072 Pair-Setup exchange over the RSD
 `com.apple.internal.dt.coredevice.untrusted.tunnelservice` service, and writes the
 `remote_<identifier>.plist` record. The pinned Python stack (`CoreDeviceRunner`, the
@@ -265,7 +244,7 @@ stupid-app signing setup [--key-id --issuer-id --p8 --team-id] [--bundle-id ...]
   2. Extracts the identity to PEM (certificate via `security find-certificate -c`; private
      key via `security export -t identities -f pkcs12` split through `openssl pkcs12`).
      Keychain export policy: try a non-interactive export first so an already-authorized
-     or `sudo` run succeeds, and only invoke the interactive Keychain authorization dialog
+     export succeeds; invoke the interactive Keychain authorization dialog
      when the item is access-restricted. Temp p12 lives in a `0700` temp directory and is
      deleted; credential material is never logged.
   3. Stores key and certificate via the existing `IdentityManager`
@@ -711,7 +690,7 @@ Storage requirements:
 - Credential directories use mode `0700`.
 - Secret files use mode `0600`.
 - Writes are atomic.
-- Secret files are plaintext and readable only by the owning account and root/sudo.
+- Secret files are plaintext and protected by owner-only filesystem permissions.
 - No credential passphrase or `STUPID_APP_CREDENTIAL_PASSWORD` is used.
 - Credential reads fail loudly; they do not fall back to legacy ASC environment
   variables after a store error.
@@ -872,7 +851,7 @@ Initial direction:
   pairing, lockdown session TLS, wireless enablement, service startup, AFC staging,
   installation proxy, and exact installed-bundle verification. The native
   OpenSSL 3 TLS-PSK/`CDTunnel` connection is also implemented independently in
-  `DeviceKit`; launch and network orchestration still use the privileged helper.
+  `DeviceKit`; native runners own launch and network orchestration.
 - Diagnostic features (crash/`.ips` reports, live syslog/consle, installed-build
   lookup, app-container file copy) are built on the same native lockdown services
   that the install/launch path already uses, so they behave identically on macOS and
@@ -886,38 +865,24 @@ Initial direction:
   prerequisite for Gate 4 or Gate 5 while the qualified external transport remains the
   supported path.
 
-The device stack is now fully native: fresh lockdown pairing, the CoreDevice USB tunnel,
-the SRP-3072 remote-pair bootstrap, the mDNS network path, the Pair-Verify tunnel, and
-network install/launch all run without Python. The `device pair --usb` and `run --usb`
-paths use a privileged `coredevice-helper` subcommand invoked through an explicit `--sudo`
-boundary; the CLI never silently elevates. The external `usbmuxd` daemon remains an
-external dependency of the native stack. The TUN backend is platform-native: `/dev/net/tun`
-on Linux and a `utun` kernel-control backend on macOS (which requires the same privileged
-boundary, so macOS network runs use a `coredevice-helper run-network` subcommand).
+DeviceKit owns the device protocols. Initial device pairing runs over USB;
+wireless deployment reads its saved pairing record and discovers the phone on the
+host's network. The external `usbmuxd` daemon supports USB operations.
 
-The current WSL host is on the same physical LAN as the iPhone and uses WSL mirrored
-networking, making it a better wireless test environment than a public VPS.
-`usbipd-win` is installed and USB pass-through, trust/pairing, development installation,
-and USB-bootstrapped CoreDevice launch were validated. CoreDevice launch requires
-privileged TUN creation. Modern network discovery, remote pairing, unplugged TCP
-tunneling, installation, launch, and cleanup are now proven. The helper requires an
-explicit privilege boundary for TUN creation and route ownership; the CLI does not
-invoke sudo unless the operator passes `--sudo`.
+The WSL proof host uses mirrored networking on the phone's LAN. USB pass-through,
+initial pairing, development installation, and launch have been physically
+validated there. Current wireless qualification is described below.
 
 ### Userspace Wireless Transport (promoted in 0.0.20)
 
-`run --network` now eliminates TUN/utun and host routes for repeated wireless
-deployment on macOS and Linux. The GUI's wireless Run uses the same CLI path,
-and a separate `userspace-tunnel-spike` executable retains deeper proof checks. It reuses native discovery,
-Pair-Verify, TLS-PSK/CDTunnel, RSD, AFC, installation proxy, and AppService. A pinned
-lwIP 2.2.1 IPv6/TCP stack exchanges bare packets with the TLS relay over a local
-socketpair; an injected RSD socket factory returns connected local stream sockets.
-No root, sudo, network capability, Python, or Go runtime is needed by this path.
-Existing saved remote pairings remain required. Fresh USB bootstrapping, USB
-launch, and wireless crash diagnostics retain their qualified kernel transport.
-`run --sudo` applies to USB only; wireless installs never invoke it. Doctor reports
-missing Linux TUN as an optional USB/diagnostic warning rather than blocking
-wireless installs.
+`run --network --udid <udid>` is the daily wireless deployment command on macOS
+and Linux. The GUI's wireless Run uses this command. A separate
+`userspace-tunnel-spike` executable supports deeper transfer and repeat checks.
+
+Native Pair-Verify establishes the TLS-PSK/CDTunnel session. The pinned lwIP 2.2.1
+stack handles IPv6/TCP on a joined worker, and the RSD socket factory connects the
+advertised service ports. Pair the phone once, then keep it unlocked on the
+host's network during deployment.
 
 macOS ordinary-user, unplugged RSD/AFC, physical 12 MiB AFC round-trip, and an
 extension-bearing development IPA install/verification/launch have passed. The
@@ -931,12 +896,12 @@ handshake, read, and write. A deterministic same-thread regression failed before
 and passes after this fix on both hosts. Three consecutive macOS runs now pass,
 each including the 12 MiB AFC byte comparison, extension-bearing IPA installation,
 bundle verification, remote staging cleanup, launch, and joined-worker teardown.
-The macOS full suite passes 317 tests. The promoted CLI has automated checks that wireless runs do not resolve or invoke
-sudo and that USB retains its explicit boundary. The published macOS 0.0.20 binary
+The macOS full suite passes 317 tests. Automated checks cover transport selection
+and preserve the separate USB workflow. The published macOS 0.0.20 binary
 subsequently passed three consecutive ordinary-user wireless install/verification/
 staging-cleanup/launch runs using the existing signed IPA via its `coredevice-helper
 run-network` entrypoint, which invokes the same `NativeNetworkRunner` as `run
---network`, without sudo. USB inventory before and after reported zero devices
+--network`. USB inventory before and after reported zero devices
 with no error. The normal build-and-run attempt stopped before transport: Swift
 6.4 rejects the test app's non-Sendable JavaScriptCore callback result. The packer
 also masks stdout compiler errors when stderr contains a warning; preserve both
@@ -1059,7 +1024,7 @@ Current WSL limitations and follow-up:
   reject coalesced frames. A qualified 1.1.1 build with `USB_MTU=16383` forces a short
   packet boundary and completed installation. This patch is not yet provisioned by the
   CLI and its GPL-3.0 distribution implications must be handled explicitly.
-- Mirrored networking is configured; iPhone mDNS discovery, remote pairing, TUN setup,
+- Mirrored networking is configured; iPhone mDNS discovery and remote pairing,
   network installation, launch, and three-run cleanup are verified.
 - The iOS Swift SDK has been exported and imported under the `stupid-app-ios` artifact
   ID from Xcode 26.3 (build 17C529) with iPhoneOS SDK 26.2 and toolchain Swift 6.2.4;
@@ -1369,19 +1334,15 @@ The first modern wireless implementation used a temporary Python helper
 native protocol stack was ported. That bridge and the pinned `pymobiledevice3`
 distribution have been **removed**; no product command invokes Python. The transport is
 fully native in `DeviceKit` (`NativeCoreDeviceRunner`, `NativeNetworkRunner`,
-`CoreDeviceTunnelService`, `USBMuxClient`, `LockdownPairer`/SRP, and the privileged
-`coredevice-helper` subcommand). Consult the pymobiledevice3 source history only as a
+`CoreDeviceTunnelService`, `UserspaceCoreDeviceTunnel`, `USBMuxClient`, and
+`LockdownPairer`/SRP). Consult the pymobiledevice3 source history only as a
 readable reference when a wire behavior is ambiguous; keep the native implementation as
 the source of truth.
 
-Operational evidence is in `~/environments/external/xtool/THREE_DEVICE_TERMUX_IOS_HANDOFF.md`:
-
-- Lines 14-18 state that unplugged wireless deploy and launch were validated under a privileged Android context.
-- Lines 20-36 contain the canonical pair, cleanup, and run flow.
-- Lines 38-50 record success markers and intermittent installation timeouts.
-- Lines 72-76 identify bridge bootstrap, timeout, and privileged tunnel behavior that must be preserved until replaced.
-
-Version 1 must own helper lifecycle: process group, timeout, cancellation, route cleanup, temporary files, and stale-state detection. Requiring operators to run `pkill` is not acceptable.
+Historical transport evidence is recorded in the implementation log. Use the
+current DeviceKit implementation and bundled command reference for operations.
+The command owns connection lifetime, worker shutdown, timeout, cancellation,
+temporary files, and stale-state detection.
 
 ### App Store Connect Build Upload And TestFlight Polling
 
@@ -1664,8 +1625,8 @@ A physical device was registered; a development identity/profile was
 created; USB pass-through and pairing were validated; and the app was built, signed
 once, packaged, installed, and launched. Installation required a qualified
 `usbmuxd` 1.1.1 build with `USB_MTU=16383` to preserve frame boundaries through WSL
-USBIP. iOS 26.6 launch used pinned `pymobiledevice3` 8.2.1 to create a privileged
-USB CoreDevice tunnel and returned a live process token.
+USBIP. iOS 26.6 launch returned a live process token; the current native launch
+implementation is described below.
 
 `run --usb` now uses native usbmux discovery, lockdown session TLS, AFC streaming,
 installation proxy, exact bundle lookup, staged-file cleanup, and explicit install
@@ -1694,11 +1655,11 @@ Exit condition: the app launches on the registered device with a valid developme
 - Install and launch the development-signed IPA.
 - Repeat without stale helper cleanup.
 
-Status: **complete** on the isolated WSL host. `CoreDeviceRunner` owns a bundled Python
-helper through the bounded `ProcessRunner`; `device pair --usb` now establishes lockdown
-trust and enables wireless connections natively before the helper creates a USB CoreDevice
-tunnel and persists the remote pairing record with mode `0600` under a mode `0700`
-credential directory.
+Status: **complete** on the isolated WSL host. `device pair --usb` establishes
+native lockdown trust, enables wireless connections, and completes the CoreDevice
+remote-pair bootstrap. It persists the record with mode `0600` under the mode
+`0700` credential directory.
+
 `run --network --udid <udid>` discovers and deduplicates remote-pairing candidates,
 forces a TCP tunnel, validates the selected device through RSD, installs and verifies
 the exact bundle through InstallationProxy, launches through AppService, and tears the
@@ -1710,9 +1671,8 @@ gracefully fall back to all saved identifiers. `stupid-app run` no longer expose
 `--discovery-timeout`/`--install-timeout`/`--launch-timeout` and uses the sensible
 built-in defaults instead.
 
-The remote-pair bootstrap is now native too: `device pair --usb` runs a privileged
-`coredevice-helper pair-usb` subcommand that establishes the CoreDevice USB tunnel and
-performs the SRP-3072 Pair-Setup exchange over the RSD tunnel service, writing the
+The remote-pair bootstrap is native: `device pair --usb` establishes the CoreDevice
+USB connection and performs the SRP-3072 Pair-Setup exchange over the RSD tunnel service, writing the
 `remote_<identifier>.plist` record directly. The Python helper runtime and
 `Tools/pymobiledevice3` have been deleted; no CLI path invokes Python. Native signing
 and the entire device stack are project-owned.
@@ -1727,10 +1687,9 @@ been re-established with the native stack only (see the status paragraph above).
 
 Three consecutive runs were performed after physical USB disconnection. Each rebuilt,
 development-signed once, installed, verified, and launched the app. After each observed
-run, USB device count, helper-process count, and residual pymobiledevice3 TUN-interface
-count were zero. The third launch was confirmed on-device after the controlling SSH
+run, the deployment had stopped and USB inventory was empty. The third launch was confirmed on-device after the controlling SSH
 stream was interrupted; an immediate independent cleanup check found no surviving CLI,
-helper, USB device, or tunnel interface.
+deployment process or attached USB device.
 
 Exit condition: three consecutive unplugged install-and-launch runs pass.
 
@@ -1746,8 +1705,8 @@ Exit condition: three consecutive unplugged install-and-launch runs pass.
 Status: **in progress**. `stupid-app doctor` is implemented through the testable
 `ProductCore` module. Required checks fail the command; incomplete workflow state is a
 warning. Checks cover host Swift and imported SDK host/Swift compatibility, bundled
-native-signing trust, native CoreDevice TLS, the native CoreDevice privileged helper,
-owner-only credential/identity/pairing permissions, Linux TUN/usbmux prerequisites, and
+native-signing trust, native CoreDevice TLS, helper availability,
+owner-only credential/identity/pairing permissions, device prerequisites, and
 project configuration plus referenced files. Diagnostics
 do not load or print secret values. `stupid-app release status` reports the recorded
 last release and, with `--live`, the current App Store Connect processing and beta state
@@ -1757,17 +1716,11 @@ Clean-host verification on the isolated WSL host is current: the source builds a
 tests pass after a clean rebuild (the earlier stale `CLZFSE` module state is cleared),
 `doctor` passes with zero failures, and three consecutive physically unplugged
 `run --network` runs install and launch through the fully native stack with no residual
-processes or interfaces. The temporary debug environment was removed: the broad
-`NOPASSWD: ALL` sudoers grant, the Python comparison venvs and scripts, the stale
-`coredevice-helper` binary-path grant (now scoped to the current build path), and the
-stale proof credential directory. See `docs/clean-host-setup.md` for repeatable
-clean-host setup and recovery.
+processes or interfaces. Temporary proof-host configuration was cleaned up. See
+`docs/clean-host-setup.md` for repeatable setup and recovery.
 
-Remaining productization includes broader compatibility/fixture coverage and the
-complete acceptance run through stable commands on clean supported hosts. The network
-path requires re-applying `cap_net_admin` to the debug binary after any rebuild, or
-installing a root-owned release binary with a scoped sudoers grant (see
-`docs/clean-host-setup.md`).
+Remaining productization includes broader compatibility coverage and the complete
+acceptance run through stable CLI commands on clean supported hosts.
 
 Exit condition: all acceptance criteria run through stable CLI commands on clean supported environments.
 
@@ -1833,19 +1786,12 @@ requirement is still open. Summary:
   distribution identity and App Store profile provisioned on the WSL host were imported
   onto the Mac rather than minted anew (Apple's distribution-certificate limit). A
   clean-host macOS run is still required per the clean-host gate policy.
-- **Gate M3: Xcode-present device deployment.** `device pair --usb`, `run --usb`, and
-  three consecutive unplugged `run --network` runs pass on a physical iPhone with zero
-  residual state, using the built-in usbmuxd and a new macOS `utun` backend. The `utun`
-  backend (kernel-control socket), macOS-aware relay framing, Darwin process-group
-  cleanup, and macOS `doctor` checks are implemented; `device pair --usb` and `run --usb`
-  are physically qualified on this Mac. The network path runs through a privileged
-  `coredevice-helper run-network` subcommand (utun creation requires root on macOS) and
-  the three unplugged install-and-launch runs are now solid on this Mac. The earlier
-  launch intermittency was an IPv6 NDP failure (macOS did neighbor discovery on the
-  on-link `/64` and the device never answered, so the host returned "address
-  unreachable"); the macOS network tunnel now installs a point-to-point host route for
-  the server address, and the native mDNS browser re-issues its PTR query periodically.
-  A clean-host macOS run is still required per the clean-host gate policy.
+- **Gate M3: Xcode-present device deployment.** Device pairing and USB run are
+  physically qualified on macOS through the shared DeviceKit services. Wireless
+  deployment uses the process-local transport. Three consecutive runs of the
+  published 0.0.20 binary installed and launched the existing signed IPA, with
+  staging cleanup and empty USB inventory. Process cleanup and platform-aware
+  doctor checks are implemented. A clean-host macOS run remains required.
 - **Gate M4: Xcode-absent path.** Scouting complete and partial implementation landed:
   Homebrew's `lld`/`llvm` formulae publish the three Mode B Darwin tools (LLVM 20.1.8),
   and `sdk export --host arm64-apple-macosx` now stages those prebuilt binaries, rewrites
@@ -1859,15 +1805,15 @@ requirement is still open. Summary:
 - **Gate M5: productization.** `doctor` macOS checks for both modes, the mode-aware SDK
   fallback, macOS clean-host setup docs, and the acceptance run. The remaining
   code items are complete: the `doctor` host-SDK-mode and in-place SDK checks landed with
-  M0, the macOS usbmuxd and utun/`--sudo` checks landed with M3, and the mode-aware
+  M0, the macOS device checks landed with M3, and the mode-aware
   `SDKVersion.resolve` fallback (Mode A reads Xcode's `SDKSettings.json` in place; Mode B
   reads the imported bundle manifest and fails loudly when absent) landed with M0. A
   macOS clean-host setup/recovery document was added (`docs/macos-clean-host-setup.md`)
   covering both modes. Open M5 work is the clean-host acceptance run (deferred with
   decision 9) and Mode B's executable path, which depends on Gate M4.
 
-Linux-only gaps that must be made portable for macOS: the `CTUN` TUN backend and
-`ProcessRunner` process-group cleanup are now ported (Gate M3); `doctor`'s Linux-gated
+The DeviceKit platform integration and `ProcessRunner` process-group cleanup are
+ported (Gate M3); `doctor`'s Linux-gated
 device checks now have macOS equivalents; macOS-hosted Darwin-tool sourcing in the SDK
 exporter and OpenSSL 3 rpath wiring remain (the Homebrew dylib already links and
 `doctor` validates OpenSSL 3 on every host). The one-time `xcrun` fallback in
@@ -1910,7 +1856,7 @@ Required recurring integration coverage:
 4. Swift compiler and Xcode SDK interfaces must remain compatible as versions change.
 5. Linux lacks Apple's resource compilers, limiting the supported project model unless replacements are built. The native app-icon `.car` subset is App Store-validated; other Apple resource compilers (e.g. `momc`) remain out of scope.
 6. Modern iPhone wireless protocols and Developer Disk Image behavior change across iOS versions.
-7. WSL USB pass-through, mirrored-network mDNS, IPv6, and privileged CoreDevice tunnel behavior may prevent direct wireless deployment even though the Windows host is on the iPhone's LAN.
+7. Wireless discovery requires LAN mDNS reachability through WSL mirrored networking. Network configuration can prevent the host from discovering the iPhone.
 8. Apple Developer and App Store Connect API behavior, roles, certificate limits, and profile rules can change.
 9. Signing keys inside WSL, virtual-disk exports, or a future VPS materially increase the credential-security burden.
 10. macOS host support depends on a host Swift toolchain that may require Apple Command
@@ -2024,7 +1970,7 @@ qualified for the bounded connection**.
 Implement the smallest SwiftNIO SSL client that connects to a CoreDevice TCP listener
 created by the proven pinned `pymobiledevice3` control path. This spike is only for the
 TLS 1.2 PSK boundary and one bounded `CDTunnel` handshake; it must not begin the complete
-remote-pairing, TUN, RSD, install, or launch port.
+complete remote-pairing and deployment stack.
 
 Go criteria:
 
@@ -2033,7 +1979,7 @@ Go criteria:
   key material or device identifiers.
 - A bounded `CDTunnel` request receives and validates the expected response shape.
 - Timeout, cancellation, TLS failure, and socket closure leave no helper process,
-  connection, TUN interface, or route behind.
+  connection behind.
 - The result supports the SwiftNIO SSL architecture proposed for the native CoreDevice
   stack.
 
@@ -2075,9 +2021,8 @@ been removed; the isolated WSL host has proven the fresh native pair, native USB
 and the native network run (three consecutive unplugged runs install and launch). The
 replacement is considered physically qualified.
 
-Replacing `pymobiledevice3` does not itself replace `usbmuxd`, WSL USBIP, Linux TUN,
-multicast networking, or the privileged-helper requirement. Raw USB transport remains a
-separate task below.
+USB operations use the external `usbmuxd` daemon and WSL USBIP where applicable.
+Raw USB transport remains a separate task below.
 
 ### Native USB Transport
 
@@ -2151,8 +2096,7 @@ Execute the remaining work in this order:
    (`devicectl`/Xcode/`pymobiledevice3`) dependency. `stupid-app device crash`
    is implemented: it parses local `.ips` or pulls the newest report from a
    `--udid` device over USB (native lockdown + AFC crash-report service) or the
-   wireless CoreDevice tunnel (`--network`, privileged on macOS via `--sudo`,
-   in-process on Linux), handles both JSON and legacy `cpu_resource`/`jetsam`
+   wireless diagnostic service, handles both JSON and legacy `cpu_resource`/`jetsam`
    reports, and classifies watchdog/CPU/resource terminations. Both the USB and
    the wireless crash pulls were verified against real crash reports from a
    crashing on-device sample app (a `cpu_resource` CPU-limit kill and a SIGTRAP

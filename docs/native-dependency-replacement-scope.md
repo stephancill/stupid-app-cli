@@ -4,23 +4,24 @@
 
 This document scopes replacing the pinned `rcodesign` signing kernel and the
 `pymobiledevice3` device stack with project-owned Swift implementations. Native signing
-is now proven for the constrained shallow-app shape; native device replacement remains a
-proposal.
+is proven for the constrained shallow-app shape, and DeviceKit owns the native
+device stack.
 
 Each existing dependency must remain the default until its corresponding native
 replacement passes the same independent proof gates. Comparison must use separate copies
 of an unsigned artifact; an app must still receive exactly one real signing pass. Native
-signing has passed those gates and is now the only signing path. The Python device stack
-remains authoritative until its independent replacement qualifies.
+signing has passed those gates and is the only signing path. DeviceKit has completed
+physical-device pairing, installation, and launch qualification. Broader clean-host
+and failure-mode coverage remains required.
 
-Implementation status (2026-08-17): the constrained shallow-app signer and independent
+Implementation status (2026-10-05): the constrained shallow-app signer and independent
 verifier described below are implemented and qualified. Native output passed macOS
 `codesign --verify --strict`, physical-device development installation/launch, App Store
 `VALID` processing and internal beta readiness, and TestFlight installation/launch.
 The product bundles checksum-pinned public Apple WWDR G3 and Apple Inc. root
 certificates, selects them only for a matching signing leaf, and fails loudly for an
 unsupported issuer or chain rotation. The `rcodesign` runtime path and engine-selection
-flags have been removed. The native device stack is not complete. Its first
+flags have been removed. The native device stack is implemented. Its first
 SwiftNIO/NIOSSL connection spike reached a physical-device no-go: the listener requires a
 GCM-PSK cipher and empty identity absent from the NIOSSL/BoringSSL path. The experimental
 client was removed. The system-OpenSSL 3 replacement subsequently completed the physical
@@ -34,9 +35,9 @@ OpenSSL client-certificate TLS in place, generates fresh lockdown pairing certif
 handles Trust, enables wireless lockdown, starts services, opens optional service-TLS
 connections, and stops sessions. USB auto-discovery uses that client. Hermetic
 macOS/Linux fixtures pass, and physical Linux/WSL probes completed fresh pairing, cached
-session reuse, AFC startup, and native installation without Python. The Python device
-stack remains authoritative for CoreDevice remote pairing, tunnel, RSD, network
-installation, and launch.
+session reuse, AFC startup, and native installation. DeviceKit also owns CoreDevice
+remote pairing, RSD, network installation, and launch. Wireless runs use the
+process-local lwIP transport promoted in 0.0.20.
 
 ## Summary
 
@@ -46,12 +47,12 @@ Both replacements are feasible, but neither is a small adapter rewrite:
   implementation. Limiting the first version to one thin ARM64 app executable makes the
   work bounded. The highest risks are Mach-O mutation and Apple-compatible CMS output.
 - Native device support is a complete private-protocol stack: usbmux and lockdown,
-  modern remote pairing, mDNS, TLS-PSK, TUN packet forwarding, RemoteXPC/RSD, AFC,
+  modern remote pairing, mDNS, TLS-PSK, process-local packet forwarding, RemoteXPC/RSD, AFC,
   installation proxy, and AppService launch. The highest risks are TLS-PSK
   interoperability, remote-pairing correctness, and protocol drift.
 - Replacing `pymobiledevice3` removes Python 3.13, `uv`, the frozen Python environment,
-  and its transitive dependencies. It does not remove `/dev/net/tun`, multicast and IPv6
-  requirements, privilege separation, WSL USBIP, or the external `usbmuxd` socket.
+  and its transitive dependencies. DeviceKit uses native protocol implementations;
+  USB operations continue to use WSL USBIP and the external `usbmuxd` socket.
 - Replacing `usbmuxd` itself is a separate raw-USB project and remains the deferred task
   described in `docs/engineering-handover.md`.
 
@@ -68,7 +69,7 @@ These are dependency and risk points, not calendar estimates:
 | --- | ---: | --- |
 | Native signature parser/verifier spike | 5 | Hermetic and differential fixtures |
 | Complete shallow-app native signer | 30-40 total | macOS, physical device, App Store, TestFlight |
-| Native TLS-PSK interoperability spike | 5 | Privileged host and physical device |
+| Native TLS-PSK interoperability spike | 5 | Supported host and physical device |
 | Native USB operations above `usbmuxd` | 15-20 | USB pairing, install, timeout, reconnect |
 | Complete native CoreDevice network stack | 55-75 total | Fresh pair, tunnel, install, launch, repeated cleanup |
 | Direct raw-USB replacement for `usbmuxd` | 20-30 additional | WSL USBIP packet-boundary and hotplug qualification |
@@ -96,9 +97,8 @@ manifests identify `native-shallow-v1` as the signer.
 
 ### Device Operations
 
-The remaining Python dependency has one adapter. `CoreDeviceRunner` owns the bundled
-Python helper for CoreDevice remote-pair bootstrap, network discovery, CoreDevice tunnel
-creation, installed-app verification, and launch.
+DeviceKit owns CoreDevice remote-pair bootstrap, network discovery, connection
+setup, installed-app verification, and launch.
 
 `USBMuxClient` now owns USB target auto-discovery and exposes pair-record access,
 connection to lockdown port 62078, `QueryType`/`GetValue`/`SetValue`, fresh native
@@ -106,17 +106,16 @@ pairing, session TLS, wireless enablement, service startup and connection, and s
 shutdown. `NativeUSBInstaller`
 streams the IPA through AFC, invokes installation proxy as a developer package, verifies
 the exact bundle ID, and removes its staged file. Lockdown pair records are stored in the
-same owner-only cache used by the remaining helper because the stock Ubuntu usbmuxd plist
+owner-only credential cache because the stock Ubuntu usbmuxd plist
 writer returned `EOPNOTSUPP`; native operations prefer that cache and retain daemon reads
 for existing records. A native RemoteXPC/RSD slice provides the XPC binary dictionary
 codec, the RemoteXPC HTTP/2 connection and handshake, an RSD client resolving the device
 UDID and advertised service ports, and a CoreDevice AppService launch client; these are
-hermetic-tested but not yet device-qualified. Every launch path and CoreDevice remote
-pairing still use the Python helper; the standalone Python CLI adapter has been removed.
+hermetic-tested and physically qualified. DeviceKit now owns launch and CoreDevice
+remote pairing through the native implementation.
 
-The native replacement should preserve the one-shot lifecycle and explicit privileged
-helper boundary. Build and signing remain unprivileged. A root-owned Swift helper should
-own only TUN creation, route lifetime, tunnel sockets, and packet forwarding.
+Wireless deployment uses `UserspaceCoreDeviceTunnel` and the pinned lwIP stack.
+The command owns the connection and joins its workers when deployment ends.
 
 ## Native Signing
 
@@ -252,7 +251,6 @@ The first native device implementation should continue to connect to the externa
 
 - USB kernel support and WSL USBIP for the bootstrap connection.
 - The qualified short-packet `usbmuxd` behavior on WSL USBIP.
-- `/dev/net/tun`, Linux IPv6/TUN support, and `CAP_NET_ADMIN` or a root-owned helper.
 - UDP multicast port 5353, LAN mDNS reachability, IPv6 scope handling, and host firewall
   configuration.
 - A trusted, unlocked iPhone with Developer Mode and required device services available.
@@ -278,7 +276,7 @@ short-packet behavior is independent follow-up scope.
 3. **USB CoreDeviceProxy bootstrap**
    - Start `com.apple.internal.devicecompute.CoreDeviceProxy` through lockdown.
    - Exchange the `CDTunnel` JSON handshake.
-   - Establish temporary TUN forwarding to Remote Service Discovery.
+   - Open the Remote Service Discovery connection.
 
 4. **CoreDevice remote pairing**
    - Implement `RPPairing` framing and protocol version 19 envelopes.
@@ -297,10 +295,10 @@ short-packet behavior is independent follow-up scope.
      and candidate deduplication.
    - Trust the selected device only after RSD returns the requested UDID.
 
-6. **TLS-PSK TCP tunnel and TUN forwarding**
+6. **TLS-PSK session and process-local packet forwarding**
    - Create the encrypted remote listener, connect with TLS 1.2 PSK, and exchange the
      `CDTunnel` handshake.
-   - Configure a nonpersistent Linux TUN interface and route.
+   - Connect the TLS packet bridge to the process-local lwIP stack.
    - Frame complete IPv6 packets in both directions and tear down on EOF, failure,
      timeout, or cancellation.
 
@@ -336,7 +334,7 @@ A practical implementation would use:
 - Existing RSA/X.509 support for lockdown pairing certificates.
 - A pinned BigInt implementation plus a narrow, vector-tested SRP implementation.
 - Foundation for plist and JSON data.
-- A small Linux system-library target for TUN and interface operations.
+- The pinned lwIP core behind the narrow `CUserspaceIP` interface.
 - Project-owned narrow codecs for DNS-SD, OPACK, binary XPC, AFC, and any HTTP/2 behavior
   that a standards-enforcing library cannot represent exactly.
 
@@ -354,47 +352,29 @@ between a narrow system OpenSSL adapter and a project-owned implementation of ex
 observed suite. The selected system-OpenSSL implementation now lives in
 `CCoreDeviceTLS`/`DeviceKit`, accepts only OpenSSL 3.x, and has passed cancellation,
 single-deadline timeout, Linux release-build, and repeated physical qualification. It is
-not yet a complete transport because the surrounding listener, remote pairing, TUN, RSD,
-network installation, and launch layers remain external.
+part of the complete DeviceKit transport, including native listener setup, remote
+pairing, RSD, installation, and launch.
 
-### Device Work Sequence
+### Current Device Integration
 
-1. Capture sanitized, bounded protocol fixtures from the proven pinned environment.
-2. Use the qualified `DeviceKit` system-OpenSSL TLS-PSK connection as the tunnel data-plane
-   boundary; keep listener creation external until native remote pairing exists.
-3. Add AFC and installation proxy while retaining external `usbmuxd`. **Complete and
-   physically qualified** for development IPA staging, installation, exact bundle lookup,
-   and cleanup. Fresh lockdown pairing and wireless enablement are also complete and
-   physically qualified.
-4. Implement binary XPC, RemoteXPC, and RSD read-only service discovery. **Complete as a
-   hermetic slice:** the XPC codec is verified byte-for-byte against the pinned
-   reference, the RemoteXPC connection and handshake are implemented, an RSD client
-   resolves device UDID and advertised services, and an AppService launch client exists.
-   Physical qualification still requires the tunnel and TUN layers.
-5. Implement the privileged TUN helper and deterministic packet-pump cleanup.
-6. Connect through an existing remote pairing record and create a native network tunnel.
-7. Implement fresh SRP remote-pair setup and USB bootstrap CoreDevice record creation.
-8. Implement native installation verification and AppService launch.
-9. Cut CLI options and doctor checks over to an explicit native backend.
-10. Remove Python tooling only after clean-host and physical-device qualification.
-
-This ordering delivers useful Python removal for USB discovery and installation before
-the harder network pairing work is complete. It also tests TLS-PSK early enough to stop
-or revise the architecture cheaply.
+DeviceKit implements USB discovery and initial pairing, saved remote pairing,
+wireless discovery, TLS-PSK, RSD, AFC staging, installation verification, and
+AppService launch. `run --network` uses the process-local transport on macOS and
+Linux. Keep protocol codecs independently testable and qualify changes against
+sanitized fixtures before physical-device checks.
 
 ### Device Proof Gates
 
 - Hermetic fixtures must cover fragmented and coalesced frames, partial writes, malformed
   lengths, TLV8 boundaries, cryptographic intermediate values, DNS compression loops,
   HTTP/2 flow control, XPC alignment, AFC sequence numbers, install failures, and cleanup.
-- Privileged tests must prove TUN and route removal after success, timeout, cancellation,
-  controller death, and either packet-pump direction failing.
+- Lifecycle tests must prove connection closure and worker shutdown after success,
+  timeout, cancellation, and either packet-pump direction failing.
 - USB qualification must cover discovery, lockdown validation, fresh pairing, wireless
   enablement, CoreDeviceProxy startup, install, disconnect/reconnect, and cancellation.
 - Network qualification must start physically unplugged, discover the selected device,
   verify its RSD UDID, install and verify the exact app, launch it, and return a PID.
-- Three consecutive unplugged runs must leave no helper process, TUN interface, route,
-  staged IPA, or USB dependency.
+- Three consecutive unplugged runs must complete staging cleanup and worker shutdown.
 - Qualification must run on a clean supported Linux/WSL host and repeat for each declared
   supported iOS protocol family.
 
@@ -402,15 +382,15 @@ or revise the architecture cheaply.
 
 - The selected system-OpenSSL path adds a host ABI and security-update dependency. The
   bounded connection is qualified for OpenSSL 3.x, cancellation, and cleanup; complete
-  native transport qualification remains outstanding.
+  supported-host and failure-mode qualification remains outstanding.
 - SRP and remote-pair state mistakes can create subtle security or interoperability
   defects; do not implement unaudited arbitrary-precision crypto from scratch.
 - CoreDevice service names, wire version 19, AppService version fields, request keys,
   and response shapes are private and can drift with iOS.
 - RemoteXPC uses unusual HTTP/2 framing that a strict high-level library may reject.
 - Native code above `usbmuxd` does not fix WSL USBIP transfer-boundary failures.
-- A privileged helper handles tunnel keys and briefly needs access to the IPA and pairing
-  record. Its request surface and filesystem access must remain narrow.
+- Device operations handle session keys, the IPA, and pairing records. Keep their
+  request surface and filesystem access narrow.
 
 ## Recommended Delivery Plan
 
@@ -420,20 +400,19 @@ Treat these as two independent initiatives rather than one cutover.
    - Parse and validate existing Xcode and `rcodesign` output before writing signatures.
 2. **Native TLS-PSK connection**
    - Qualified and promoted into `DeviceKit`; use it as the connection boundary for the
-     remaining native transport work.
+     device-service integration.
 3. **Native USB operations**
-   - **Complete:** USB discovery, fresh lockdown pairing, wireless enablement, and
-     installation are native; `usbmuxd` and the proven Python CoreDevice helper remain for
-     raw USB transport and CoreDevice launch.
+   - **Complete:** USB discovery, fresh lockdown pairing, wireless enablement,
+     installation, and CoreDevice launch use DeviceKit. The external `usbmuxd` daemon
+     provides raw USB transport.
 4. **Native shallow-app signing**
    - Add an explicitly selected native engine and complete development/App Store proof.
 5. **Native CoreDevice network stack**
-   - Complete remote pairing, tunnel, RSD, install, and launch with the privileged Swift
-     helper.
+   - **Complete:** DeviceKit provides remote pairing, RSD, installation, and launch.
+     Wireless deployment uses the process-local lwIP stack.
 6. **Dependency retirement**
-   - Native signing has retired `rcodesign` independently. Remove Python, `uv`, and
-     `pymobiledevice3` only after the native device path passes clean-host acceptance.
-     Keep no silent compatibility fallback.
+   - Native signing has retired `rcodesign`. The native device stack has retired the
+     Python runtime. Continue qualification on clean supported hosts.
 
 The signing initiative is bounded enough to complete independently. The device initiative
 should be expected to require ongoing compatibility maintenance as new iOS releases alter

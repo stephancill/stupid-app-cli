@@ -27,26 +27,17 @@ not available: Safari cannot spawn the iOS appex plugin (`Launchd job spawn fail
 register path does not create the launchd/RBS plugin registration that only Apple's entitled
 installer (`.XCInstall`/TestFlight/Xcode) provides. Connect/approval/signing therefore require
 TestFlight (or an Xcode-installed build) on the Mac, or the iOS simulator/device.
-Gate M3 (the shared device stack) is now ported: work area 5 (utun backend in `CTUN`
-via the `com.apple.net.utun_control` kernel-control socket, with macOS-aware 4-byte
-protocol-family framing in both C tunnel relays), work area 6 (Darwin process-group
-cleanup in `ProcessRunner` via posix_spawn), work area 7 (native USB verified against
-the built-in usbmuxd), and work area 9 (macOS `doctor` checks) are implemented.
- `device pair --usb` and `run --usb` are physically qualified on a Mac against a
- connected iPhone. The network path now owns the utun inside a privileged
- `coredevice-helper run-network` subcommand (utun creation requires root on macOS);
- discovery, Pair-Verify, tunnel, install, and launch work under root, and the three
- unplugged `run --network` runs are solid on this Mac. The earlier AppService launch
- intermittency was an IPv6 NDP failure on the on-link `/64` route; the macOS network
- tunnel now installs a point-to-point host route for the server address, and the native
- mDNS browser re-issues its PTR query periodically to avoid the intermittent discovery
-miss. Gate M2 (the Xcode-present release) is now qualified on this Mac: the native
-  distribution pipeline produced an IPA that passed macOS `codesign --verify --strict`,
-  processed to `VALID`/internal `IN_BETA_TESTING` on App Store Connect, and installed
-  and launched through TestFlight on the physical device. The remaining gates
-  (M4 Xcode-absent, M5 productization) are unchanged and still require clean-host
-  proof.
+Gate M3 device deployment is implemented through the shared DeviceKit stack.
+Native USB discovery, Darwin process-group cleanup, and macOS doctor checks are
+qualified. Initial pairing and USB run passed on a connected iPhone. Wireless
+run uses the process-local lwIP transport promoted in 0.0.20. Three consecutive
+runs of the published binary installed and launched the existing signed IPA,
+verified its bundle, and removed staging. The normal build-and-run attempt for
+the test app remains blocked by its Swift 6.4 JavaScriptCore callback error.
 
+Gate M2 release qualification passed strict signature verification, App Store
+Connect processing, and physical-device TestFlight installation. Gates M4 and M5
+still require clean-host proof.
 
 ## Design Decisions (confirmed)
 
@@ -68,7 +59,7 @@ The following decisions were confirmed with the project owner on 2026-08-18:
 4. **Xcode-present path proven first.** The Xcode-present mode (build, release, then
    device) is proven before the Xcode-absent mode because it reuses the qualified signing
    and release pipeline, requires no new Darwin-tool sourcing, and unlocks simulator
-   support early. The shared macOS device-stack work (TUN, process cleanup) is proven
+   support early. The shared macOS DeviceKit integration is proven
    once in Xcode-present mode and reused by Xcode-absent mode.
 
 Local compatibility clarification:
@@ -165,22 +156,14 @@ The following was Linux-only or unvalidated and is the subject of this scope
 
 - The packer always builds through `swift build --swift-sdk <bundle>`. Xcode-present
   mode needs a new in-place SDK-resolution path (decision 1). **Resolved (Gate M0).**
-- `CTUN` (`Sources/CTUN/TUN.c`) is `__linux__`-only; it returns `UNSUPPORTED` on macOS.
-  Network and USB CoreDevice tunnels therefore cannot run on macOS. **Resolved (Gate
-  M3): a macOS `utun` backend via the `com.apple.net.utun_control` kernel-control
-  socket, plus macOS-aware 4-byte protocol-family framing in both C tunnel relays.
-  Note: utun creation requires root on macOS (kernel-control connect returns `EPERM`
-  unprivileged, matching pymobiledevice3's `pytun`), so macOS network runs route the
-  TUN lifetime through the privileged `coredevice-helper run-network` subcommand.**
+- Device deployment uses the shared DeviceKit implementation. Wireless runs use
+  `UserspaceCoreDeviceTunnel` with the process-local lwIP stack on both hosts.
 - `ProcessRunner` deliberately does not own a process group on Darwin
   (`ownsProcessGroup = false`), so timeout/cancellation escalation cannot currently
   signal descendant processes. **Resolved (Gate M3): Darwin launches use posix_spawn
   with `POSIX_SPAWN_SETPGROUP` so children are group leaders and `kill(-pid)` reaches
   descendants.**
-- `doctor` gates the TUN device and usbmuxd socket checks behind `#if os(Linux)`;
-  macOS has no equivalent checks (notably OpenSSL 3, utun, and Xcode presence).
-  **Partially resolved (Gate M3): macOS `doctor` now reports the built-in usbmuxd
-  socket and the utun/`--sudo` boundary.**
+- `doctor` has platform-aware device checks alongside the SDK and OpenSSL checks.
 - The SDK exporter only provisions Linux-hosted Darwin tools
   (`darwin-tools-linux-llvm`, x86_64). A macOS-host bundle (Xcode-absent mode) needs
   macOS-hosted Darwin tools; `sdk export --host <mac-triple>` fails loudly today.
@@ -310,31 +293,16 @@ accepted as a documented Mode B prerequisite (decision 6; CLT is not Xcode and i
 materially smaller dependency). `doctor` resolves which compiler is active and checks the
 bundle's Swift major/minor requirement against it.
 
-### 5. macOS TUN, routing, and the privileged helper (shared)
+### 5. Process-local wireless transport (shared)
 
-`run --network` and the USB CoreDevice tunnel forward IPv6 packets through a TUN
-interface. macOS has no `/dev/net/tun`; it uses `utun` interfaces. **Implemented (Gate
-M3):**
+`run --network` uses `UserspaceCoreDeviceTunnel` on macOS and Linux. Its TLS
+packet bridge feeds the lwIP IPv6/TCP stack; the RSD socket factory returns local
+streams for the advertised service ports. The same service clients perform AFC
+staging, installation verification, and AppService launch.
 
-- The `CTUN` Darwin backend connects the `com.apple.net.utun_control` kernel-control
-  socket (modern macOS has no static `/dev/utunN` nodes), reads the assigned interface
-  name back through `UTUN_OPT_IFNAME`, assigns the IPv6 address and `/64` prefix via
-  `SIOCAIFADDR_IN6`, sets the MTU via `SIOCSIFMTU`, brings the link up via
-  `SIOCSIFFLAGS`, and installs the `/128` server route through the `AF_ROUTE` routing
-  socket.
-- macOS `utun` packets carry a 4-byte big-endian protocol-family header
-  (`AF_INET6` = `00 00 00 1e`); both C tunnel relays (`CCoreDeviceTLS`,
-  `CLockdownTLS`) read/write packets through `stupid_app_tun_relay_read`/`write`,
-  which strip/prepend that header on macOS and are raw passthrough on Linux.
-- Keep the exact existing privilege boundary: build and signing unprivileged; TUN/route
-  lifetime owned by the `coredevice-helper` subcommand invoked through an explicit
-  `--sudo` boundary. macOS admin users can `sudo`; the helper must not silently elevate.
-  Empirically, utun creation requires root on macOS (the kernel-control connect returns
-  `EPERM` unprivileged, identical to pymobiledevice3's `pytun`), so `run --network`
-  routes through a new `coredevice-helper run-network` subcommand on macOS while Linux
-  keeps the in-process path with `cap_net_admin`.
-- Preserve deterministic teardown: interface and route removal on success, timeout,
-  cancellation, or controller death, with no collision with system `utunN` interfaces.
+Keep the connection alive through service operations and join its workers during
+cleanup. Qualify timeout, cancellation, network loss, and repeated deployment on
+physical devices as well as deterministic fixtures.
 
 ### 6. Process-group cleanup on Darwin (shared)
 
@@ -373,18 +341,17 @@ CoreDevice launch are verified against the built-in daemon; `device pair --usb` 
 ### 9. doctor macOS checks (shared)
 
 Add macOS equivalents under an `#if os(macOS)` (or `canImport(Darwin)`) gate:
-**Implementation status (Gate M3): the usbmuxd-socket and utun/`--sudo` checks are
-implemented; the mode, SDK, and OpenSSL checks were already platform-neutral.**
+**Implementation status (Gate M3): device checks are implemented alongside the
+platform-neutral mode, SDK, and OpenSSL checks.**
 
 - Xcode presence and the active mode (A or B); in Mode A, that the iPhoneOS SDK and
   toolchain `swift` are present; in Mode B, that an imported compatible bundle and host
   Swift are present.
 - OpenSSL 3 availability/version (reuses `CoreDeviceTLSConnection.validateOpenSSL`).
-- `utun` availability and route privilege for the network path.
 - Built-in usbmuxd socket presence for the USB path.
 - A Mode A warning when an imported bundle is installed but unused.
 
-Keep the Linux TUN/usbmuxd checks Linux-gated.
+Keep host-specific device checks scoped to their platform.
 
 ## Proof Gates
 
@@ -439,21 +406,20 @@ device. A clean-host macOS run is still required per the clean-host gate policy.
 On the clean Mac with a physical iPhone:
 
 1. `device pair --usb` completes native lockdown pairing and CoreDevice remote-pair
-   bootstrap through the built-in usbmuxd and the new utun backend. **Qualified on this
+   bootstrap through the native DeviceKit services and built-in usbmuxd. **Qualified on this
    Mac (2026-08-18).**
-2. `run --usb` installs and launches through the USB tunnel. **Qualified on this Mac
-   (2026-08-18): native install + CoreDevice launch, no residual processes/interfaces.**
-3. `run --network --udid <udid>` installs and launches physically unplugged, three
-   consecutive runs, with zero residual helper processes, interfaces, or routes after
-   each run. **Qualified on this Mac (2026-08-18): three consecutive unplugged runs
-   pass through the privileged `coredevice-helper run-network` subcommand, after the
-   AppService launch intermittency was fixed (macOS IPv6 NDP on the on-link `/64` was
-   failing; a point-to-point host route for the server address now bypasses NDP) and
-   the native mDNS browser now re-issues its PTR query periodically. A clean-host macOS
-   run is still required per the clean-host gate policy.**
+2. `run --usb` installs and launches through DeviceKit. **Qualified on this Mac
+   (2026-08-18): native install and CoreDevice launch with cleanup.**
+3. `run --network --udid <udid>` installs and launches physically unplugged in
+   three consecutive runs, then completes staging cleanup and worker shutdown.
+   **Qualified with the published 0.0.20 binary (2026-10-05): three consecutive
+   wireless runs using the existing signed IPA passed installation, bundle
+   verification, staging cleanup, and launch. Independent USB inventory was empty
+   before and after. The full build-and-run attempt remains blocked by the test
+   app's Swift 6.4 JavaScriptCore callback error.**
 
-Exit condition: the wireless acceptance criteria run on macOS with no leftover state.
-This proves the shared macOS device stack once.
+Exit condition: repeat wireless acceptance on a clean macOS host and qualify
+failure cleanup. The shared DeviceKit integration serves both host modes.
 
 ### Gate M4: Xcode-absent path (Mode B)
 
@@ -505,8 +471,8 @@ hosts in both modes.
   the real-certificate invariants; it must never leak into a device or release path.
 - **Simulator runtime availability.** `run --simulator` depends on an installed runtime
   and a booted/bootable device; missing runtimes must surface as actionable diagnostics.
-- **utun naming and teardown.** Collisions with system interfaces, and route/interface
-  cleanup across abrupt controller death, need physical-device qualification.
+- **Wireless connection cleanup.** Worker shutdown across abrupt controller death
+  needs physical-device qualification.
 - **Process-group semantics on Darwin.** Descendant cleanup behavior differs from Linux
   and must be proven under timeout and cancellation.
 - **macOS local-network permissions.** Firewall/TCC prompts (local network, USB
@@ -530,7 +496,7 @@ hosts in both modes.
   | M0 Xcode detection + in-place SDK build path | 6-10 |
   | M1 simulator run loop (target triple + simctl) | 6-9 |
   | M2 macOS-produced release re-qualification | 2-4 |
-  | M3 macOS TUN/utun + routing + privileged helper + device re-qualification | 10-16 |
+  | M3 macOS device transport + deployment qualification | 10-16 |
   | Process-group cleanup on Darwin | 3-5 |
   | usbmuxd/USB verification on macOS | 3-6 |
   | OpenSSL 3 on macOS (rpath, doctor, decision) | 3-5 |

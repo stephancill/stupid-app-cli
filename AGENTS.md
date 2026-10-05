@@ -9,6 +9,9 @@ Before planning, editing code, changing configuration, running a release workflo
 3. Read `docs/implementation-notes.md`, focusing on the latest entries and any entries related to the task.
 4. Inspect the current repository state, configured toolchain, and relevant tests rather than assuming the handover is perfectly current.
 
+Use historical implementation notes as verification records. Take operational
+instructions from the current handover and command reference.
+
 If code and documentation disagree, investigate the discrepancy. Do not silently choose one. Correct the handover as part of the same work when current implementation has legitimately superseded it.
 
 ## Documentation Responsibilities
@@ -77,8 +80,8 @@ Do not include timeline estimates in planning documents. Use ordered dependencie
   lockdown, AFC, installation-proxy, and syslog services). Do not introduce a Python,
   `pymobiledevice3`, or host-tool dependency for pairing, install, diagnostics, or
   release. Keep the transport replaceable.
-- Wireless installs use the process-local lwIP tunnel without sudo/TUN/routes;
-  USB bootstrap/launch and wireless crash diagnostics retain the kernel helper.
+- Wireless deployment uses the process-local lwIP transport on macOS and Linux.
+  Document the current workflow directly; omit comparisons with retired approaches.
 - Treat pairing records and signing material as credentials.
 
 ## Security Rules

@@ -106,26 +106,11 @@ can skip straight to network runs.
 
 Verification: `stupid-app doctor` reports the pairing-records check as `PASS`.
 
-### 7. Privilege boundary for utun
+### 7. Wireless development
 
-macOS creates `utun` interfaces through a kernel-control socket that requires root
-(`com.apple.net.utun_control` returns `EPERM` unprivileged). The CLI never elevates
-implicitly. USB CoreDevice pairing/launch and wireless crash-report pulls retain
-this boundary. Wireless installs use a process-local tunnel with no sudo or host
-routes. Support the helper for USB/diagnostics with a scoped sudoers grant and
-pass `--sudo` for those operations:
-
-```bash
-sudo install -o root -g root -m 755 .build/release/stupid-app /usr/local/bin/stupid-app
-echo 'USER ALL=(root) NOPASSWD: SETENV: /usr/local/bin/stupid-app coredevice-helper *' \
-  | sudo tee /etc/sudoers.d/stupid-app-coredevice
-sudo chmod 440 /etc/sudoers.d/stupid-app-coredevice
-sudo visudo -c
-stupid-app run --usb --udid <udid> --sudo /usr/bin/sudo
-```
-
-For a proof host using the debug binary, the sudoers grant must be scoped to the current
-build path after every rebuild. Do not grant a broad `NOPASSWD: ALL`.
+Pair the phone once, then use `stupid-app run --network --udid <udid>` while the
+phone is unlocked on the host's network. The GUI's wireless Run uses this command.
+Consult command help for initial-pairing and USB setup on the selected host.
 
 ### 8. Health check
 
@@ -147,8 +132,7 @@ validated path. The intended order:
 3. Ensure the swiftly-installed swift.org toolchain is active; `doctor` reports Mode B
    active and checks the bundle's Swift major/minor against the host toolchain.
 4. Simulators are unavailable in Mode B.
-5. Credentials, signing, pairing, and the utun privilege boundary are identical to
-   Mode A.
+5. Credentials, signing, and pairing follow the same workflow as Mode A.
 
 ## Daily Use
 
@@ -171,16 +155,14 @@ stupid-app release status
 3. If the record is gone or a fresh device was introduced, run
    `stupid-app device pair --usb` once (requires USB), answering the on-device Trust
    dialog with a generous `--timeout`, then retry.
-4. Wireless installs need no sudo grant after a rebuild. For USB operations or
-   wireless crash pulls, confirm the helper privilege boundary is reachable.
+4. Retry `run --network` after confirming the phone and host share a network.
 5. Re-run `stupid-app doctor` and fix any failures.
 
 ### The host was restored from a backup
 
 Restoring the system restores credentials and pairing records only if they were inside
 the backed-up home directory. After restore re-run `doctor` and, when missing,
-re-establish credentials/signing (phase 3), pairing (phase 5), and the sudoers grant
-(phase 6).
+re-establish credentials/signing (phase 3) and pairing (phase 6).
 
 ### macOS local network or USB permission prompts
 
@@ -188,13 +170,10 @@ Firewall/TCC prompts (local network, USB accessory access) may require a one-tim
 action. They surface as actionable diagnostics rather than silent timeouts; accept the
 prompts and retry.
 
-### A residual utun interface is left behind
+### A deployment does not stop cleanly
 
-The native stack cleans up on success, failure, timeout, and cancellation outside the
-privileged helper. If a stale interface appears, find it with
-`ifconfig | grep utun`, remove it as root (`sudo ifconfig <ifname> destroy`), then
-re-run `doctor`. Report any reproducible leak as a defect; manual `sudo pkill` should
-never be a routine step.
+Stop the command or use the GUI's Stop control and confirm the deployment process
+exits. Retain its output when reporting a reproducible cleanup defect.
 
 ## References
 

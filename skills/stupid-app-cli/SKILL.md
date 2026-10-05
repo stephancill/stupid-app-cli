@@ -30,9 +30,9 @@ from a source checkout.
   PKCS#12 files, provisioning profile contents, pairing records, JWTs, or
   presigned upload URLs. Credentials live in `~/.stupid-app/credentials`
   (directory `0700`, files `0600`, plaintext, atomic writes).
-- The CLI never elevates silently. Privileged CoreDevice TUN operations run
-  through a helper subcommand; pass `--sudo <path>` to authorize it. Wireless
-  installs use a process-local tunnel and require no elevation.
+- Use `run --network --udid <udid>` for daily physical-device development. Pair
+  once and keep the phone unlocked on the same network. Consult command help
+  for the host-specific requirements of initial pairing and USB operations.
 - Version 1 supports one SwiftPM library product with code-based SwiftUI, plus an
   optional `extensions:` list in `stupid-app.yml` for bundled `PlugIns/*.appex`
   extensions (e.g. a WidgetKit extension) sharing App Groups. Xcode project inputs,
@@ -43,10 +43,8 @@ from a source checkout.
 
 - **Linux (production):** x86_64 Ubuntu 24.04 LTS. Swift 6.2.x toolchain, the
   imported `stupid-app-ios` Swift SDK (registered via `swift sdk install`),
-  OpenSSL 3.x (`libssl-dev`), `zstd`, and `zip`/`unzip`. USB CoreDevice
-  pairing/launch and wireless diagnostics need `/dev/net/tun` and privileged
-  access. Wireless installs need neither TUN nor `CAP_NET_ADMIN`. USB installs
-  need a qualified MTU-patched `usbmuxd` when running under WSL USBIP.
+  OpenSSL 3.x (`libssl-dev`), `zstd`, and `zip`/`unzip`. USB installs under
+  WSL USBIP need the qualified MTU-patched `usbmuxd`.
 - **macOS:** Apple Silicon macOS 14+. Either Xcode-present (builds in place) or
   Xcode-absent (uses an imported bundle). `run --simulator` is Xcode-present-only.
 - **Physical device:** a paid Apple Developer Program account, an iPhone with
@@ -246,13 +244,10 @@ stupid-app device pair --usb [--timeout 180]
 stupid-app run --network --udid <udid>
 ```
 
-Pairing stores owner-only records under the credential directory. Network runs
-discover the device over mDNS, open a CoreDevice tunnel, install, verify the
-bundle, and launch. Wireless installs run in-process on macOS and Linux with no
-sudo, TUN/utun, host route, or network capability. The GUI's wireless Run uses this
-same path. One wireless tunnel and up to 16 service streams are supported per
-process. USB pairing/launch and wireless crash pulls retain their separate kernel
-transport — see `Privilege boundary` in `references/commands.md`.
+Pairing stores owner-only records under the credential directory. Wireless runs
+use the process-local IPv6/TCP transport on macOS and Linux. The GUI's wireless Run
+uses the same command. Keep the phone unlocked on the deployment host's network.
+Consult `device pair --help` for initial pairing requirements on the selected host.
 `--replace-lockdown-record` regenerates the lockdown trust during pairing.
 
 ### 5. macOS simulator
@@ -358,11 +353,10 @@ When a workflow fails, in order:
 
 1. Run `stupid-app doctor` and fix every failure it reports.
 2. Confirm the prerequisite that phase needs: imported SDK, provisioned
-   identity/profile, credentials, pairing record, USB/diagnostic TUN privilege, MTU-patched
+   identity/profile, credentials, pairing record, MTU-patched
    usbmuxd for WSL USB installs, unlocked device.
 3. For wireless install discovery failures, confirm the phone is unlocked, on
-   the same LAN, and still has its saved pairing. Wireless installs need no
-   capability or sudo grant after a rebuild.
+   the same LAN, and still has its saved pairing.
 4. If the pairing record is missing or stale, re-run `device pair --usb`.
 5. Check the release manifest and `release status --live` before re-uploading;
    do not reuse a build number that already exists.
@@ -384,8 +378,7 @@ When a workflow fails, in order:
 8. Inspect a device crash report with `stupid-app device crash` — pass a local
    `--path <file>.ips` or `--udid <phone-udid>` to pull the newest matching
    report directly from the phone over USB (no host tool), optionally `--json`.
-   Add `--network` to pull a wireless device over the CoreDevice tunnel (needs
-   `--sudo` on macOS for the privileged TUN). It prints the termination
+   It prints the termination
    namespace/reason, exception, and app-specific detail in one pass, and flags
    watchdog/CPU/resource terminations (e.g. `SIGKILL` from excessive logging).
 

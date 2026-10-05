@@ -16,13 +16,17 @@ from the [releases page](https://github.com/stephancill/stupid-app-cli/releases)
 put them on your `PATH` (keep them in the same directory):
 
 ```bash
-curl -fsSL -o /usr/local/bin/stupid-app \
+mkdir -p ~/.local/bin
+curl -fsSL -o ~/.local/bin/stupid-app \
   https://github.com/stephancill/stupid-app-cli/releases/latest/download/stupid-app-macos-arm64
-curl -fsSL -o /usr/local/bin/stupid-app-gui \
+curl -fsSL -o ~/.local/bin/stupid-app-gui \
   https://github.com/stephancill/stupid-app-cli/releases/latest/download/stupid-app-gui-macos-arm64
-chmod +x /usr/local/bin/stupid-app /usr/local/bin/stupid-app-gui
+chmod +x ~/.local/bin/stupid-app ~/.local/bin/stupid-app-gui
+export PATH="$HOME/.local/bin:$PATH"
 stupid-app --version
 ```
+
+Ensure `~/.local/bin` is on your `PATH`.
 
 `stupid-app gui` (macOS-only) launches the desktop GUI; it discovers the companion
 `stupid-app-gui` binary next to the `stupid-app` executable, so keep the two files in
@@ -36,7 +40,9 @@ Build from source with a Swift 6.2 toolchain (x86_64 Ubuntu 24.04 LTS):
 git clone https://github.com/stephancill/stupid-app-cli.git
 cd stupid-app-cli
 swift build -c release
-sudo install -m 755 .build/release/stupid-app /usr/local/bin/stupid-app
+mkdir -p ~/.local/bin
+install -m 755 .build/release/stupid-app ~/.local/bin/stupid-app
+export PATH="$HOME/.local/bin:$PATH"
 stupid-app --version
 ```
 
@@ -135,16 +141,12 @@ native CoreDevice helper, checks owner-only credential and pairing-record modes 
 reading or printing their contents, and validates project configuration plus referenced
 files when run in a project directory.
 
-Wireless installs (`run --network --udid <udid>`) use an in-process IPv6/TCP
-stack on macOS and Linux. They need no sudo, TUN/utun device, host route, or
-`CAP_NET_ADMIN`; the GUI's wireless Run uses the same path. The device must already
-be paired, unlocked, and reachable on the same network. Each process supports one
-active wireless tunnel and up to 16 service streams.
+Wireless deployment uses `stupid-app run --network --udid <udid>` on macOS and
+Linux. Pair the phone once, keep it unlocked on the same network, and use that
+command for daily development. The GUI's wireless Run uses the same workflow.
 
-USB CoreDevice pairing/launch and wireless crash-report pulls still use the kernel
-tunnel. Those operations require `/dev/net/tun` and privileged access on Linux or
-`utun` on macOS; use the explicit `--sudo` helper boundary. The CLI never elevates
-implicitly. See the bundled command reference for operation-specific requirements.
+Device pairing and USB commands have host-specific setup requirements. Consult
+`stupid-app device pair --help` and `stupid-app run --help` when setting them up.
 
 Pairing records are stored under the permission-hardened credential directory.
 
