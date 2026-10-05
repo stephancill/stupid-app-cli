@@ -9,11 +9,17 @@ public struct RemotePairingTunnelClient: Sendable {
   public var host: String
   public var port: UInt16
   public var timeoutSeconds: Double
+  /// Explicit identity of the host that created a copied pairing record.
+  public var pairingHostIdentifier: String?
 
-  public init(host: String, port: UInt16, timeoutSeconds: Double = 15) {
+  public init(
+    host: String, port: UInt16, timeoutSeconds: Double = 15,
+    pairingHostIdentifier: String? = nil
+  ) {
     self.host = host
     self.port = port
     self.timeoutSeconds = timeoutSeconds
+    self.pairingHostIdentifier = pairingHostIdentifier
   }
 
   public struct Outcome: Equatable, Sendable {
@@ -27,11 +33,15 @@ public struct RemotePairingTunnelClient: Sendable {
     guard timeoutSeconds > 0 else {
       throw RemotePairing.Error.invalidInput("timeout must be positive")
     }
+    if let pairingHostIdentifier, UUID(uuidString: pairingHostIdentifier) == nil {
+      throw RemotePairing.Error.invalidInput("pairing host identity must be a UUID")
+    }
     let socket = try SocketConnection(
       address: "\(host):\(port)",
       timeoutSeconds: timeoutSeconds
     )
-    var channel = try Channel(connection: socket, timeoutSeconds: timeoutSeconds)
+    var channel = Channel(
+      connection: socket, timeoutSeconds: timeoutSeconds, identifier: pairingHostIdentifier)
     do {
       try channel.handshake()
       try channel.pairVerify(record: record)
@@ -56,11 +66,13 @@ public struct RemotePairingTunnelClient: Sendable {
     var clientKey = Data()
     var serverKey = Data()
 
-    init(connection: SocketConnection, timeoutSeconds: Double) {
+    init(connection: SocketConnection, timeoutSeconds: Double, identifier: String? = nil) {
       self.connection = connection
       self.timeoutSeconds = timeoutSeconds
-      self.identifier = RemotePairing.generateHostID(
-        hostname: ProcessInfo.processInfo.hostName)
+      self.identifier =
+        identifier
+        ?? RemotePairing.generateHostID(
+          hostname: ProcessInfo.processInfo.hostName)
     }
 
     var x25519PublicKey: Data {

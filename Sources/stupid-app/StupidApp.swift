@@ -5,7 +5,7 @@ import SDKCore
 @main
 struct StupidApp: AsyncParsableCommand {
   /// The product version reported by `stupid-app --version`.
-  static let productVersion = "0.0.19"
+  static let productVersion = "0.0.20"
 
   static let configuration = CommandConfiguration(
     commandName: "stupid-app",
@@ -30,7 +30,7 @@ struct StupidApp: AsyncParsableCommand {
       CoreDeviceHelperCommand.self,
     ]
     #if os(macOS)
-    commands.append(GUICommand.self)
+      commands.append(GUICommand.self)
     #endif
     return commands
   }

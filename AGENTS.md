@@ -77,6 +77,8 @@ Do not include timeline estimates in planning documents. Use ordered dependencie
   lockdown, AFC, installation-proxy, and syslog services). Do not introduce a Python,
   `pymobiledevice3`, or host-tool dependency for pairing, install, diagnostics, or
   release. Keep the transport replaceable.
+- Wireless installs use the process-local lwIP tunnel without sudo/TUN/routes;
+  USB bootstrap/launch and wireless crash diagnostics retain the kernel helper.
 - Treat pairing records and signing material as credentials.
 
 ## Security Rules
@@ -143,14 +145,15 @@ Publishing a new `stupid-app` version:
      tag a release whose own process documentation is stale.
 4. Commit the release (version bump plus all documentation updates), then tag and
    push: `git tag -a v<version> -m "stupid-app <version>" && git push origin v<version>`.
-5. Create the GitHub release with **versionless asset names** so the install
-   instructions in `README.md` never pin a version and require an update. Build the
+5. Include `THIRD_PARTY_NOTICES.md` as a release asset for the bundled native
+   dependencies, retaining their licenses. Create the GitHub release with
+   **versionless asset names** so the install instructions in `README.md` never pin a version and require an update. Build the
    binaries to filenames without the version and attach them under those exact names —
    the CLI ships together with its companion macOS GUI (`stupid-app-gui`) so
    `stupid-app gui` can find it beside `stupid-app`:
 
    ```bash
-   gh release create v<version> /tmp/stupid-app-macos-arm64 /tmp/stupid-app-gui-macos-arm64 \
+   gh release create v<version> /tmp/stupid-app-macos-arm64 /tmp/stupid-app-gui-macos-arm64 THIRD_PARTY_NOTICES.md \
      --title "stupid-app v<version> for Apple Silicon macOS" --notes "..."
    ```
 

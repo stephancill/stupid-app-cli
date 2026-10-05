@@ -106,10 +106,27 @@ let package = Package(
         "CCoreDeviceTLS",
         "CLockdownTLS",
         "CTUN",
+        "CUserspaceIP",
         "SDKCore",
         .product(name: "Crypto", package: "swift-crypto"),
         .product(name: "_CryptoExtras", package: "swift-crypto"),
       ]
+    ),
+    .target(
+      name: "CUserspaceIP",
+      path: "Sources/CUserspaceIP",
+      exclude: ["vendor/COPYING"],
+      sources: ["UserspaceIP.c", "vendor/core"],
+      publicHeadersPath: "include",
+      cSettings: [.headerSearchPath("vendor/include")]
+    ),
+    .executableTarget(
+      name: "userspace-tunnel-spike",
+      dependencies: [
+        "DeviceKit",
+        .product(name: "ArgumentParser", package: "swift-argument-parser"),
+      ],
+      path: "Tools/UserspaceTunnelSpike/Runner"
     ),
     .target(
       name: "ProductCore",
@@ -169,8 +186,16 @@ let package = Package(
       dependencies: [
         "DeviceKit",
         "CTUN",
+        "CUserspaceIP",
+        "CCoreDeviceTLSTestSupport",
         .product(name: "_CryptoExtras", package: "swift-crypto"),
       ]
+    ),
+    .target(
+      name: "CCoreDeviceTLSTestSupport",
+      dependencies: ["COpenSSL"],
+      path: "Tests/CCoreDeviceTLSTestSupport",
+      publicHeadersPath: "include"
     ),
     .testTarget(
       name: "ProductCoreTests",
@@ -182,3 +207,8 @@ let package = Package(
     ),
   ]
 )
+
+// An executable with every source gated to macOS still fails to link on Linux.
+#if !os(macOS)
+  package.targets.removeAll { $0.name == "stupid-app-gui" }
+#endif

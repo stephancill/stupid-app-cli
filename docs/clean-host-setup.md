@@ -71,10 +71,12 @@ Verification: `stupid-app doctor` reports the pairing records check as
 
 ### 5. Privilege boundary for TUN
 
-CoreDevice network tunneling creates a TUN interface and needs `CAP_NET_ADMIN`. The CLI
+USB CoreDevice pairing/launch and wireless crash pulls create a TUN interface and
+need privileged access. Wireless installs use an in-process tunnel and need neither
+TUN nor `CAP_NET_ADMIN`. The CLI
 never elevates implicitly. Two supported arrangements:
 
-- **Setcap on the binary (proof-host arrangement):** the whole network run stays
+- **Setcap on the binary (proof-host arrangement):** the USB/diagnostic operation stays
   unprivileged and the binary is granted the capability.
   ```bash
   sudo setcap cap_net_admin=ep .build/debug/stupid-app
@@ -136,7 +138,7 @@ project directory.
 ## Daily Use
 
 ```bash
-stupid-app run --network --udid <udid> --sudo /usr/bin/sudo
+stupid-app run --network --udid <udid>
 stupid-app release archive
 stupid-app release upload --wait
 stupid-app release status
@@ -147,7 +149,8 @@ stupid-app release status
 ### The network run stops discovering the device
 
 1. Confirm the iPhone is unlocked, on the same LAN, and disconnected from USB.
-2. Re-apply the capability if the binary was rebuilt: `sudo setcap cap_net_admin=ep .build/debug/stupid-app`.
+2. Confirm the phone is unlocked and the saved remote pairing still exists;
+   wireless installs need no capability or sudo grant after a rebuild.
 3. Confirm the pairing record still exists:
    `ls ~/.stupid-app/credentials/pairing/remote_*.plist`.
 4. If the record is gone or a fresh device was introduced, run

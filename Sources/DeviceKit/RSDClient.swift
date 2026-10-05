@@ -45,20 +45,34 @@ public struct RSDClient: Sendable {
   private let host: String
   private let port: Int
   private let timeoutSeconds: Double
+  private let dial: (@Sendable (String, Int, Double) throws -> SocketConnection)?
 
   public init(host: String, port: Int, timeoutSeconds: Double = 15) {
     self.host = host
     self.port = port
     self.timeoutSeconds = timeoutSeconds
+    self.dial = nil
+  }
+
+  init(
+    host: String, port: Int, timeoutSeconds: Double,
+    dial: @escaping @Sendable (String, Int, Double) throws -> SocketConnection
+  ) {
+    self.host = host
+    self.port = port
+    self.timeoutSeconds = timeoutSeconds
+    self.dial = dial
+  }
+
+  private func connection(port: Int) throws -> SocketConnection {
+    if let dial { return try dial(host, port, timeoutSeconds) }
+    return try SocketConnection(address: "\(host):\(port)", timeoutSeconds: timeoutSeconds)
   }
 
   /// Connects, performs the RemoteXPC handshake, and resolves the peer's
   /// advertised identity and services.
   public func connect() throws -> PeerInfo {
-    let socket = try SocketConnection(
-      address: "\(host):\(port)",
-      timeoutSeconds: timeoutSeconds
-    )
+    let socket = try connection(port: port)
     let remote = RemoteXPCConnection(connection: socket)
     do {
       try remote.start()
@@ -76,16 +90,13 @@ public struct RSDClient: Sendable {
   /// tunnel down if the RSD control connection closes, so the launch response
   /// would never be delivered.
   public func open() throws -> RSDSession {
-    let socket = try SocketConnection(
-      address: "\(host):\(port)",
-      timeoutSeconds: timeoutSeconds
-    )
+    let socket = try connection(port: port)
     let remote = RemoteXPCConnection(connection: socket)
     do {
       try remote.start()
       let peerInfo = try Self.peerInfo(from: try remote.receiveResponse())
       return RSDSession(
-        socket: socket, host: host, timeoutSeconds: timeoutSeconds, peerInfo: peerInfo)
+        socket: socket, host: host, timeoutSeconds: timeoutSeconds, peerInfo: peerInfo, dial: dial)
     } catch {
       socket.closeImmediately()
       throw error
@@ -97,10 +108,7 @@ public struct RSDClient: Sendable {
     guard let service = peerInfo.services[name] else {
       throw Error.serviceNotFound(name)
     }
-    let socket = try SocketConnection(
-      address: "\(host):\(service.port)",
-      timeoutSeconds: timeoutSeconds
-    )
+    let socket = try connection(port: Int(service.port))
     let remote = RemoteXPCConnection(connection: socket)
     do {
       try remote.start()
@@ -120,10 +128,7 @@ public struct RSDClient: Sendable {
     guard let service = peerInfo.services[name] else {
       throw Error.serviceNotFound(name)
     }
-    let socket = try SocketConnection(
-      address: "\(host):\(service.port)",
-      timeoutSeconds: timeoutSeconds
-    )
+    let socket = try connection(port: Int(service.port))
     let connection = LockdownServiceConnection(connection: socket)
     do {
       try connection.sendPlist([
@@ -195,6 +200,7 @@ public final class RSDSession: @unchecked Sendable {
   private let socket: SocketConnection
   private let host: String
   private let timeoutSeconds: Double
+  private let dial: (@Sendable (String, Int, Double) throws -> SocketConnection)?
 
   public let peerInfo: RSDClient.PeerInfo
 
@@ -202,12 +208,14 @@ public final class RSDSession: @unchecked Sendable {
     socket: SocketConnection,
     host: String,
     timeoutSeconds: Double,
-    peerInfo: RSDClient.PeerInfo
+    peerInfo: RSDClient.PeerInfo,
+    dial: (@Sendable (String, Int, Double) throws -> SocketConnection)? = nil
   ) {
     self.socket = socket
     self.host = host
     self.timeoutSeconds = timeoutSeconds
     self.peerInfo = peerInfo
+    self.dial = dial
   }
 
   deinit {
@@ -220,10 +228,13 @@ public final class RSDSession: @unchecked Sendable {
     guard let service = peerInfo.services[name] else {
       throw RSDClient.Error.serviceNotFound(name)
     }
-    let socket = try SocketConnection(
-      address: "\(host):\(service.port)",
-      timeoutSeconds: timeoutSeconds
-    )
+    let socket: SocketConnection
+    if let dial {
+      socket = try dial(host, Int(service.port), timeoutSeconds)
+    } else {
+      socket = try SocketConnection(
+        address: "\(host):\(service.port)", timeoutSeconds: timeoutSeconds)
+    }
     let remote = RemoteXPCConnection(connection: socket)
     do {
       try remote.start()

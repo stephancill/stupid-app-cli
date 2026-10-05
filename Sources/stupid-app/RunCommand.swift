@@ -47,7 +47,7 @@ struct RunCommand: AsyncParsableCommand {
 
   @Option(
     name: .customLong("sudo"),
-    help: "Explicit path to sudo for the privileged CoreDevice helper.")
+    help: "Explicit path to sudo for USB CoreDevice operations (wireless runs need no sudo).")
   var sudoPath: String?
 
   @Option(
@@ -80,18 +80,7 @@ struct RunCommand: AsyncParsableCommand {
 
     let credentialHome = credentialHomeURL()
     let pairingDirectory = credentialHome.appendingPathComponent("pairing", isDirectory: true)
-    let nativeRunner: NativeCoreDeviceRunner?
-    if mac {
-      nativeRunner = nil
-    } else {
-      let runner = NativeCoreDeviceRunner(
-        sudoPath: sudoPath,
-        pairingDirectory: pairingDirectory,
-        usbmuxAddress: usbmuxAddress
-      )
-      try runner.validateEnvironment(requirePrivileges: true)
-      nativeRunner = runner
-    }
+    try validateTransportEnvironment(pairingDirectory: pairingDirectory)
 
     let context = try ASCContext.resolve(home: home, purpose: "run")
 
@@ -273,26 +262,23 @@ struct RunCommand: AsyncParsableCommand {
       print(
         "Installing and launching \(config.bundleID) on the selected device over the network..."
       )
-      #if os(macOS)
-        guard let nativeRunner else { throw RunError.unsupportedTransport }
-        let pid = try nativeRunner.runNetwork(
-          bundleID: config.bundleID,
-          udid: targetUDID,
-          ipa: ipaURL
-        )
-        print("Installed and launched \(config.bundleID) (pid \(pid)).")
-      #else
-        let networkRunner = NativeNetworkRunner(
-          pairingDirectory: pairingDirectory,
-          udid: targetUDID,
-          ipa: ipaURL,
-          bundleID: config.bundleID,
-          progress: { print($0) }
-        )
-        let pid = try networkRunner.installAndLaunch()
-        print("Installed and launched \(config.bundleID) (pid \(pid)).")
-      #endif
+      let networkRunner = NativeNetworkRunner(
+        pairingDirectory: pairingDirectory,
+        udid: targetUDID,
+        ipa: ipaURL,
+        bundleID: config.bundleID,
+        progress: { print($0) }
+      )
+      let pid = try networkRunner.installAndLaunch()
+      print("Installed and launched \(config.bundleID) (pid \(pid)).")
     }
+  }
+
+  func validateTransportEnvironment(pairingDirectory: URL) throws {
+    guard usb else { return }
+    let runner = NativeCoreDeviceRunner(
+      sudoPath: sudoPath, pairingDirectory: pairingDirectory, usbmuxAddress: usbmuxAddress)
+    try runner.validateEnvironment(requirePrivileges: true)
   }
 
   private func resolveTargetUDID(discovery: any USBDeviceDiscovering) throws -> String? {

@@ -67,6 +67,12 @@ int stupid_app_coredevice_tls_tunnel_relay(
   volatile int *stop
 );
 
+// Spike adapter: packet_fd is an AF_UNIX datagram socket carrying bare IPv6
+// packets. It requires no TUN interface and applies no platform family header.
+int stupid_app_coredevice_tls_tunnel_relay_packets(
+  stupid_app_coredevice_tls_tunnel *tunnel, int packet_fd, volatile int *stop
+);
+
 void stupid_app_coredevice_tls_tunnel_cancel(stupid_app_coredevice_tls_tunnel *tunnel);
 void stupid_app_coredevice_tls_tunnel_destroy(stupid_app_coredevice_tls_tunnel *tunnel);
 

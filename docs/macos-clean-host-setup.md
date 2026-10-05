@@ -110,9 +110,10 @@ Verification: `stupid-app doctor` reports the pairing-records check as `PASS`.
 
 macOS creates `utun` interfaces through a kernel-control socket that requires root
 (`com.apple.net.utun_control` returns `EPERM` unprivileged). The CLI never elevates
-implicitly; `run --network` routes the TUN/route lifetime through the privileged
-`coredevice-helper run-network` subcommand. Support the helper with a scoped sudoers
-grant and pass `--sudo`:
+implicitly. USB CoreDevice pairing/launch and wireless crash-report pulls retain
+this boundary. Wireless installs use a process-local tunnel with no sudo or host
+routes. Support the helper for USB/diagnostics with a scoped sudoers grant and
+pass `--sudo` for those operations:
 
 ```bash
 sudo install -o root -g root -m 755 .build/release/stupid-app /usr/local/bin/stupid-app
@@ -120,7 +121,7 @@ echo 'USER ALL=(root) NOPASSWD: SETENV: /usr/local/bin/stupid-app coredevice-hel
   | sudo tee /etc/sudoers.d/stupid-app-coredevice
 sudo chmod 440 /etc/sudoers.d/stupid-app-coredevice
 sudo visudo -c
-stupid-app run --network --udid <udid> --sudo /usr/bin/sudo
+stupid-app run --usb --udid <udid> --sudo /usr/bin/sudo
 ```
 
 For a proof host using the debug binary, the sudoers grant must be scoped to the current
@@ -152,7 +153,7 @@ validated path. The intended order:
 ## Daily Use
 
 ```bash
-stupid-app run --network --udid <udid> --sudo /usr/bin/sudo   # Mode A
+stupid-app run --network --udid <udid>   # Mode A
 stupid-app run --simulator [--udid <sim-udid>]                # Mode A
 stupid-app run --mac                                           # Apple Silicon
 stupid-app release archive
@@ -170,8 +171,8 @@ stupid-app release status
 3. If the record is gone or a fresh device was introduced, run
    `stupid-app device pair --usb` once (requires USB), answering the on-device Trust
    dialog with a generous `--timeout`, then retry.
-4. Confirm the `--sudo` boundary is reachable (the sudoers grant must be scoped to the
-   current binary path after a rebuild).
+4. Wireless installs need no sudo grant after a rebuild. For USB operations or
+   wireless crash pulls, confirm the helper privilege boundary is reachable.
 5. Re-run `stupid-app doctor` and fix any failures.
 
 ### The host was restored from a backup

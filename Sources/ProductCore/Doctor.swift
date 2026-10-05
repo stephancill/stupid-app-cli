@@ -113,7 +113,8 @@ public enum Doctor {
           pairingDirectory: pairingDirectory
         )
         try runner.validateEnvironment(requirePrivileges: false)
-        return "The native CoreDevice helper is available; privileged operations use sudo."
+        return
+          "The native CoreDevice helper is available for USB operations and wireless diagnostics. Wireless installs need no sudo."
       })
 
     results.append(credentialResult(home: input.credentialHome))
@@ -129,13 +130,13 @@ public enum Doctor {
             name: "CoreDevice tunnel device",
             status: .pass,
             detail:
-              "/dev/net/tun exists; privileged access is still required for device operations."
+              "/dev/net/tun exists; USB pairing/launch and wireless diagnostics require privileged access. Wireless installs do not."
           )
           : Result(
             name: "CoreDevice tunnel device",
-            status: .failure,
+            status: .warning,
             detail:
-              "/dev/net/tun is missing. Load the TUN device before pairing or running on a device."
+              "/dev/net/tun is missing. USB CoreDevice operations and wireless diagnostics are unavailable; wireless installs use a process-local tunnel."
           ))
 
       results.append(

@@ -135,12 +135,21 @@ native CoreDevice helper, checks owner-only credential and pairing-record modes 
 reading or printing their contents, and validates project configuration plus referenced
 files when run in a project directory.
 
-CoreDevice tunneling requires `/dev/net/tun` and `CAP_NET_ADMIN` on Linux (a `utun`
-kernel-control socket on macOS). The CLI never elevates implicitly: run an
-already-privileged controlled helper or pass an explicit `--sudo` path. Production
-updates of the helper must be deployed in a controlled, audited manner.
+Wireless installs (`run --network --udid <udid>`) use an in-process IPv6/TCP
+stack on macOS and Linux. They need no sudo, TUN/utun device, host route, or
+`CAP_NET_ADMIN`; the GUI's wireless Run uses the same path. The device must already
+be paired, unlocked, and reachable on the same network. Each process supports one
+active wireless tunnel and up to 16 service streams.
+
+USB CoreDevice pairing/launch and wireless crash-report pulls still use the kernel
+tunnel. Those operations require `/dev/net/tun` and privileged access on Linux or
+`utun` on macOS; use the explicit `--sudo` helper boundary. The CLI never elevates
+implicitly. See the bundled command reference for operation-specific requirements.
 
 Pairing records are stored under the permission-hardened credential directory.
+
+The release includes [third-party notices](THIRD_PARTY_NOTICES.md), including the
+lwIP BSD-3-Clause license.
 
 ## Package layout
 

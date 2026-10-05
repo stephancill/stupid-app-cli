@@ -3,7 +3,7 @@ import Foundation
 /// The native CoreDevice network run path. It discovers the device by mDNS,
 /// establishes a remote-pairing tunnel from a saved record, and performs
 /// installation and launch over RSD. This replaces the Python `run-network`
-/// helper, so the deployment loop no longer needs Python.
+/// helper. Wireless deployment uses a process-local stack without TUN or routes.
 public struct NativeNetworkRunner: Sendable {
   public enum Error: Swift.Error, Equatable, Sendable, CustomStringConvertible {
     case noRemoteRecord
@@ -83,7 +83,7 @@ public struct NativeNetworkRunner: Sendable {
     for (index, candidate) in candidates.enumerated() {
       do {
         progress?(
-          "Trying remote-pairing candidate \(index + 1) (\(candidate.address):\(candidate.port)).")
+          "Trying remote-pairing candidate \(index + 1).")
         let pid = try installAndLaunchCandidate(candidate)
         return pid
       } catch {
@@ -109,42 +109,34 @@ public struct NativeNetworkRunner: Sendable {
     let outcome = try client.establish(record: record)
     progress?("Remote pairing verified; opening the TCP tunnel listener.")
 
-    let tunnel = try PersistentCoreDeviceTunnel(
+    let tunnel = try UserspaceCoreDeviceTunnel(
       host: candidate.address,
       port: Int(outcome.listenPort),
       preSharedKey: outcome.preSharedKey,
-      timeoutSeconds: max(discoveryTimeoutSeconds, launchTimeoutSeconds))
-    let relay = try tunnel.startRelay()
-    progress?(
-      "Network tunnel established (client \(tunnel.handshake.clientAddress) server \(tunnel.handshake.serverAddress):\(tunnel.handshake.serverRSDPort))."
-    )
+      timeoutSeconds: discoveryTimeoutSeconds + installTimeoutSeconds + launchTimeoutSeconds)
+    defer { tunnel.closeTunnel() }
+    progress?("Network tunnel established without administrator access.")
 
-    let rsd = RSDClient(
-      host: tunnel.handshake.serverAddress,
-      port: tunnel.handshake.serverRSDPort,
-      timeoutSeconds: max(discoveryTimeoutSeconds, launchTimeoutSeconds))
+    let rsd = tunnel.rsd(timeoutSeconds: max(discoveryTimeoutSeconds, launchTimeoutSeconds))
     let session = try rsd.open()
     guard session.peerInfo.udid == udid else {
       throw RemotePairing.Error.pairing("the tunnel resolved a different device")
     }
     progress?("Resolved the remote service discovery peer.")
 
-    defer {
-      relay.stop()
-      tunnel.stop()
-    }
-
-    try install(rsd: rsd, peerInfo: session.peerInfo)
+    let installRSD = tunnel.rsd(timeoutSeconds: installTimeoutSeconds)
+    try install(rsd: installRSD, peerInfo: session.peerInfo)
     progress?("Installed and verified the application over the network.")
 
     let service = try session.connect(service: AppServiceClient.serviceName)
     let appService = AppServiceClient(service: service)
     let pid = try appService.launchApplication(bundleID: bundleID)
     progress?("Launched the application (pid \(pid)).")
+    withExtendedLifetime(session) {}
     return pid
   }
 
-  private func install(rsd: RSDClient, peerInfo: RSDClient.PeerInfo) throws {
+  func install(rsd: RSDClient, peerInfo: RSDClient.PeerInfo) throws {
     let afcName = "com.apple.afc.shim.remote"
     let installName = "com.apple.mobile.installation_proxy.shim.remote"
     let afcConnection = try rsd.startLockdownService(afcName, peerInfo: peerInfo)

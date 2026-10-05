@@ -12,13 +12,13 @@ public enum ReleaseBumper {
 
     public var description: String {
       switch self {
-      case let .unreadable(path):
+      case .unreadable(let path):
         return "Could not read plist at '\(path)'."
-      case let .versionMissing(path):
+      case .versionMissing(let path):
         return "No CFBundleVersion found at '\(path)'."
-      case let .invalidVersion(string, path):
+      case .invalidVersion(let string, let path):
         return "CFBundleVersion '\(string)' at '\(path)' is not a decimal integer."
-      case let .writeFailed(path):
+      case .writeFailed(let path):
         return "Could not write bumped build number to '\(path)'."
       }
     }
@@ -29,8 +29,9 @@ public enum ReleaseBumper {
     guard let data = try? Data(contentsOf: url) else {
       throw Error.unreadable(url.path)
     }
-    guard let plist = try? PropertyListSerialization.propertyList(from: data, format: nil)
-      as? [String: Any]
+    guard
+      let plist = try? PropertyListSerialization.propertyList(from: data, format: nil)
+        as? [String: Any]
     else {
       throw Error.unreadable(url.path)
     }
@@ -78,9 +79,11 @@ public enum ReleaseBumper {
     }
     // No integer at the end: append ".1" to a numeric prefix, else fail.
     let prefix = components.dropLast().joined(separator: ".")
-    let prefixValid = prefix.isEmpty || prefix.split(separator: ".").allSatisfy {
-      Int($0) != nil
-    }
+    let prefixValid =
+      prefix.isEmpty
+      || prefix.split(separator: ".").allSatisfy {
+        Int($0) != nil
+      }
     return prefixValid ? prefix + ".1" : nil
   }
 
@@ -104,7 +107,8 @@ public enum ReleaseBumper {
     guard let next = nextBuildNumber(current) else {
       throw Error.invalidVersion(string: current, path: url.path)
     }
-    try replaceStringValue("<string>\(next)</string>", forKey: "CFBundleShortVersionString", at: url)
+    try replaceStringValue(
+      "<string>\(next)</string>", forKey: "CFBundleShortVersionString", at: url)
     return next
   }
 
@@ -139,8 +143,8 @@ public enum ReleaseBumper {
     guard let valueRange = afterKey.range(of: pattern, options: .regularExpression) else {
       throw Error.versionMissing(url.path)
     }
-    let updated =
-      text[..<valueRange.lowerBound] + replacement + text[valueRange.upperBound...]
+    var updated = text
+    updated.replaceSubrange(valueRange, with: replacement)
     do {
       try updated.write(to: url, atomically: true, encoding: .utf8)
     } catch {

@@ -31,7 +31,8 @@ from a source checkout.
   presigned upload URLs. Credentials live in `~/.stupid-app/credentials`
   (directory `0700`, files `0600`, plaintext, atomic writes).
 - The CLI never elevates silently. Privileged CoreDevice TUN operations run
-  through a helper subcommand; pass `--sudo <path>` to authorize it.
+  through a helper subcommand; pass `--sudo <path>` to authorize it. Wireless
+  installs use a process-local tunnel and require no elevation.
 - Version 1 supports one SwiftPM library product with code-based SwiftUI, plus an
   optional `extensions:` list in `stupid-app.yml` for bundled `PlugIns/*.appex`
   extensions (e.g. a WidgetKit extension) sharing App Groups. Xcode project inputs,
@@ -42,8 +43,9 @@ from a source checkout.
 
 - **Linux (production):** x86_64 Ubuntu 24.04 LTS. Swift 6.2.x toolchain, the
   imported `stupid-app-ios` Swift SDK (registered via `swift sdk install`),
-  OpenSSL 3.x (`libssl-dev`), `zstd`, and `zip`/`unzip`. CoreDevice networking
-  needs `/dev/net/tun` and `CAP_NET_ADMIN` (see pairing/run below). USB installs
+  OpenSSL 3.x (`libssl-dev`), `zstd`, and `zip`/`unzip`. USB CoreDevice
+  pairing/launch and wireless diagnostics need `/dev/net/tun` and privileged
+  access. Wireless installs need neither TUN nor `CAP_NET_ADMIN`. USB installs
   need a qualified MTU-patched `usbmuxd` when running under WSL USBIP.
 - **macOS:** Apple Silicon macOS 14+. Either Xcode-present (builds in place) or
   Xcode-absent (uses an imported bundle). `run --simulator` is Xcode-present-only.
@@ -241,14 +243,16 @@ stupid-app device list
 stupid-app device pair --usb [--timeout 180]
 
 # Then, with the phone off USB and on the same LAN:
-stupid-app run --network --udid <udid> [--sudo /usr/bin/sudo]
+stupid-app run --network --udid <udid>
 ```
 
 Pairing stores owner-only records under the credential directory. Network runs
 discover the device over mDNS, open a CoreDevice tunnel, install, verify the
-bundle, and launch. The network path needs the TUN privilege boundary (setcap on
-the binary or a scoped sudo grant — see `Privilege boundary` in
-`references/commands.md` and `docs/clean-host-setup.md`).
+bundle, and launch. Wireless installs run in-process on macOS and Linux with no
+sudo, TUN/utun, host route, or network capability. The GUI's wireless Run uses this
+same path. One wireless tunnel and up to 16 service streams are supported per
+process. USB pairing/launch and wireless crash pulls retain their separate kernel
+transport — see `Privilege boundary` in `references/commands.md`.
 `--replace-lockdown-record` regenerates the lockdown trust during pairing.
 
 ### 5. macOS simulator
@@ -354,11 +358,11 @@ When a workflow fails, in order:
 
 1. Run `stupid-app doctor` and fix every failure it reports.
 2. Confirm the prerequisite that phase needs: imported SDK, provisioned
-   identity/profile, credentials, pairing record, TUN privilege, MTU-patched
+   identity/profile, credentials, pairing record, USB/diagnostic TUN privilege, MTU-patched
    usbmuxd for WSL USB installs, unlocked device.
-3. For network discovery failures after a rebuild, re-apply the TUN capability
-   (`sudo setcap cap_net_admin=ep` on the debug binary) or re-establish the
-   scoped sudo grant; then retry.
+3. For wireless install discovery failures, confirm the phone is unlocked, on
+   the same LAN, and still has its saved pairing. Wireless installs need no
+   capability or sudo grant after a rebuild.
 4. If the pairing record is missing or stale, re-run `device pair --usb`.
 5. Check the release manifest and `release status --live` before re-uploading;
    do not reuse a build number that already exists.

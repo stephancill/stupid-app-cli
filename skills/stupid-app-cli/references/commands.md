@@ -1,17 +1,14 @@
 ## Privilege boundary
 
-CoreDevice network runs and USB CoreDevice pairing create a TUN interface and
-need `CAP_NET_ADMIN`. The CLI never elevates implicitly. Two supported
-arrangements:
+`run --network` uses an in-process IPv6/TCP stack on macOS and Linux. It requires
+no sudo, TUN/utun, host route, or `CAP_NET_ADMIN`, including after a rebuild.
+Saved remote pairing records and an unlocked device on the same LAN are required.
 
-- **Setcap on the binary (proof-host arrangement):** the whole run stays
-  unprivileged and the binary itself is granted the capability:
-  `sudo setcap cap_net_admin=ep .build/debug/stupid-app`. Every rebuild wipes
-  the capability; re-apply it.
-- **Scoped sudo grant (product arrangement):** install the binary root-owned and
-  grant only the helper subcommand in sudoers, then pass `--sudo /usr/bin/sudo`:
-  `iosdev ALL=(root) NOPASSWD: SETENV: /usr/local/bin/stupid-app coredevice-helper *`.
-  Never grant a broad `NOPASSWD: ALL`.
+USB CoreDevice pairing/launch and wireless crash-report pulls retain the kernel
+tunnel. On Linux they require `/dev/net/tun` and privileged access; macOS uses
+privileged `utun`. The CLI never elevates implicitly: pass `--sudo /usr/bin/sudo`
+for those operations with a controlled helper installation. Do not grant a broad
+`NOPASSWD: ALL`. The `--sudo` option on `run` applies only to USB deployment.
 
 ## Command reference
 
@@ -30,7 +27,7 @@ Subcommands: `doctor`, `gui`, `new`, `sdk`, `build`, `credentials`, `signing`,
 `devices`, `device`, `run`, `simulators`, `release`, `coredevice-helper`.
 
 `coredevice-helper` is the privileged native CoreDevice subcommand; it is
-normally invoked by `run`/`device pair` with `--sudo` and should not be called
+normally invoked by `run --usb`/`device pair` with `--sudo` and should not be called
 directly. `gui` is macOS-only.
 
 ## gui
@@ -45,8 +42,8 @@ execute the CLI commands (Doctor, Build, and the selected device's Run) by spawn
 CLI as a subprocess and streaming stdout/stderr into a live log pane. A device-selection
 dropdown (with a refresh button beside it) picks the run target across simulators,
 USB-attached, and network-paired devices; transport mode and UDID are derived from the
-chosen device, and physical-device runs pass the CLI's explicit `--sudo` boundary (the
-TUN/usbmux helper must run privileged). Includes a project directory picker and a Stop
+chosen device. USB runs pass the explicit `--sudo` boundary; wireless runs stay
+in-process without elevation. Includes a project directory picker and a Stop
 control; on non-macOS hosts the subcommand is not registered.
 
 ## doctor
@@ -57,7 +54,8 @@ stupid-app doctor [--project <dir>] [--home <cred-dir>] [--sdk-id <id>] [--swift
 
 Checks the host toolchain, imported SDK compatibility, native signing trust,
 OpenSSL 3.x, CoreDevice helper, credential/identity/pairing presence and
-permissions, Linux TUN/usbmux prerequisites, and project config. Required
+permissions, USB/diagnostic TUN and usbmux prerequisites, and project config.
+A missing Linux TUN is a warning because wireless installs do not use it. Required
 failures exit unsuccessfully; incomplete workflow state is a warning. Never
 reads or prints secret values. `--project` defaults to `.` and is used to
 validate a `stupid-app.yml` project.
@@ -185,7 +183,7 @@ a `SIGKILL` from excessive logging is surfaced directly.
 - Adding `--network` pulls over the wireless CoreDevice tunnel instead, eventually
   routed through the `coredevice-helper crash-network` subcommand. On macOS the
   network tunnel needs the privileged TUN, so pass `--sudo <path>`; on Linux the
-  tunnel stays in-process and needs no privilege.
+  kernel tunnel stays in-process and requires root/CAP_NET_ADMIN.
 - `--home` points at the credential store (default `~/.stupid-app/credentials`).
 
 ## run
@@ -197,8 +195,10 @@ stupid-app run [--usb|--network|--simulator|--mac] [--udid <udid>] [--sdk-id <id
 Builds, signs once (Apple Development), packages, installs, and launches.
 
 - `--usb` — install over a USB-connected device.
-- `--network` — discover over mDNS, open a CoreDevice tunnel, install, launch
-  (device must be paired via `device pair --usb` beforehand).
+- `--network` — discover over mDNS, open a process-local CoreDevice tunnel,
+  install, verify, and launch without sudo on macOS and Linux. Pair via
+  `device pair --usb` beforehand. Supports one tunnel per process and 16 service
+  streams, with MTU capped at 1500 and bounded buffers; no kernel routing changes.
 - `--simulator` — macOS Xcode-present only; builds for the simulator SDK,
   ad-hoc signs, boots, installs, launches via `simctl`.
 - `--mac` — Apple Silicon macOS only; builds the ordinary `arm64-apple-ios`
@@ -207,8 +207,9 @@ Builds, signs once (Apple Development), packages, installs, and launches.
   LaunchServices, registers each nested `.appex` with PlugInKit (`pluginkit -a`),
   and launches it. No Xcode project or TestFlight upload is used. A nested Safari
   Web Extension's web content runs in Safari, but native messaging is not available.
-- `--udid` auto-selects when omitted. Requires privileged helper access for
-  network runs.
+- `--udid` is required for network runs. USB selects the sole attached device
+  when omitted; simulator selects a booted device or the first available device.
+- `--sudo` authorizes the USB helper. It is not used by wireless installs.
 
 ## simulators
 

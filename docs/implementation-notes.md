@@ -20,6 +20,244 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
 
+## 2026-10-05 - Release 0.0.20: wireless installs without sudo
+
+### Changes And Decisions
+
+- Promoted the qualified userspace IPv6/TCP stack into `run --network` on macOS
+  and Linux. `NativeNetworkRunner` uses the process-local TLS packet bridge and
+  injected RSD dialer; it installs, verifies, cleans staging, and launches through
+  the existing service clients. The normal CLI invokes this directly on both hosts.
+- Wireless deployment skips privileged-helper validation and never invokes sudo,
+  creates TUN/utun, or changes host routes. The GUI passes `--sudo` only for USB.
+  USB bootstrap/launch and wireless crash-report pulls retain the kernel transport.
+  Doctor treats missing Linux TUN as an optional workflow warning.
+- Moved the pinned, unmodified lwIP sources and C adapter under `Sources/CUserspaceIP`.
+  Kept upstream copyright and BSD-3-Clause notices, and included third-party
+  notices in the release assets. The one-tunnel-per-process, 16-stream, MTU/buffer
+  bounds remain explicit. No privileged fallback was introduced.
+- Retained the OpenSSL error-queue fix and deterministic red/green regression.
+  The wireless tunnel lifetime now covers discovery, installation, and launch
+  budgets; AFC service sockets use the installation timeout. Cleanup is registered
+  immediately after tunnel creation, including failures before RSD opens.
+- Updated README, bundled skill/command reference, clean-host guidance, handover,
+  spike report, and release instructions together. Product version is 0.0.20.
+- Added a CLI regression with an invalid sudo path: wireless environment validation
+  succeeds without resolving it, while USB still rejects it. Full-suite contention
+  exposed the pairing-identity test's blocking peer on the cooperative executor;
+  moved the test-only peer to Dispatch with a bounded 10-second socket deadline.
+  Production pairing timeouts were not changed.
+
+### Verification And Release
+
+- Physical evidence remains the completed three consecutive userspace wireless
+  proofs on each host; the macOS proof includes the TLS fix. Every run installed
+  and launched an extension-bearing development IPA and byte-compared a separate
+  12 MiB AFC transfer with staging cleanup and joined workers, without root or
+  attached USB. The phone was taken off the network before CLI promotion;
+  a fresh physical run of the final released CLI was unavailable.
+- `swift test`: 317 macOS tests and 309 Linux tests passed. Linux executed as an
+  ordinary user with effective capabilities zero on Swift 6.2.4. Mac Swift 6.4
+  built both optimized release executables; Linux built the optimized CLI.
+- `swift build -c release` (macOS) and `swift build -c release --product stupid-app`
+  (Linux): passed. Both CLI binaries report `stupid-app 0.0.20`.
+- `swift format lint --strict` on all 19 changed/new Swift files and bundled
+  skill-creator `quick_validate.py`: passed. Staged `git diff --check` passed for
+  project-owned files. The initial staged check reported whitespace already
+  present in upstream lwIP; retained those bytes and excluded the vendor directory
+  from that check. Compared all 193 vendored source/header files byte-for-byte
+  with the pinned reference: unchanged.
+- Stable macOS release asset names: `stupid-app-macos-arm64`,
+  `stupid-app-gui-macos-arm64`, plus `THIRD_PARTY_NOTICES.md`.
+- Built CLI SHA-256: `e88c3af5ab9c7436183932a2a86622ee129ab06f9cdfb021971fe739f9566f26`.
+- Built GUI SHA-256: `24e15a7d0364d85d34f278e379e37fba1e0f6e969cb1871bef84ea44805c09cb`.
+- Publication and atomic local installation use these exact assets; verify the
+  downloaded and installed bytes against the above checksums.
+
+## 2026-10-05 - Repeated macOS userspace installs: stale OpenSSL errors
+
+### Cause And Changes
+
+- Reproduced the second-run RSD reset with the phone explicitly kept unlocked.
+  Temporary bounded traces showed the previous relay's cancellation left
+  `SSL_R_UNEXPECTED_EOF_WHILE_READING` in its worker thread's OpenSSL error queue.
+  Dispatch reused that worker for the next relay, whose nonblocking read was
+  misclassified as a fatal TLS failure before it forwarded the first TCP SYN.
+- Added `ERR_clear_error()` immediately before all CoreDevice TLS handshake,
+  read, and write operations. This follows the
+  [OpenSSL `SSL_get_error` contract](https://docs.openssl.org/3.5/man3/SSL_get_error/)
+  while preserving current-operation errors. No delay or retry workaround was added.
+- Added a test-only joined loopback TLS 1.2 PSK peer and a regression that seeds
+  the calling thread's error queue, then verifies outbound forwarding, exact
+  packet echo, and clean relay close. It reproduces worker contamination without
+  relying on scheduler timing, credentials, or a physical device.
+- Removed temporary trace instrumentation after diagnosis. Updated the handover
+  and spike report to close the observed reset and retain the remaining proof gates.
+  Also corrected a stale top-level handover statement that still called the
+  previously fixed kernel-tunnel MTU stall unresolved.
+
+### Verification
+
+- Before the fix, `swift test --filter CoreDeviceTLSRelayTests` failed with
+  READ_FAILED (6). After the fix the same command passed on macOS and Linux.
+- `.build/debug/userspace-tunnel-spike --timeout 120 --transfer-mib 12 --repeat 3
+  --ipa <development-signed-ipa> --bundle-id <bundle-identifier>`: all three
+  consecutive macOS runs passed, without temporary trace instrumentation. Each
+  transferred and byte-compared 12 MiB through AFC, removed the test file,
+  installed the existing extension-bearing IPA, verified the bundle, removed
+  the staged IPA, launched through AppService, and stopped tunnel workers.
+- An independent `device list --json` check confirmed zero USB-attached devices
+  with no discovery error; the proof ran as an ordinary user without sudo,
+  TUN/utun creation, or host routes.
+- Full `swift test`: 315 macOS tests and 307 Linux tests passed. Linux ran on
+  Ubuntu 24.04 / Swift 6.2.4; macOS used Swift 6.4.
+- `swift format lint --strict` on the changed Swift fixture, tunnel wrapper,
+  and package manifest; `git diff --check`: passed. Custom C test/stack files
+  were formatted with clang-format; vendored upstream sources were not reformatted.
+
+### Remaining Scope
+
+- This fixes the observed macOS repeated-install failure in the spike. The normal
+  CLI transport has not been switched or released. Minimum macOS/toolchain,
+  larger extension-bearing IPA, lock/network-loss, staging cancellation, and
+  service exhaustion/error-reporting qualification remain before promotion.
+- Linux physical qualification remains the prior three consecutive complete
+  wireless runs. This follow-up reran the deterministic TLS regression and full
+  Linux suite using only nonsecret source/test files; it did not copy credentials
+  or repeat the physical Linux installation.
+
+## 2026-10-05 - Copied-pairing identity and unlocked-phone qualification
+
+### Changes And Decisions
+
+- Authorized temporary mapped-pairing and development-IPA copies were streamed
+  over SSH directly to Linux, using a mode-0700 directory and mode-0600 files.
+  Credential contents and operational identifiers were not logged or written to
+  the Windows filesystem. The proof script removes its temporary material on exit.
+- The copied legacy pairing initially failed before tunnel setup: Pair-Verify
+  signs a hostname-derived identity, but the saved record contains keys without
+  their original host identity. Added an explicit `--pairing-host-id` spike
+  option and optional identity injection in the native pairing channel. The
+  credential format and normal CLI defaults remain unchanged.
+- The identity must be derived from Foundation's hostname, which differed from
+  the OS hostname on the proof Mac. A cryptographic regression performs the
+  Pair-Verify exchange, decrypts the identity TLV, and validates the signature
+  against the original host identity and saved public key.
+
+### Verification
+
+- `swift test --filter 'RemotePairingIdentityTests|RemotePairingTests'`: 19 tests
+  passed on macOS and Linux, including the new cryptographic regression.
+- Final `swift test`: all 314 macOS tests and 306 Linux tests passed.
+- `swift format lint --strict` on the new/changed Swift files and
+  `git diff --check`: passed.
+- A further macOS three-run install attempt with the phone explicitly kept
+  unlocked completed its first 12 MiB AFC round trip, install, verification,
+  staging cleanup, and launch. The next run reset during RSD identity exchange.
+  Keeping the phone unlocked did not resolve the repeated-install failure.
+- The first Linux physical attempts were rejected during Pair-Verify before
+  any userspace tunnel or install. Temporary pairing/IPA cleanup was independently
+  verified after the initial failure.
+- With the explicit host identity derived from Foundation's original hostname,
+  Linux passed all three consecutive wireless proofs. Each uploaded/downloaded
+  and byte-compared 12 MiB through AFC, removed the temporary remote file,
+  installed the extension-bearing development IPA, verified the exact bundle,
+  removed the staged IPA, launched through AppService, and joined tunnel workers.
+  The process ran as an ordinary user with effective capabilities zero.
+- An independent Linux check confirmed zero USB-attached devices with no
+  discovery error and deletion of the copied pairing, original host identity,
+  and IPA. No temporary proof credentials remain on the Linux host.
+
+### Follow-Up
+
+- Persist the paired host identity alongside its key when productizing portable
+  credentials; the explicit override is a bounded spike mechanism.
+- Keep the repeated-install RSD reset as an unresolved promotion blocker. The
+  unlocked-phone result removes a proposed workaround without establishing the
+  underlying cause.
+
+## 2026-10-05 - Userspace wireless tunnel feasibility spike
+
+### Changes And Decisions
+
+- Added the separate `userspace-tunnel-spike` executable and a pinned lwIP 2.2.1
+  IPv6/TCP stack behind a small C API. It exchanges bare packets with the existing
+  CoreDevice TLS relay over a local socketpair, avoiding TUN/utun creation, host
+  routing, sudo, and Linux network capabilities.
+- Reused native discovery, saved pairing records, Pair-Verify, CDTunnel, RSD,
+  AFC, installation proxy, and AppService. Added an injected RSD socket factory
+  and ownership-taking local stream initializer, preserving the production
+  kernel transport and public `RSDClient` initialization behavior.
+- Added bounded stream buffers, TCP timers/retransmission, timeout and stop,
+  joined worker cleanup, explicit singleton rejection, and repeat runs. One
+  active stack per process and at most 16 active streams are deliberate spike
+  limits. No Python or Go runtime dependency or elevation fallback was added.
+- Vendored unmodified upstream core/header sources at commit
+  `77dcd25a72509eb83f72b033d219b1d40cd8eb95`, retaining upstream notices and
+  BSD-3-Clause licensing in `THIRD_PARTY_NOTICES.md`.
+- Sustained transfer tests exposed a single-pbuf receive bottleneck; pending
+  pbufs are now chained with bounded storage and receive credit advances only
+  after the local stream accepts bytes. The independent synthetic peer also
+  retransmits unacknowledged echoes and tolerates transient datagram-buffer
+  exhaustion, avoiding false failures under concurrent test-suite load.
+- Linux proof exposed two existing build problems. The package now excludes the
+  macOS-only GUI executable target on Linux instead of linking empty sources.
+  `ReleaseBumper` replaces the matched plist range directly, avoiding a string
+  concatenation type-checking failure on Swift 6.2.4 while preserving formatting.
+- Added phase-specific spike diagnostics. Generic shared socket errors are
+  translated at the spike boundary so a wireless failure does not falsely imply
+  that usbmuxd is involved.
+- Recorded architecture, proof scope, limits, commands, and promotion gates in
+  `docs/userspace-tunnel-spike.md` and the engineering handover. Normal CLI
+  commands, release assets, README, and bundled skill surface are unchanged.
+
+### Verification
+
+- `swift build --product userspace-tunnel-spike`: passed on the current macOS
+  Swift 6.4 host and isolated Ubuntu 24.04 / Swift 6.2.4 host.
+- `swift test --filter UserspaceIPTests`: passed four deterministic tests covering
+  a 12 MiB concurrent-stream round trip, TCP checksums/MTU, deliberate packet loss
+  and retransmission, timeout/cancellation, singleton ownership, and repeated
+  teardown. The macOS DeviceKit suite subsequently passed all 85 tests.
+- `swift test`: macOS passed all 313 tests after correcting the synthetic peer's
+  retry behavior. An injected-dialer AppService regression passed too.
+- `swift test --filter ReleaseBumperTests`: macOS passed all seven existing plist
+  regressions after the Swift 6.2.4 compilation correction.
+- `swift test --filter 'DeviceKitTests|ReleaseBumperTests'`: Linux passed all 92
+  selected tests as an ordinary user with effective capabilities zero.
+- `swift test`: Linux passed all 305 tests on Swift 6.2.4 after those corrections.
+- `swift format lint --strict` on changed CLI, DeviceKit, ProjectCore, and test
+  files: passed. `git diff --check`: passed. Custom C shim/header files were
+  formatted with clang-format; vendored files were left unchanged.
+- Physical macOS: three consecutive RSD/AFC-only runs passed as an ordinary user.
+  USB discovery reported zero attached devices with no discovery error.
+- Physical macOS: an existing development-signed IPA containing an extension
+  staged, installed, passed exact-bundle verification, cleaned its staged IPA,
+  and launched. A separate physical 12 MiB AFC upload/download matched every
+  byte and its temporary file was removed. The IPA itself was approximately
+  2.07 MiB compressed; this does not qualify a larger-IPA acceptance gate.
+- Linux physical proof has not run: the existing saved remote record lacks a
+  device mapping. Provisioning a temporary mapped pairing was blocked by the
+  proof environment's approval review pending explicit operator authorization.
+  No pairing credentials were transferred.
+- Two repeated install sequences each passed the first install/launch, then
+  failed with a stream reset during the next RSD open. A following three-run
+  RSD/AFC-only sequence passed. This is an unresolved reproducible lifecycle
+  blocker, not a successful repeated-install qualification.
+
+### Follow-Up
+
+- Diagnose the post-install RSD reset, including graceful stream close semantics
+  and CoreDevice tunnel/session teardown. The observed reset alone does not
+  identify its cause; do not add an unproven delay or fallback to mask it.
+- Qualify repeated installs on both hosts, a larger extension-bearing IPA,
+  device lock/network loss, timeout, cancellation during AFC staging, stream
+  exhaustion, and minimum supported macOS/toolchain before promotion.
+- Decide whether a single active tunnel per process meets the product's needs.
+  Graceful local TCP half-close and retained TLS relay failure detail remain
+  prototype limitations. Fresh USB pairing/launch still use the existing
+  privileged transport.
+
 ## 2026-09-24 - Release 0.0.19
 
 ### Summary

@@ -111,10 +111,7 @@ public struct NativeCoreDeviceRunner: Sendable {
     return pid
   }
 
-  /// Runs the full native network install+launch through the privileged helper.
-  /// macOS utun creation requires root, so the network path owns the TUN inside
-  /// the same explicit `--sudo` boundary as the USB launch. On Linux the
-  /// network path stays in-process (the binary carries `cap_net_admin`).
+  /// Wireless deployment stays in-process and requires no privileged helper.
   public func runNetwork(
     bundleID: String,
     udid: String,
@@ -123,24 +120,12 @@ public struct NativeCoreDeviceRunner: Sendable {
     installTimeoutSeconds: Double = 300,
     launchTimeoutSeconds: Double = 60
   ) throws -> Int64 {
-    var arguments = ["coredevice-helper", "run-network"]
-    arguments += ["--udid", udid]
-    arguments += ["--bundle-id", bundleID]
-    arguments += ["--ipa", ipa.path]
-    arguments += ["--pairing-dir", pairingDirectory.path]
-    arguments += ["--discovery-timeout", seconds(discoveryTimeoutSeconds)]
-    arguments += ["--install-timeout", seconds(installTimeoutSeconds)]
-    arguments += ["--launch-timeout", seconds(launchTimeoutSeconds)]
-
-    let timeout = discoveryTimeoutSeconds + installTimeoutSeconds + launchTimeoutSeconds + 60
-    let result = try runHelper(
-      arguments: arguments, phase: "network run", timeout: timeout, udid: udid)
-    guard let pid = Self.parsePID(result.stdout) else {
-      throw Error.operationFailed(
-        "network run",
-        Self.redact(detail: "helper did not report a process identifier", udid: udid))
-    }
-    return pid
+    try NativeNetworkRunner(
+      pairingDirectory: pairingDirectory, udid: udid, ipa: ipa, bundleID: bundleID,
+      discoveryTimeoutSeconds: discoveryTimeoutSeconds,
+      installTimeoutSeconds: installTimeoutSeconds,
+      launchTimeoutSeconds: launchTimeoutSeconds
+    ).installAndLaunch()
   }
 
   /// Pulls the newest crash report over the native network tunnel and returns

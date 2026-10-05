@@ -69,7 +69,7 @@ struct RemoteXPCConnectionTests {
     #expect(peerInfo.services["com.apple.internal.dt.remote.debugproxy"] == nil)
   }
 
-  @Test("AppService client launches an application over RemoteXPC")
+  @Test("RSD client preserves the injected dialer for an AppService launch")
   func appServiceLaunch() async throws {
     let launchResponseHex =
       "920bb0290101000098000000000000000100000000000000423713420500000000f000008800000002000000436f72654465766963652e6f757470757400000000f000004c0000000100000070726f63657373546f6b656e7300000000e00000300000000100000000f00000240000000100000070726f636573734964656e74696669657200000000300000d204000000000000436f72654465766963652e72657475726e56616c7565000000100000"
@@ -82,7 +82,13 @@ struct RemoteXPCConnectionTests {
     )
     defer { server.stop() }
 
-    let client = RSDClient(host: "127.0.0.1", port: server.port, timeoutSeconds: 5)
+    let client = RSDClient(
+      host: "fd00::2", port: server.port, timeoutSeconds: 5,
+      dial: { host, port, timeout in
+        #expect(host == "fd00::2")
+        #expect(port == server.port)
+        return try SocketConnection(address: "127.0.0.1:\(port)", timeoutSeconds: timeout)
+      })
     let peerInfo = try client.connect()
     let service = try client.connect(service: AppServiceClient.serviceName, peerInfo: peerInfo)
     let app = AppServiceClient(service: service)

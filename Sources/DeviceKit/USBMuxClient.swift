@@ -586,6 +586,28 @@ final class SocketConnection: @unchecked Sendable {
   private var tls: OpaquePointer?
   private let timeoutMilliseconds: Int32
 
+  /// Adopts a connected local stream from the userspace tunnel dialer.
+  /// Ownership transfers even if configuring its timeout fails.
+  init(adopting descriptor: Int32, timeoutSeconds: Double) throws {
+    guard descriptor >= 0 else { throw USBMuxClient.Error.invalidInput("invalid descriptor") }
+    self.descriptor = descriptor
+    guard timeoutSeconds > 0, timeoutSeconds.isFinite,
+      timeoutSeconds * 1_000 <= Double(Int32.max)
+    else {
+      close(descriptor)
+      self.descriptor = -1
+      throw USBMuxClient.Error.invalidInput("invalid timeout")
+    }
+    timeoutMilliseconds = Int32(timeoutSeconds * 1_000)
+    do {
+      try Self.configure(descriptor: descriptor, timeoutSeconds: timeoutSeconds, isTCP: false)
+    } catch {
+      close(descriptor)
+      self.descriptor = -1
+      throw error
+    }
+  }
+
   init(address: String, timeoutSeconds: Double) throws {
     guard timeoutSeconds > 0, timeoutSeconds.isFinite else {
       throw USBMuxClient.Error.invalidInput("timeout must be positive")

@@ -35,13 +35,12 @@ runtimes/devices and `stupid-app run --simulator [--udid <id>]` builds for
   register it with launchd/RBS (only the entitled installer/Xcode/TestFlight creates that
   registration). `device pair --usb`
  and `run --usb` are physically qualified on a
- Mac against a connected iPhone; `run --network` runs through a new privileged
- `coredevice-helper run-network` subcommand and the three unplugged install-and-launch
- runs passed the original qualification on this Mac. A later 8 MiB extension-bearing IPA
- reproduces a distinct AFC staging stall on current macOS/iOS: pairing, tunnel establishment,
- RSD, and small AFC operations succeed, but the device's next AFC status response is not
- accepted by the host inner TCP flow and is retransmitted until reset. Treat this as an open
- large-transfer data-path regression rather than a pairing failure. The earlier AppService launch intermittency was an
+ Mac against a connected iPhone. In 0.0.20, `run --network` and the GUI's wireless
+ Run use the process-local lwIP tunnel without sudo/TUN/routes on both hosts.
+ The prior kernel helper remains for USB and wireless crash diagnostics; its
+ original three-run wireless qualification is historical. A later 8 MiB extension-bearing IPA
+ exposed an AFC staging stall caused by oversized tunnel segments; the MTU fix
+ described below resolved that regression. The earlier AppService launch intermittency was an
  IPv6 neighbor-discovery problem (macOS performed NDP on the on-link `/64` and the device
  never answered, so the host returned "address unreachable" once the neighbor entry aged
  out); the network tunnel now installs a point-to-point host route for the server address
@@ -167,7 +166,8 @@ The network run path is now fully native: a Swift mDNS DNS-SD browser discovers
 `_remotepairing._tcp.local.` advertisements, a native remote-pairing client reads the
 saved remote pairing record and performs the X25519/HKDF-SHA512/ChaCha20-Poly1305
 Pair-Verify over the advertised listener, and a persistent OpenSSL TLS-PSK tunnel
-(added to `CCoreDeviceTLS`) relays IPv6 packets to a TUN interface. `device pair --usb` is
+(added to `CCoreDeviceTLS`) relays IPv6 packets to the process-local lwIP stack
+for installs as of 0.0.20. USB and wireless crash diagnostics retain kernel TUN. `device pair --usb` is
 also fully native: it performs fresh native lockdown pairing, then a privileged helper
 establishes the CoreDevice USB tunnel, runs the SRP-3072 Pair-Setup exchange over the RSD
 `com.apple.internal.dt.coredevice.untrusted.tunnelservice` service, and writes the
@@ -903,6 +903,62 @@ privileged TUN creation. Modern network discovery, remote pairing, unplugged TCP
 tunneling, installation, launch, and cleanup are now proven. The helper requires an
 explicit privilege boundary for TUN creation and route ownership; the CLI does not
 invoke sudo unless the operator passes `--sudo`.
+
+### Userspace Wireless Transport (promoted in 0.0.20)
+
+`run --network` now eliminates TUN/utun and host routes for repeated wireless
+deployment on macOS and Linux. The GUI's wireless Run uses the same CLI path,
+and a separate `userspace-tunnel-spike` executable retains deeper proof checks. It reuses native discovery,
+Pair-Verify, TLS-PSK/CDTunnel, RSD, AFC, installation proxy, and AppService. A pinned
+lwIP 2.2.1 IPv6/TCP stack exchanges bare packets with the TLS relay over a local
+socketpair; an injected RSD socket factory returns connected local stream sockets.
+No root, sudo, network capability, Python, or Go runtime is needed by this path.
+Existing saved remote pairings remain required. Fresh USB bootstrapping, USB
+launch, and wireless crash diagnostics retain their qualified kernel transport.
+`run --sudo` applies to USB only; wireless installs never invoke it. Doctor reports
+missing Linux TUN as an optional USB/diagnostic warning rather than blocking
+wireless installs.
+
+macOS ordinary-user, unplugged RSD/AFC, physical 12 MiB AFC round-trip, and an
+extension-bearing development IPA install/verification/launch have passed. The
+current Mac uses Swift 6.4; this does not qualify the minimum supported macOS host.
+The experiment permits one active stack per process and at most 16 concurrent
+streams, with serialized dial setup and joined workers. It is the default
+wireless install transport as of 0.0.20. The repeated-install second-RSD reset was traced to a stale thread-local
+OpenSSL error retained after relay cancellation and consumed when Dispatch reused
+that worker. CoreDevice TLS now clears the error queue immediately before each
+handshake, read, and write. A deterministic same-thread regression failed before
+and passes after this fix on both hosts. Three consecutive macOS runs now pass,
+each including the 12 MiB AFC byte comparison, extension-bearing IPA installation,
+bundle verification, remote staging cleanup, launch, and joined-worker teardown.
+The macOS full suite passes 317 tests. The promoted CLI has automated checks that wireless runs do not resolve or invoke
+sudo and that USB retains its explicit boundary. Release integration was verified
+with automated tests/builds; the phone was taken off the network before the final
+CLI promotion, so no new physical run of the released command is claimed. See
+`docs/userspace-tunnel-spike.md` for reproducible commands, precise proof scope,
+limits, and ordered promotion gates.
+
+Linux validation revealed that a macOS-only GUI executable with empty compiled
+sources fails to link. The package now excludes that target on other hosts rather
+than attempting to link an empty binary. Swift 6.2.4 also rejected the existing
+substring-concatenation expression in `ReleaseBumper`; replacing its matched
+range directly preserves the same plist bytes and compiles on both toolchains.
+The CLI and transport targets remain available on Linux. The full Linux suite
+passed all 309 tests after CLI promotion as an ordinary user with effective capabilities zero.
+Linux physical follow-up uses an explicitly authorized temporary mapped pairing.
+Copying a legacy key alone failed Pair-Verify because the client derives its
+identity from the new hostname. The spike now accepts `--pairing-host-id` to sign
+with the explicitly supplied original host identity, with a cryptographic test
+on both hosts. The existing persisted credential format and production defaults
+are unchanged; persisting the original identity alongside its key remains a
+portable-credential follow-up. With the correct original identity, Linux passed three consecutive
+ordinary-user wireless runs, each including a 12 MiB AFC byte-verified round trip,
+extension-bearing IPA install, bundle verification, staging cleanup, launch, and
+joined-worker teardown. Independent cleanup verification confirmed zero attached
+USB devices and deletion of all temporary proof credentials. The fixed macOS
+three-run proof also confirmed zero USB-attached devices with no discovery error.
+Repeated-install parity is established for this workload; minimum macOS/toolchain,
+larger-IPA, lock/network-loss, and failure-cleanup qualification remain open.
 
 ### App Store Connect Upload
 

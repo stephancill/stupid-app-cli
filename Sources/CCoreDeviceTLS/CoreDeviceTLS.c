@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <netdb.h>
+#include <openssl/err.h>
 #include <openssl/ssl.h>
 #include <poll.h>
 #include <pthread.h>
@@ -219,6 +220,9 @@ static int perform_handshake(
     if (state != 0) {
       return state;
     }
+    // SSL_get_error requires an empty thread-local queue before the operation.
+    // A reused worker may retain errors from a previously cancelled connection.
+    ERR_clear_error();
     int operation_result = SSL_connect(ssl);
     if (operation_result == 1) {
       return STUPID_APP_COREDEVICE_TLS_OK;
@@ -252,6 +256,7 @@ static int write_all(
       return state;
     }
     size_t written = 0;
+    ERR_clear_error();
     int operation_result = SSL_write_ex(ssl, bytes + offset, length - offset, &written);
     if (operation_result == 1 && written > 0) {
       offset += written;
@@ -287,6 +292,7 @@ static int read_all(
       return state;
     }
     size_t received = 0;
+    ERR_clear_error();
     int operation_result = SSL_read_ex(ssl, bytes + offset, length - offset, &received);
     if (operation_result == 1 && received > 0) {
       offset += received;
@@ -691,6 +697,7 @@ int stupid_app_coredevice_tls_tunnel_connect(
       result = state;
       goto cleanup;
     }
+    ERR_clear_error();
     int operation_result = SSL_connect(tunnel->ssl);
     if (operation_result == 1) {
       break;
@@ -722,6 +729,7 @@ int stupid_app_coredevice_tls_tunnel_connect(
   size_t written = 0;
   while (written < sizeof(request)) {
     size_t part = 0;
+    ERR_clear_error();
     int write_result =
       SSL_write_ex(tunnel->ssl, request + written, sizeof(request) - written, &part);
     if (write_result == 1 && part > 0) {
@@ -739,6 +747,7 @@ int stupid_app_coredevice_tls_tunnel_connect(
   size_t received = 0;
   while (received < 10) {
     size_t part = 0;
+    ERR_clear_error();
     int read_result =
       SSL_read_ex(tunnel->ssl, handshake_response + received, 10 - received, &part);
     if (read_result == 1 && part > 0) {
@@ -764,6 +773,7 @@ int stupid_app_coredevice_tls_tunnel_connect(
   size_t response_offset = 10;
   while (response_offset < 10 + body_length) {
     size_t part = 0;
+    ERR_clear_error();
     int read_result = SSL_read_ex(
       tunnel->ssl,
       handshake_response + response_offset,
@@ -809,10 +819,11 @@ cleanup:
   return result;
 }
 
-int stupid_app_coredevice_tls_tunnel_relay(
+static int tunnel_relay(
   stupid_app_coredevice_tls_tunnel *tunnel,
   int tun_fd,
-  volatile int *stop
+  volatile int *stop,
+  int bare_packets
 ) {
   if (tunnel == NULL || tunnel->ssl == NULL || tunnel->socket_fd < 0 || tun_fd < 0 ||
       stop == NULL) {
@@ -864,6 +875,7 @@ int stupid_app_coredevice_tls_tunnel_relay(
     int tunnel_closed = 0;
     while (1) {
       size_t received = 0;
+      ERR_clear_error();
       int read_result =
         SSL_read_ex(tunnel->ssl, inbound + inbound_length, 131072 - inbound_length, &received);
       if (read_result == 1 && received > 0) {
@@ -899,7 +911,9 @@ int stupid_app_coredevice_tls_tunnel_relay(
           if (packet_length > inbound_length - offset) {
             break;
           }
-          int packet_written = stupid_app_tun_relay_write(tun_fd, inbound + offset, packet_length);
+          int packet_written = bare_packets
+            ? (send(tun_fd, inbound + offset, packet_length, 0) == (ssize_t)packet_length ? 0 : -1)
+            : stupid_app_tun_relay_write(tun_fd, inbound + offset, packet_length);
           if (packet_written != 0) {
             result = STUPID_APP_COREDEVICE_TLS_TUNNEL_WRITE_FAILED;
             offset = inbound_length;
@@ -937,7 +951,9 @@ int stupid_app_coredevice_tls_tunnel_relay(
 
     // Host -> device.
     if (descriptors[1].revents & (POLLIN | POLLHUP | POLLERR)) {
-      ssize_t packet_length = stupid_app_tun_relay_read(tun_fd, outbound, 65536);
+      ssize_t packet_length = bare_packets
+        ? recv(tun_fd, outbound, 65536, 0)
+        : stupid_app_tun_relay_read(tun_fd, outbound, 65536);
       if (packet_length > 0) {
         if (debug) {
           fprintf(stderr, "[relay] host->device %zd bytes", packet_length);
@@ -963,6 +979,7 @@ int stupid_app_coredevice_tls_tunnel_relay(
         size_t offset = 0;
         while (offset < (size_t)packet_length) {
           size_t written_chunk = 0;
+          ERR_clear_error();
           int write_result = SSL_write_ex(
             tunnel->ssl, outbound + offset, (size_t)packet_length - offset, &written_chunk);
           if (write_result == 1 && written_chunk > 0) {
@@ -1002,6 +1019,14 @@ int stupid_app_coredevice_tls_tunnel_relay(
   free(outbound);
   return result;
 }
+
+int stupid_app_coredevice_tls_tunnel_relay(
+  stupid_app_coredevice_tls_tunnel *tunnel, int tun_fd, volatile int *stop
+) { return tunnel_relay(tunnel, tun_fd, stop, 0); }
+
+int stupid_app_coredevice_tls_tunnel_relay_packets(
+  stupid_app_coredevice_tls_tunnel *tunnel, int packet_fd, volatile int *stop
+) { return tunnel_relay(tunnel, packet_fd, stop, 1); }
 
 void stupid_app_coredevice_tls_tunnel_cancel(stupid_app_coredevice_tls_tunnel *tunnel) {
   if (tunnel == NULL) {
