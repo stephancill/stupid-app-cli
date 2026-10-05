@@ -20,6 +20,41 @@ The current project plan and architecture live in `docs/engineering-handover.md`
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth.
 
+## 2026-10-05 - Published 0.0.20 wireless proof and app-build blocker
+
+### Verification
+
+- Verified the installed CLI matches the published 0.0.20 asset SHA-256, then
+  attempted the normal `run --network --udid <device>` workflow as an ordinary user.
+  The test app failed during compilation, before discovery or wireless transport.
+- Captured both output streams of the exact generated-package build. Swift 6.4
+  rejected a non-Sendable `JSValue` returned by the app's JavaScriptCore callback
+  inside `MainActor.assumeIsolated`. The packer's error selected stderr's build-system
+  deprecation warning, hiding the actual compiler error on stdout. No app source,
+  signing configuration, or CLI code was changed during this follow-up.
+- Used the existing extension-bearing development-signed IPA to exercise the
+  published binary's `coredevice-helper run-network` entrypoint directly, without
+  sudo. This invokes the same `NativeNetworkRunner` used by `run --network`.
+  All three consecutive ordinary-user runs passed Pair-Verify, userspace tunnel,
+  RSD identity resolution, AFC staging, installation proxy, exact bundle verification,
+  staged-IPA removal, and AppService launch.
+- Command: `stupid-app coredevice-helper run-network --udid <device>
+  --bundle-id <bundle> --ipa <development-signed-ipa> --pairing-dir <private-directory>`.
+  No `--sudo` argument, root process, or kernel interface/route was used.
+- Independent inventory before and after the proof reported zero USB-attached
+  devices with no discovery error. Private diagnostic logs retain identifiers
+  locally; no operational identifiers or credentials appear in this document.
+
+### Scope And Follow-Up
+
+- The released macOS wireless install/launch path is now physically verified;
+  the full build-sign-install-launch workflow for this app remains blocked by its
+  source compilation error. The prior Linux physical spike proof and 309-test
+  optimized-build validation remain the Linux evidence.
+- Fix the app's actor callback separately before repeating normal `run --network`.
+  Improve the CLI packer's failure diagnostics to preserve useful compiler output
+  from both streams. Neither issue changes the verified wireless transport result.
+
 ## 2026-10-05 - Release 0.0.20: wireless installs without sudo
 
 ### Changes And Decisions

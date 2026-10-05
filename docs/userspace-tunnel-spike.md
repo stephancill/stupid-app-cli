@@ -123,6 +123,15 @@ in deterministic tests; remote temporary-file cleanup is best-effort on failure.
   TUN/utun or route operations; an independent inventory confirmed zero attached
   USB devices with no discovery error. This closes the observed repeated-install
   reset; broader failure-mode and minimum-host qualification remain open.
+- Post-release macOS validation checked the installed 0.0.20 binary's checksum,
+  then passed three consecutive wireless runs through its `coredevice-helper
+  run-network` entrypoint as an ordinary user without sudo. This calls the same
+  `NativeNetworkRunner` used by normal `run --network`. The existing signed IPA
+  installed, verified, had its staged copy removed, and launched each time. USB
+  inventory before and after reported zero devices with no error. The normal
+  build-and-run attempt stopped before transport because Swift 6.4 rejects a
+  non-Sendable JavaScriptCore callback result in the test app; its complete build
+  workflow remains unqualified until that app-source issue is fixed.
 
 ## Limits And Remaining Qualification
 

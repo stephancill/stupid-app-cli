@@ -932,9 +932,16 @@ and passes after this fix on both hosts. Three consecutive macOS runs now pass,
 each including the 12 MiB AFC byte comparison, extension-bearing IPA installation,
 bundle verification, remote staging cleanup, launch, and joined-worker teardown.
 The macOS full suite passes 317 tests. The promoted CLI has automated checks that wireless runs do not resolve or invoke
-sudo and that USB retains its explicit boundary. Release integration was verified
-with automated tests/builds; the phone was taken off the network before the final
-CLI promotion, so no new physical run of the released command is claimed. See
+sudo and that USB retains its explicit boundary. The published macOS 0.0.20 binary
+subsequently passed three consecutive ordinary-user wireless install/verification/
+staging-cleanup/launch runs using the existing signed IPA via its `coredevice-helper
+run-network` entrypoint, which invokes the same `NativeNetworkRunner` as `run
+--network`, without sudo. USB inventory before and after reported zero devices
+with no error. The normal build-and-run attempt stopped before transport: Swift
+6.4 rejects the test app's non-Sendable JavaScriptCore callback result. The packer
+also masks stdout compiler errors when stderr contains a warning; preserve both
+streams in a separate diagnostic fix. Full build-sign-install-launch qualification
+for that app remains pending its source fix. See
 `docs/userspace-tunnel-spike.md` for reproducible commands, precise proof scope,
 limits, and ordered promotion gates.
 
