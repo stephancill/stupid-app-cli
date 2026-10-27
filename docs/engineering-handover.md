@@ -487,7 +487,13 @@ Initial supported inputs:
   `appintentsmetadataprocessor`, packaging `Metadata.appintents` at the bundle root so
   Siri and the Shortcuts app can discover the declarations. An extension that declares an
   explicit `appIntentsMetadata` path keeps its checked-in directory instead.
-- Compatible C-family or binary dependencies only after explicit fixture coverage exists.
+- Binary targets that are local XCFrameworks of static libraries (`.a`) with an arm64
+  slice for the build's platform. The planner validates the XCFramework's `Info.plist`;
+  SwiftPM links the archive into the executable, so nothing is embedded or signed beyond
+  the app binary. Covered by `StaticXCFrameworkTests` (Info.plist fixtures, plus an
+  Xcode-present end-to-end build that links a real static archive). Verified on the
+  Xcode-present macOS path only; the imported-bundle Linux path is not yet qualified.
+- Other C-family dependencies only after explicit fixture coverage exists.
 
 Inputs that must initially fail loudly:
 
@@ -506,6 +512,8 @@ Inputs that must initially fail loudly:
   `appIntentsMetadata` extension path (e.g. unrecognized catalogs that still require
   Apple tooling).
 - ExtensionKit products.
+- Binary targets that are remote or artifact bundles, or XCFrameworks containing
+  frameworks (static or dynamic) or lacking an arm64 slice for the platform.
 
 ## Proposed Command Surface
 

@@ -35,8 +35,11 @@ from a source checkout.
   for the host-specific requirements of initial pairing and USB operations.
 - Version 1 supports one SwiftPM library product with code-based SwiftUI, plus an
   optional `extensions:` list in `stupid-app.yml` for bundled `PlugIns/*.appex`
-  extensions (e.g. a WidgetKit extension) sharing App Groups. Xcode project inputs,
-  storyboards, un-compiled asset catalogs, Core Data models, ExtensionKit products,
+  extensions (e.g. a WidgetKit extension) sharing App Groups. A `binaryTarget` is
+  accepted only as a local XCFramework of static libraries (`.a`) with an arm64 slice
+  for the build's platform (device, or `ios-arm64-simulator` for `run --simulator`);
+  it links into the executable. Xcode project inputs, storyboards, un-compiled asset
+  catalogs, Core Data models, ExtensionKit products, dynamic or remote binary targets,
   and other unsupported resources must fail loudly.
 
 ## Environment requirements

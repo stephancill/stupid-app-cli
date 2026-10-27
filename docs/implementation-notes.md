@@ -16,6 +16,70 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth. Historical entries record the implementation at their date. Use the current handover and bundled command reference for operational instructions.
 
+## 2026-10-28 - Release 0.0.22
+
+### Summary
+
+- Released `stupid-app 0.0.22`, which accepts local static-library XCFramework binary
+  targets (see the following entry).
+- Bumped `StupidApp.productVersion` from `0.0.21` to `0.0.22`. The bundled CLI skill's
+  supported-project-model passage now describes the accepted binary targets; no command,
+  option, default, or output path changed, so `README.md` and `references/commands.md`
+  needed no updates. The release process and asset names are unchanged.
+
+### Verification
+
+- `swift test`: every suite passed on the first full run. A second full run timed out in
+  `RemotePairingIdentityTests`' Pair-Verify identity test on its loopback usbmuxd peer under
+  full-suite contention, as recorded for 0.0.21; it passed when rerun in isolation. This
+  release does not change DeviceKit.
+- `swift build -c release` succeeded; the built CLI reports `stupid-app 0.0.22`.
+- The skill-creator `quick_validate.py` reports the edited skill valid.
+- Built CLI SHA-256: `4780ddcee52500bf95f6e719d3f85a368d16cb2d21662fe4ea03fe416afc3b76`.
+- Built GUI SHA-256: `24e15a7d0364d85d34f278e379e37fba1e0f6e969cb1871bef84ea44805c09cb`
+  (byte-identical to 0.0.21; the GUI did not change).
+
+## 2026-10-28 - Static-Library XCFramework Binary Targets
+
+### Summary
+
+- The planner now accepts a `binaryTarget` when it is a local `.xcframework` inside the
+  package whose `AvailableLibraries` are all static archives (`.a`) and include an arm64
+  iOS slice for the build platform (no variant for device, `simulator` for
+  `run --simulator`). Previously every binary target failed planning.
+- Anything else still fails loudly with a new `BuildError.unsupportedBinaryTarget(name,
+  reason)` naming the target and the reason: a remote or absolute artifact path, a
+  missing or empty `Info.plist`, a framework library path, or no matching slice.
+- The general `unsupportedModule` message no longer lists binary targets.
+
+### Why
+
+An app needed a Rust library shipped as a prebuilt static `.a` (the Juicebox SDK FFI for
+PIN-protected key recovery). SwiftPM already links a static XCFramework from a binary
+target into the executable during `swift build`, and a static archive adds nothing to
+embed or sign, so only the planner's blanket rejection stood in the way. Dynamic
+frameworks would need embedding and nested signing and stay out of scope.
+
+### Verification
+
+- `swift test --filter StaticXCFrameworkTests`: 3 tests pass. Two use hand-written
+  XCFramework `Info.plist` fixtures (accept static device and simulator slices; reject a
+  framework library, a simulator-only XCFramework for a device build, an absolute path,
+  and a missing XCFramework). The Xcode-present test compiles a one-function C archive
+  with `xcrun clang`/`libtool`, wraps it with `xcodebuild -create-xcframework`, plans and
+  packs an app that calls it, and checks the arm64 executable exports `_demo_answer` and
+  the bundle has no `Frameworks` directory.
+- `swift test --filter BuildCoreTests`: 48 tests in 11 suites pass.
+- A downstream app with a vendored static XCFramework (device and arm64-simulator slices)
+  built, installed, and ran on the simulator with `run --simulator`, and the library's
+  network calls succeeded at runtime.
+- `swift format lint --strict` passes for the new test file.
+
+### Follow-Up
+
+- Qualify the imported-bundle Linux path with a static XCFramework before claiming it
+  there.
+
 ## 2026-10-27 - Release 0.0.21
 
 ### Summary

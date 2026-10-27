@@ -183,7 +183,8 @@ public struct Planner: Sendable {
                 throw BuildError.targetNotFound(targetName, package.name)
             }
             if target.moduleType == "BinaryTarget" {
-                throw BuildError.unsupportedModule("binaryTarget '\(targetName)'")
+                try validateStaticXCFramework(name: targetName, path: target.path)
+                continue
             }
             if let declaredResources = target.resources, !declaredResources.isEmpty {
                 resources.append(.bundle(package: package.name, target: targetName))
@@ -201,6 +202,41 @@ public struct Planner: Sendable {
                 }
                 pending.append(contentsOf: product.targets)
             }
+        }
+    }
+
+    /// Binary targets are supported only as local XCFrameworks of static archives. Those link into
+    /// the executable, so the bundle embeds and signs nothing extra; dynamic frameworks would need
+    /// embedding and nested signing, which version 1 does not do.
+    func validateStaticXCFramework(name: String, path: String?) throws {
+        guard let path, path.hasSuffix(".xcframework"), !path.hasPrefix("/") else {
+            throw BuildError.unsupportedBinaryTarget(
+                name, "it is not a local .xcframework inside the package (remote and artifact-bundle binaries are unsupported)")
+        }
+        let infoURL = projectRoot.appendingPathComponent(path).appendingPathComponent("Info.plist")
+        guard
+            let data = try? Data(contentsOf: infoURL),
+            let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+            let libraries = info["AvailableLibraries"] as? [[String: Any]], !libraries.isEmpty
+        else {
+            throw BuildError.unsupportedBinaryTarget(name, "\(path)/Info.plist lists no AvailableLibraries")
+        }
+        for library in libraries {
+            let libraryPath = library["LibraryPath"] as? String ?? "<missing LibraryPath>"
+            guard libraryPath.hasSuffix(".a") else {
+                throw BuildError.unsupportedBinaryTarget(
+                    name, "'\(libraryPath)' is not a static archive (.a)")
+            }
+        }
+        let variant: String? = platform == .simulator ? "simulator" : nil
+        let hasSlice = libraries.contains { library in
+            library["SupportedPlatform"] as? String == "ios"
+                && library["SupportedPlatformVariant"] as? String == variant
+                && (library["SupportedArchitectures"] as? [String])?.contains("arm64") == true
+        }
+        guard hasSlice else {
+            throw BuildError.unsupportedBinaryTarget(
+                name, "it has no arm64 iOS\(variant.map { " \($0)" } ?? "") library")
         }
     }
 
@@ -426,6 +462,7 @@ public enum BuildError: Error, Equatable, Sendable, CustomStringConvertible {
     case ambiguousLibrary([String])
     case targetNotFound(String, String)
     case unsupportedModule(String)
+    case unsupportedBinaryTarget(String, String)
     case infoPlistMissing(String)
     case infoPlistInvalid(String)
     case unsupportedResource(String)
@@ -449,7 +486,9 @@ public enum BuildError: Error, Equatable, Sendable, CustomStringConvertible {
         case let .targetNotFound(name, package):
             return "Could not find target '\(name)' in package '\(package)'."
         case let .unsupportedModule(name):
-            return "Unsupported build input '\(name)'. Version 1 supports pure Swift/PMM resources only; binary targets, plugins, and extensions fail loudly."
+            return "Unsupported build input '\(name)'. Version 1 supports pure Swift/PMM resources and static-library XCFrameworks only; plugins and other inputs fail loudly."
+        case let .unsupportedBinaryTarget(name, reason):
+            return "Unsupported binary target '\(name)': \(reason). Version 1 links local XCFrameworks of static libraries (.a) with an arm64 slice for the build's platform; repackage the dependency that way or depend on its sources."
         case let .infoPlistMissing(path):
             return "Configured Info.plist '\(path)' does not exist at the project root."
         case let .infoPlistInvalid(path):
