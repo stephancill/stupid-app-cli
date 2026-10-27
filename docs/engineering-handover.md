@@ -621,7 +621,7 @@ Adapt the design in xtool's `Sources/PackLib`:
 2. Select the configured application library product.
 3. Create a synthetic executable target that depends on that product.
 4. Build it with the imported `arm64-apple-ios` Swift SDK.
-5. Assemble an unsigned `.app` with the executable, merged `Info.plist`, SwiftPM resource bundles, supported raw resources, frameworks, and libraries.
+5. Assemble an unsigned `.app` with the executable, merged `Info.plist`, SwiftPM resource bundles, supported raw resources, frameworks, and libraries. Resource bundles keep SwiftPM's `<Package>_<Target>.bundle` name at the app (or appex) root, where the generated `Bundle.module` accessor looks for them; a target that declares resources but produced no bundle fails the build.
 6. Validate architecture, load commands, deployment target, paths, and bundle metadata.
 
 Correct known xtool weaknesses while extracting this design:

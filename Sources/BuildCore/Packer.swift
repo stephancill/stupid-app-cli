@@ -397,13 +397,9 @@ public struct Packer: Sendable {
     // Resource bundles from SwiftPM build output.
     for resource in plan.resources {
       switch resource {
-      case .bundle(let target):
-        let bundle = binDir.appendingPathComponent("\(target).bundle")
-        if FileManager.default.fileExists(atPath: bundle.path) {
-          try? FileManager.default.removeItem(at: appDir.appendingPathComponent("\(target).bundle"))
-          try FileManager.default.copyItem(
-            at: bundle, to: appDir.appendingPathComponent("\(target).bundle"))
-        }
+      case .bundle(let package, let target):
+        try Self.copyResourceBundle(
+          package: package, target: target, from: binDir, into: appDir, phase: "app assembly")
       case .library(let name):
         let dylib = binDir.appendingPathComponent("lib\(name).dylib")
         guard FileManager.default.fileExists(atPath: dylib.path) else {
@@ -456,6 +452,25 @@ public struct Packer: Sendable {
     try infoData.write(to: appDir.appendingPathComponent("Info.plist"))
   }
 
+  /// Copies SwiftPM's `<Package>_<Target>.bundle` to the bundle root, where the generated
+  /// `Bundle.module` accessor looks it up on iOS. A target that declares resources must
+  /// produce this bundle, so a missing one fails the build instead of being skipped.
+  static func copyResourceBundle(
+    package: String, target: String, from binDir: URL, into bundleDir: URL, phase: String
+  ) throws {
+    let name = "\(package)_\(target).bundle"
+    let source = binDir.appendingPathComponent(name, isDirectory: true)
+    guard FileManager.default.fileExists(atPath: source.path) else {
+      throw BuildError.processingFailed(
+        phase,
+        "Target '\(target)' declares resources but SwiftPM produced no \(name) in "
+          + "\(binDir.path). Check the target's resources declaration and rebuild.")
+    }
+    let destination = bundleDir.appendingPathComponent(name, isDirectory: true)
+    try? FileManager.default.removeItem(at: destination)
+    try FileManager.default.copyItem(at: source, to: destination)
+  }
+
   private func assembleAppex(
     into appexDir: URL, fromBuildBin binDir: URL, extensionPlan: ExtensionPlan
   ) throws {
@@ -471,14 +486,10 @@ public struct Packer: Sendable {
     // Resource bundles and raw resources from the extension's SwiftPM output.
     for resource in extensionPlan.resources {
       switch resource {
-      case .bundle(let target):
-        let bundle = binDir.appendingPathComponent("\(target).bundle")
-        if FileManager.default.fileExists(atPath: bundle.path) {
-          try? FileManager.default.removeItem(
-            at: appexDir.appendingPathComponent("\(target).bundle"))
-          try FileManager.default.copyItem(
-            at: bundle, to: appexDir.appendingPathComponent("\(target).bundle"))
-        }
+      case .bundle(let package, let target):
+        try Self.copyResourceBundle(
+          package: package, target: target, from: binDir, into: appexDir,
+          phase: "extension assembly")
       case .library(let name):
         let dylib = binDir.appendingPathComponent("lib\(name).dylib")
         guard FileManager.default.fileExists(atPath: dylib.path) else {

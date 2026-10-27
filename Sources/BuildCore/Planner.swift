@@ -186,7 +186,7 @@ public struct Planner: Sendable {
                 throw BuildError.unsupportedModule("binaryTarget '\(targetName)'")
             }
             if let declaredResources = target.resources, !declaredResources.isEmpty {
-                resources.append(.bundle(target: targetName))
+                resources.append(.bundle(package: package.name, target: targetName))
             }
             for dependency in target.targetDependencies ?? [] {
                 pending.append(dependency)
@@ -275,7 +275,8 @@ public struct BuildPlan: Sendable {
     public var extensions: [ExtensionPlan]
 
     public enum Resource: Sendable, Equatable, Hashable {
-        case bundle(target: String)
+        /// SwiftPM's `<package>_<target>.bundle`; `package` is the declaring manifest's name.
+        case bundle(package: String, target: String)
         case library(name: String)
         case root(source: String)
     }

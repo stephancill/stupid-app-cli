@@ -5658,3 +5658,31 @@ close those three workflow gaps.
 
 - `releases/latest/download/stupid-app-macos-arm64` returns HTTP 200 and the expected
   binary size (14.9 MB).
+
+## 2026-10-27 - SwiftPM Resource Bundle Names
+
+### Summary
+
+- Library-target resource bundles never reached the built `.app`. The planner recorded
+  `.bundle(target:)` and the packer looked for `<Target>.bundle` in the product's
+  SwiftPM bin directory (`.build/stupid-app/scratch/<triple>/<product>/<triple>/<config>`),
+  skipping silently when it was absent. SwiftPM names the bundle
+  `<PackageName>_<TargetName>.bundle` (the declaring manifest's `name:`), and the
+  generated `Bundle.module` accessor on iOS looks for exactly that name at
+  `Bundle.main.bundleURL`, so the lookup always missed and nothing was copied.
+- `BuildPlan.Resource.bundle` now carries the declaring package name
+  (`.bundle(package:target:)`). `Packer.copyResourceBundle` copies
+  `<Package>_<Target>.bundle` to the app or appex root and throws a `processingFailed`
+  error naming the target, expected bundle, and bin directory when the bundle is missing,
+  instead of skipping it. App and extension assembly share the helper.
+
+### Verification
+
+- `swift test --filter PackerModeATests`: 4 tests pass, including a new Xcode-in-place
+  build of a package whose name differs from its targets (asserts the plan records
+  `.bundle(package: "ResPkg", target: "ResCore")` and that
+  `ResPkg_ResCore.bundle/schema.txt` is in the app) and a unit test that a missing
+  bundle throws even when a bare `<Target>.bundle` exists.
+- `swift format lint --strict` reports nothing in the changed regions.
+- A real SwiftPM app whose core library target declares a `.copy` resource now builds
+  with the resource present at `<App>.app/<Package>_<Core>.bundle/`.
