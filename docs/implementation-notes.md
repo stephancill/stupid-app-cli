@@ -16,6 +16,61 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth. Historical entries record the implementation at their date. Use the current handover and bundled command reference for operational instructions.
 
+## 2026-10-27 - Release 0.0.21
+
+### Summary
+
+- Released `stupid-app 0.0.21`, which copies SwiftPM library resource bundles into the
+  app and extensions under SwiftPM's `<Package>_<Target>.bundle` name and fails the build
+  when a target that declares resources produced no bundle (see the following entry).
+- Bumped `StupidApp.productVersion` from `0.0.20` to `0.0.21`. No command, option, default,
+  or output path changed, so `README.md`, the bundled CLI skill, and `references/commands.md`
+  needed no updates. The release process and asset names are unchanged.
+- Moved the SwiftPM resource bundle entry from the end of this log to the top, matching the
+  newest-first order used by the other entries.
+
+### Verification
+
+- `swift test --filter PackerModeATests`: 4 tests passed.
+- `swift test`: 319 Swift Testing tests and 7 XCTest tests ran; all passed except
+  `RemotePairingIdentityTests`' Pair-Verify identity test, which timed out on its loopback
+  usbmuxd peer under full-suite contention and passed when rerun in isolation
+  (`swift test --filter RemotePairingIdentityTests`). This release does not change DeviceKit.
+- `swift build -c release` succeeded; the built CLI reports `stupid-app 0.0.21`.
+- Stable macOS release asset names: `stupid-app-macos-arm64`,
+  `stupid-app-gui-macos-arm64`, plus `THIRD_PARTY_NOTICES.md`.
+- Built CLI SHA-256: `b920ad93d2e476f08d6accfd993846a72bcb34873da05413268603e7cadafc37`.
+- Built GUI SHA-256: `24e15a7d0364d85d34f278e379e37fba1e0f6e969cb1871bef84ea44805c09cb`
+  (byte-identical to 0.0.20; the GUI did not change).
+
+## 2026-10-27 - SwiftPM Resource Bundle Names
+
+### Summary
+
+- Library-target resource bundles never reached the built `.app`. The planner recorded
+  `.bundle(target:)` and the packer looked for `<Target>.bundle` in the product's
+  SwiftPM bin directory (`.build/stupid-app/scratch/<triple>/<product>/<triple>/<config>`),
+  skipping silently when it was absent. SwiftPM names the bundle
+  `<PackageName>_<TargetName>.bundle` (the declaring manifest's `name:`), and the
+  generated `Bundle.module` accessor on iOS looks for exactly that name at
+  `Bundle.main.bundleURL`, so the lookup always missed and nothing was copied.
+- `BuildPlan.Resource.bundle` now carries the declaring package name
+  (`.bundle(package:target:)`). `Packer.copyResourceBundle` copies
+  `<Package>_<Target>.bundle` to the app or appex root and throws a `processingFailed`
+  error naming the target, expected bundle, and bin directory when the bundle is missing,
+  instead of skipping it. App and extension assembly share the helper.
+
+### Verification
+
+- `swift test --filter PackerModeATests`: 4 tests pass, including a new Xcode-in-place
+  build of a package whose name differs from its targets (asserts the plan records
+  `.bundle(package: "ResPkg", target: "ResCore")` and that
+  `ResPkg_ResCore.bundle/schema.txt` is in the app) and a unit test that a missing
+  bundle throws even when a bare `<Target>.bundle` exists.
+- `swift format lint --strict` reports nothing in the changed regions.
+- A real SwiftPM app whose core library target declares a `.copy` resource now builds
+  with the resource present at `<App>.app/<Package>_<Core>.bundle/`.
+
 ## 2026-10-05 - Current wireless workflow documentation
 
 ### Changes And Decisions
@@ -5658,31 +5713,3 @@ close those three workflow gaps.
 
 - `releases/latest/download/stupid-app-macos-arm64` returns HTTP 200 and the expected
   binary size (14.9 MB).
-
-## 2026-10-27 - SwiftPM Resource Bundle Names
-
-### Summary
-
-- Library-target resource bundles never reached the built `.app`. The planner recorded
-  `.bundle(target:)` and the packer looked for `<Target>.bundle` in the product's
-  SwiftPM bin directory (`.build/stupid-app/scratch/<triple>/<product>/<triple>/<config>`),
-  skipping silently when it was absent. SwiftPM names the bundle
-  `<PackageName>_<TargetName>.bundle` (the declaring manifest's `name:`), and the
-  generated `Bundle.module` accessor on iOS looks for exactly that name at
-  `Bundle.main.bundleURL`, so the lookup always missed and nothing was copied.
-- `BuildPlan.Resource.bundle` now carries the declaring package name
-  (`.bundle(package:target:)`). `Packer.copyResourceBundle` copies
-  `<Package>_<Target>.bundle` to the app or appex root and throws a `processingFailed`
-  error naming the target, expected bundle, and bin directory when the bundle is missing,
-  instead of skipping it. App and extension assembly share the helper.
-
-### Verification
-
-- `swift test --filter PackerModeATests`: 4 tests pass, including a new Xcode-in-place
-  build of a package whose name differs from its targets (asserts the plan records
-  `.bundle(package: "ResPkg", target: "ResCore")` and that
-  `ResPkg_ResCore.bundle/schema.txt` is in the app) and a unit test that a missing
-  bundle throws even when a bare `<Target>.bundle` exists.
-- `swift format lint --strict` reports nothing in the changed regions.
-- A real SwiftPM app whose core library target declares a `.copy` resource now builds
-  with the resource present at `<App>.app/<Package>_<Core>.bundle/`.
