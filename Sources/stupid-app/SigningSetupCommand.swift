@@ -191,23 +191,49 @@ struct SigningSetupCommand: AsyncParsableCommand {
         }
 
 // 3. Ensure an IOS_APP_STORE profile for the bundle ID + certificate.
+        // A profile is reused only while it authorizes the bundle's source entitlements: Apple doesn't add a
+        // capability enabled later to an existing profile, so one made before it would fail at signing.
         let baseProfileName = "\(bundleID) AppStore"
         let profileName = appliedProfileName(baseProfileName)
-        let existingNames = try Set(
-            (try operations.listProfiles(profileType: .appStore)).map(\.name))
-        var profileID: String? = try operations.findProfile(name: profileName)
-        if let profileID, let content = try? operations.downloadProfile(id: profileID) {
-            print("Reusing profile \(profileID) (\(profileName))")
+        let existing = try operations.listProfiles(profileType: .appStore)
+        let candidates = existing.filter { $0.bundleIdentifier == bundleID && Self.isProfileName($0.name, base: profileName) }
+        var stale: [ASCOperations.ProfileSummary] = []
+        var reused = false
+        for summary in candidates {
+            guard let content = try? operations.downloadProfile(id: summary.id) else { continue }
+            if let reason = unauthorizedEntitlement(in: content, configuration: .distribution, bundleID: bundleID, teamID: context.teamID) {
+                print("Profile \(summary.id) (\(summary.name)) predates the current capabilities: \(reason)")
+                stale.append(summary)
+                continue
+            }
+            print("Reusing profile \(summary.id) (\(summary.name))")
             try storeCanonical(content, kind: .distribution, bundleID: bundleID, home: context.homeURL)
+            reused = true
+            break
+        }
+        if reused {
+            for summary in stale {
+                try? operations.deleteProfile(id: summary.id)
+            }
+            if !stale.isEmpty {
+                print("Retired \(stale.count) stale profile(s).")
+            }
         } else {
-            profileID = try operations.createAppStoreProfile(
-                name: uniqueProfileName(base: profileName, taken: existingNames),
+            let newName = uniqueProfileName(base: profileName, taken: Set(existing.map(\.name)))
+            let profileID = try operations.createAppStoreProfile(
+                name: newName,
                 bundleIDResourceID: bundleResourceID,
                 certificateID: certificateID
             )
-            let content = try operations.downloadProfile(id: profileID!)
+            let content = try operations.downloadProfile(id: profileID)
+            if let reason = unauthorizedEntitlement(in: content, configuration: .distribution, bundleID: bundleID, teamID: context.teamID) {
+                throw SigningSetupError.profileMissingEntitlements(bundleID, reason)
+            }
             try storeCanonical(content, kind: .distribution, bundleID: bundleID, home: context.homeURL)
-            print("Created profile \(profileID!) (\(profileName))")
+            for summary in stale {
+                try? operations.deleteProfile(id: summary.id)
+            }
+            print("Created profile \(profileID) (\(newName))" + (stale.isEmpty ? "" : "; retired \(stale.count) stale profile(s)."))
         }
         print("Distribution signing setup complete.")
     }
@@ -302,7 +328,11 @@ struct SigningSetupCommand: AsyncParsableCommand {
             let provisioned = (try? MobileProvisionParser.parse(content))?.provisionedDevices ?? []
             allProvisionedUDIDs.formUnion(provisioned)
             if provisioned.contains(deviceUDID) {
-                reusableContent = content
+                if let reason = unauthorizedEntitlement(in: content, configuration: .development, bundleID: bundleID, teamID: context.teamID) {
+                    print("Profile \(summary.id) (\(summary.name)) predates the current capabilities: \(reason)")
+                } else {
+                    reusableContent = content
+                }
             }
             toDelete.append(summary.id)
         }
@@ -325,6 +355,9 @@ struct SigningSetupCommand: AsyncParsableCommand {
             let parsed = try MobileProvisionParser.parse(created.content)
             guard parsed.provisionedDevices.contains(deviceUDID) else {
                 throw SigningSetupError.profileProvisionsWrongDevices(bundleID, deviceUDID)
+            }
+            if let reason = unauthorizedEntitlement(in: created.content, configuration: .development, bundleID: bundleID, teamID: context.teamID) {
+                throw SigningSetupError.profileMissingEntitlements(bundleID, reason)
             }
             try storeCanonical(created.content, kind: .development, bundleID: bundleID, home: context.homeURL)
             for staleID in toDelete {
@@ -544,6 +577,44 @@ struct SigningSetupCommand: AsyncParsableCommand {
         profileName.map { "\($0) \(base)" } ?? base
     }
 
+    /// Whether `name` is `base` or a replacement's `base <n>` (see `uniqueProfileName`).
+    static func isProfileName(_ name: String, base: String) -> Bool {
+        guard name != base else { return true }
+        guard name.hasPrefix(base + " ") else { return false }
+        return Int(name.dropFirst(base.count + 1)) != nil
+    }
+
+    /// Why the profile wouldn't sign this bundle's source entitlements, by the same gate `run` and
+    /// `release archive` apply, or nil when it would. Outside a project there are none to check.
+    private func unauthorizedEntitlement(
+        in content: Data, configuration: EntitlementDeriver.Configuration, bundleID: String, teamID: String
+    ) -> String? {
+        guard let source = sourceEntitlementsURL(for: bundleID) else { return nil }
+        do {
+            let profile = try MobileProvisionParser.parse(content)
+            _ = try EntitlementDeriver.derive(
+                sourceURL: source, configuration: configuration, bundleID: bundleID, profile: profile, teamID: teamID)
+            return nil
+        } catch {
+            return "\(error)"
+        }
+    }
+
+    /// The source entitlements for the app or one of its extensions, as signing resolves them.
+    private func sourceEntitlementsURL(for bundleID: String) -> URL? {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: "stupid-app.yml")),
+            let config = try? AppConfig.decode(data)
+        else { return nil }
+        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        if bundleID == config.bundleID {
+            return AppConfig.resolvedEntitlementsURL(entitlementsPath: config.entitlementsPath, projectRoot: root)
+        }
+        if let extensionConfig = config.extensions?.first(where: { $0.bundleID == bundleID }) {
+            return AppConfig.resolvedEntitlementsURL(entitlementsPath: extensionConfig.entitlementsPath, projectRoot: root)
+        }
+        return nil
+    }
+
     /// Returns `base`, or `base <n>` for the first `n >= 2` not present in `taken`, so a
     /// replacement profile never collides with an existing one on App Store Connect.
     private func uniqueProfileName(base: String, taken: Set<String>) -> String {
@@ -565,6 +636,7 @@ enum SigningSetupError: Error, CustomStringConvertible {
     case noXcodeProfile(String, String)
     case deviceNotRegistered(String)
     case profileProvisionsWrongDevices(String, String)
+    case profileMissingEntitlements(String, String)
     case profileCopyFailed(String)
 
     var description: String {
@@ -587,6 +659,8 @@ enum SigningSetupError: Error, CustomStringConvertible {
             return "No '\(kind)' provisioning profile for '\(bundleID)' is installed for the selected identity. Generate one in Xcode and rerun."
         case let .deviceNotRegistered(udid):
             return "The device '\(udid)' is not registered with App Store Connect. Run `stupid-app devices add --udid \(udid)` first."
+        case let .profileMissingEntitlements(bundleID, reason):
+            return "The newly created profile for '\(bundleID)' still doesn't authorize its entitlements (\(reason)). Check that the capability is declared under `capabilities:` in stupid-app.yml and enabled on the App ID, then rerun."
         case let .profileProvisionsWrongDevices(bundleID, udid):
             return "The newly created profile for '\(bundleID)' does not provision the requested device '\(udid)'. Check the developer portal profile and rerun."
         case let .profileCopyFailed(path):

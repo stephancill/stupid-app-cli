@@ -758,6 +758,12 @@ the manual delete-and-recopy dance are gone. `signing setup --kind development` 
 profile set for the requested `--udid`: it reuses a candidate that already provisions the device,
 otherwise it creates a replacement that also provisions every previously provisioned device
 (union), validates it locally, stores it, and only then retires the stale remote profiles.
+Both kinds also reuse a profile only while it authorizes the bundle's source entitlements by the
+same `EntitlementDeriver` gate signing applies: Apple doesn't add a capability enabled later to an
+existing profile, so a profile made before it is replaced (named `<base> <n>`), the replacement is
+checked and stored, and the stale profile is retired. Candidates are the bundle's profiles named
+`<base>` or `<base> <n>`, listed with their `bundleId` relationship (it must be in the sparse
+fieldset) and up to 200 per page.
 `--profile-name` is a display prefix, not the full name, so app and extension profiles
 never collide. `run` resolves the target device and preflights every development profile
 (app + extensions) against that UDID, team, bundle, and profile kind before the SwiftPM build

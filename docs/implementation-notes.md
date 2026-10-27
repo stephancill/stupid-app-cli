@@ -16,6 +16,34 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth. Historical entries record the implementation at their date. Use the current handover and bundled command reference for operational instructions.
 
+## 2026-10-28 - Release 0.0.23
+
+### Summary
+
+- Released `stupid-app 0.0.23`, whose `signing setup` replaces profiles that predate a capability (see the following entry).
+- Bumped `StupidApp.productVersion` from `0.0.22` to `0.0.23`. No command, option, default, or output path changed; the bundled skill describes rerunning `signing setup` after adding a capability, and `README.md` and `references/commands.md` needed no updates. The release process and asset names are unchanged.
+
+### Verification
+
+- `swift test`: every suite passed except `RemotePairingIdentityTests`' Pair-Verify identity test, which timed out on its loopback usbmuxd peer under full-suite contention as in earlier releases and passed in isolation. This release doesn't change DeviceKit.
+- `swift test --filter "SigningKitTests|ASCKitTests|StupidAppTests"` passed.
+- `swift build -c release` succeeded; the built CLI reports `stupid-app 0.0.23`.
+- Built CLI SHA-256: `9953cf8676a07744da7500048ea3eb864a74cc36368a5f89ba7e689f3d24c6da`.
+- Built GUI SHA-256: `24e15a7d0364d85d34f278e379e37fba1e0f6e969cb1871bef84ea44805c09cb` (byte-identical to 0.0.22; the GUI did not change).
+
+## 2026-10-28 - Signing Setup Replaces Profiles That Predate A Capability
+
+### Summary
+
+- Adding a capability (a `capabilities:` entry and its entitlement) and rerunning `signing setup` enabled it on the App ID but reused the existing profile by name. Apple doesn't add a later capability to an existing profile, so `release archive` would then fail at the profile-authorization gate.
+- `signing setup` now reuses a profile only while it authorizes the bundle's source entitlements, checked with the same `EntitlementDeriver.derive` that signing runs. For distribution it looks at the bundle's profiles named `<base>` or `<base> <n>`; a stale one is reported with the gate's message, a replacement is created under the next free `<base> <n>` name, checked, and stored, and the stale profiles are retired (also when a valid replacement already exists). Development applies the same check before reusing a profile that provisions the device. A replacement that still fails throws `SigningSetupError.profileMissingEntitlements`.
+- `ASCOperations.listProfiles` never returned bundle identifiers: its sparse fieldset `fields[profiles]` left out the `bundleId` relationship, which App Store Connect then omits. It now includes it, and asks for 200 profiles per page instead of the default 20.
+
+### Verification
+
+- `SigningProfileReuseTests` covers the `<base>`/`<base> <n>` name matching.
+- On a real App Store Connect team: after enabling `ASSOCIATED_DOMAINS`, `signing setup --kind distribution` reported the existing App Store profile as not authorizing `com.apple.developer.associated-domains`, reused the replacement it had created, and retired the stale profile; a rerun for every bundle reused both profiles and retired nothing. A distribution archive then signed `com.apple.developer.associated-domains` and passed the project-owned post-sign verifier.
+
 ## 2026-10-28 - Release 0.0.22
 
 ### Summary

@@ -97,6 +97,12 @@ at a canonical `<kind>/<bundle-id>.mobileprovision` path and located by content
 (bundle + kind), so re-runs on a new phone don't need the manual delete/rename/
 copy dance. `--profile-name` is a display-name prefix, not the full name.
 
+After adding a capability (a new `capabilities:` entry plus its entitlement), rerun
+`signing setup`: a profile that no longer authorizes the bundle's entitlements, such
+as one made before the capability was enabled, is replaced (`<name> 2`) and retired,
+for distribution and development alike, so `release archive` doesn't fail at the
+profile-authorization gate.
+
 On macOS, reuse what Xcode already manages instead of minting credentials:
 
 ```bash

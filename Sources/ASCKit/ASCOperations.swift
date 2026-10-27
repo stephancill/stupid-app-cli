@@ -486,8 +486,12 @@ public struct ASCOperations: Sendable {
             query: [
                 URLQueryItem(name: "filter[profileType]", value: profileType.rawValue),
                 URLQueryItem(name: "include", value: "bundleId"),
-                URLQueryItem(name: "fields[profiles]", value: "name,profileType,profileState,expirationDate"),
+                // A relationship left out of the sparse fieldset is left out of the response, which would leave
+                // every summary without its bundle identifier.
+                URLQueryItem(name: "fields[profiles]", value: "name,profileType,profileState,expirationDate,bundleId"),
                 URLQueryItem(name: "fields[bundleIds]", value: "identifier"),
+                // The default page is 20 profiles; 200 is the API's maximum.
+                URLQueryItem(name: "limit", value: "200"),
             ]
         )
         return try Self.decodeProfileList(response.data)
