@@ -371,15 +371,30 @@ public struct Packer: Sendable {
     var environment = ProcessInfo.processInfo.environment
     environment["SDKROOT"] = nil
 
+    // Kept whole so progress lines can't push compiler errors out of the retained tail.
     let result = try ProcessRunner.run(
       executable: swift,
       arguments: arguments,
-      environment: environment
+      environment: environment,
+      configuration: .init(maxOutputBytes: 8_000_000)
     )
     guard result.succeeded else {
-      throw BuildError.processingFailed(
-        "swift build", result.stderr.isEmpty ? result.stdout : result.stderr)
+      throw BuildError.processingFailed("swift build", Self.swiftBuildFailure(result))
     }
+  }
+
+  /// A failed `swift build`'s diagnostics without SwiftPM's `[n/m] …` progress lines,
+  /// keeping the last `maxBytes`.
+  static func swiftBuildFailure(_ result: ProcessRunner.Result, maxBytes: Int = 20_000) -> String {
+    let lines = result.failureOutput.split(separator: "\n", omittingEmptySubsequences: false)
+      .filter { line in
+        guard line.first == "[", let close = line.firstIndex(of: "]") else { return true }
+        let counter = line[line.index(after: line.startIndex)..<close].split(separator: "/")
+        return !(counter.count == 2 && counter.allSatisfy { $0.allSatisfy(\.isNumber) })
+      }
+    let text = lines.joined(separator: "\n")
+    guard text.utf8.count > maxBytes else { return text }
+    return "[earlier output truncated]\n" + String(decoding: text.utf8.suffix(maxBytes), as: UTF8.self)
   }
 
   // MARK: - Assembly

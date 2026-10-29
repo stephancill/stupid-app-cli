@@ -131,7 +131,7 @@ public struct Planner: Sendable {
             arguments: ["package", "--package-path", url.path, "describe", "--type", "json"]
         )
         guard result.succeeded else {
-            throw BuildError.processingFailed("swift package describe", result.stderr)
+            throw BuildError.processingFailed("swift package describe", result.failureOutput)
         }
         // SwiftPM may print extraneous non-JSON output; locate the opening brace.
         let jsonData = Self.JSONData(from: result.stdout)

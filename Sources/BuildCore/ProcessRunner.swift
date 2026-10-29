@@ -15,6 +15,16 @@ public struct ProcessRunner {
     public var stderr: String
 
     public var succeeded: Bool { exitStatus == 0 }
+
+    /// Both streams, stderr first, for reporting a failure. Tools such as `swift build`
+    /// print warnings to stderr and errors to stdout, so either stream alone can hide the
+    /// cause.
+    public var failureOutput: String {
+      [stderr, stdout]
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+        .joined(separator: "\n")
+    }
   }
 
   public struct Configuration: Sendable {
@@ -340,8 +350,7 @@ public struct ProcessRunner {
     outDrainer: OutputDrainer,
     errDrainer: OutputDrainer
   ) -> String {
-    let stderr = errDrainer.string
-    return stderr.isEmpty ? outDrainer.string : stderr
+    Result(exitStatus: 0, stdout: outDrainer.string, stderr: errDrainer.string).failureOutput
   }
 }
 

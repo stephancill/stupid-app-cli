@@ -16,6 +16,30 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth. Historical entries record the implementation at their date. Use the current handover and bundled command reference for operational instructions.
 
+## 2026-10-29 - Build Failures Report Compiler Errors
+
+### Summary
+
+- `swift build` failures reported only stderr when it was non-empty. SwiftPM prints
+  the `--build-system native` deprecation warning to stderr and compiler errors to
+  stdout, so every failed build showed `swift build failed.` and the warning alone.
+- `ProcessRunner.Result.failureOutput` now joins both streams (stderr first) and
+  replaces the `stderr.isEmpty ? stdout : stderr` pattern in the packer, planner,
+  simctl wrapper, App Intents metadata, IPA zip, Mac compatibility runner, and the
+  timeout diagnostic. `RunCommand`'s copy of the pattern is left for a follow-up.
+- The packer runs `swift build` with an 8 MB output bound and reports
+  `Packer.swiftBuildFailure`: both streams without SwiftPM's `[n/m] …` progress
+  lines, keeping the last 20 KB. The default 20 KB tail could otherwise be all
+  progress lines, pushing the errors out.
+
+### Verification
+
+- `swift test --filter ProcessRunnerTests` passed, including the two new regression
+  tests (both streams kept; progress lines dropped, errors kept).
+- A scratch `stupid-app new` project with an undefined symbol: the new debug binary
+  prints the compiler error with its source excerpt; the installed release binary
+  printed only the deprecation warning.
+
 ## 2026-10-28 - Release 0.0.23
 
 ### Summary

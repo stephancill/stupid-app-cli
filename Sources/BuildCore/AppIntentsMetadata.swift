@@ -176,7 +176,7 @@ enum AppIntentsMetadata {
     )
     guard result.succeeded else {
       throw MetadataError.processorFailed(
-        module: module, output: result.stderr.isEmpty ? result.stdout : result.stderr)
+        module: module, output: result.failureOutput)
     }
     let output = bundleDirectory.appendingPathComponent(
       "Metadata.appintents/extract.actionsdata")

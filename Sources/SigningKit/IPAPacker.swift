@@ -59,7 +59,7 @@ public enum IPAPacker {
             workingDirectory: workingDir
         )
         guard zipResult.succeeded else {
-            throw Error.zipFailed(zipResult.stderr.isEmpty ? zipResult.stdout : zipResult.stderr)
+            throw Error.zipFailed(zipResult.failureOutput)
         }
 
         // Verify by re-reading the archive and confirming the Payload root exists.

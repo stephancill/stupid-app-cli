@@ -146,7 +146,7 @@ public enum Simctl {
       configuration: .init(maxOutputBytes: 2_000_000)
     )
     guard result.succeeded else {
-      let detail = result.stderr.isEmpty ? result.stdout : result.stderr
+      let detail = result.failureOutput
       throw Error.commandFailed("`simctl \(arguments.joined(separator: " "))`: \(detail)")
     }
     return result.stdout

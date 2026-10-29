@@ -81,4 +81,29 @@ struct ProcessRunnerTests {
       Issue.record("Unexpected error: \(error)")
     }
   }
+
+  @Test("reports both streams on failure, since swift build prints errors to stdout and warnings to stderr")
+  func failureOutputKeepsBothStreams() throws {
+    let result = try ProcessRunner.run(
+      executable: "/bin/sh",
+      arguments: ["-c", "printf 'warning: deprecated flag\\n' >&2; printf 'error: missing symbol\\n'; exit 1"]
+    )
+
+    #expect(!result.succeeded)
+    #expect(result.failureOutput == "warning: deprecated flag\nerror: missing symbol")
+  }
+
+  @Test("swift build failures drop progress lines and keep compiler errors")
+  func swiftBuildFailureDropsProgress() {
+    let progress = (1...2000).map { "[\($0)/2000] Compiling Module File\($0).swift" }.joined(separator: "\n")
+    let result = ProcessRunner.Result(
+      exitStatus: 1,
+      stdout: "[0/1] Planning build\n\(progress)\n/src/App.swift:3:5: error: cannot find 'x' in scope\n[note] kept",
+      stderr: "warning: '--build-system native' has been deprecated"
+    )
+
+    let failure = Packer.swiftBuildFailure(result)
+
+    #expect(failure == "warning: '--build-system native' has been deprecated\n/src/App.swift:3:5: error: cannot find 'x' in scope\n[note] kept")
+  }
 }

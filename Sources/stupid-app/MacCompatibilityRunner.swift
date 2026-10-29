@@ -20,7 +20,7 @@ struct MacCompatibilityRunner {
         executable: "/usr/sbin/system_profiler",
         arguments: ["-json", "SPHardwareDataType"])
       guard result.succeeded else {
-        throw Error.deviceLookupFailed(result.stderr.isEmpty ? result.stdout : result.stderr)
+        throw Error.deviceLookupFailed(result.failureOutput)
       }
       return try decodeLocalDevice(Data(result.stdout.utf8))
     #else
@@ -86,7 +86,7 @@ struct MacCompatibilityRunner {
         executable: "/usr/bin/pluginkit",
         arguments: ["-a", appex.path])
       if !result.succeeded {
-        let detail = result.stderr.isEmpty ? result.stdout : result.stderr
+        let detail = result.failureOutput
         print(
           "Warning: could not explicitly register \(appex.lastPathComponent) with PlugInKit: \(detail)"
         )
@@ -134,7 +134,7 @@ struct MacCompatibilityRunner {
           "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister",
         arguments: ["-f", installedURL.path])
       guard register.succeeded else {
-        throw Error.installFailed(register.stderr.isEmpty ? register.stdout : register.stderr)
+        throw Error.installFailed(register.failureOutput)
       }
 
       let nestedExtensions = try registerNestedAppExtensions(in: wrappedApp)
@@ -147,7 +147,7 @@ struct MacCompatibilityRunner {
       let launch = try ProcessRunner.run(
         executable: "/usr/bin/open", arguments: [installedURL.path])
       guard launch.succeeded else {
-        throw Error.launchFailed(launch.stderr.isEmpty ? launch.stdout : launch.stderr)
+        throw Error.launchFailed(launch.failureOutput)
       }
       return installedURL
     #else
