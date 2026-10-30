@@ -126,7 +126,8 @@ stupid-app signing setup --kind distribution --from-xcode
 - Development provisioning runs only when `--udid` is provided (a physical device must
   be registered); otherwise it is skipped with a note.
 - `run --mac` uses the Apple Silicon Mac's provisioning UDID, then creates the iOS
-  compatibility wrapper, registers it with LaunchServices, registers each nested `.appex` with
+  compatibility wrapper named after the app's display name, as an App Store install is
+  (`.MacInstall/<display name>.app/Wrapper/<product>.app` beside the build), registers it with LaunchServices, registers each nested `.appex` with
   PlugInKit (`pluginkit -a`), and launches it. A nested Safari Web Extension's web content runs
   in Safari, but native messaging does not (Safari cannot spawn the iOS appex plugin without the
   entitled installer's launchd registration).

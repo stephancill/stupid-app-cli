@@ -28,7 +28,9 @@ The GUI's wireless Run invokes the same CLI command.
 
 Apple Silicon local compatibility execution uses `stupid-app run --mac`. It
 retains the device build and development profile, creates the
-`Wrapper/<app>.app` plus `WrappedBundle` layout, registers the app and nested
+`Wrapper/<app>.app` plus `WrappedBundle` layout inside an outer bundle named after the
+app's display name (`.MacInstall/<display name>.app`, the App Store install shape; macOS
+names the app after it), removes an earlier `<product>.app` install, registers the app and nested
 extensions, and launches through UIKitSystem. Safari Web Extension web content
 runs in Safari. Native messaging requires the plugin registration created by an
 Apple installer, so use TestFlight or an Xcode-installed build for that flow.

@@ -16,6 +16,21 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth. Historical entries record the implementation at their date. Use the current handover and bundled command reference for operational instructions.
 
+## 2026-10-30 - Release 0.0.24
+
+### Summary
+
+- Released `stupid-app 0.0.24`, whose `run --mac` names the installed wrapper after the app's display name (see the following entry).
+- Bumped `StupidApp.productVersion` from `0.0.23` to `0.0.24`. The `run --mac` install path changed, so `README.md`, the bundled skill (`SKILL.md`, `references/commands.md`) and the handover now describe `.MacInstall/<display name>.app`. No command or option changed; the release process and asset names are unchanged.
+
+### Verification
+
+- `swift test`: 326 Swift Testing tests and 7 XCTest tests (1 skipped) passed.
+- Skill-creator validation of `skills/stupid-app-cli` passed.
+- `swift build -c release` succeeded; the built CLI reports `stupid-app 0.0.24`.
+- Built CLI SHA-256: `de4a6bf4dc1fdf29f8244d6b16c7028373b94120689ee4daf9b1cbf6da2da6a2`.
+- Built GUI SHA-256: `ce1e1f2022152b977f29a6e45ecca01db7bc29780854fe8df6deaf10a0a607ba`.
+
 ## 2026-10-30 - run --mac Names The Install After The Display Name
 
 - `run --mac` installs to `.build/<triple>/<config>/.MacInstall/<display name>.app/Wrapper/<product>.app`,

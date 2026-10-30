@@ -284,7 +284,9 @@ stupid-app run --mac
 ```
 
 This builds and signs the ordinary iOS device binary, creates macOS's
-`Wrapper/<app>.app` plus `WrappedBundle` compatibility layout, registers it with
+`Wrapper/<app>.app` plus `WrappedBundle` compatibility layout in a wrapper named after
+the app's display name (`.MacInstall/<display name>.app`, so macOS shows that name in the
+Dock and app switcher), registers it with
 LaunchServices, registers each nested `.appex` with PlugInKit (`pluginkit -a`), and
 launches it through UIKitSystem. A nested Safari Web Extension's web content runs in
 Safari, but native messaging does not (Safari cannot spawn the iOS appex plugin without

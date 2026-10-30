@@ -192,7 +192,8 @@ Builds, signs once (Apple Development), packages, installs, and launches.
   ad-hoc signs, boots, installs, launches via `simctl`.
 - `--mac` — Apple Silicon macOS only; builds the ordinary `arm64-apple-ios`
   app, development-signs it for this Mac's provisioning UDID, creates the
-  `Wrapper/<app>.app` + `WrappedBundle` compatibility layout, registers it with
+  `Wrapper/<app>.app` + `WrappedBundle` compatibility layout inside
+  `.MacInstall/<display name>.app` (an earlier `<product>.app` install is removed), registers it with
   LaunchServices, registers each nested `.appex` with PlugInKit (`pluginkit -a`),
   and launches it. No Xcode project or TestFlight upload is used. A nested Safari
   Web Extension's web content runs in Safari, but native messaging is not available.
