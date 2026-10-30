@@ -95,6 +95,19 @@ struct MacCompatibilityRunner {
     return appexes
   }
 
+  static let lsregisterPath =
+    "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+
+  /// The app's display name (else its bundle name, else the product), as a file name.
+  static func wrapperName(for appURL: URL) -> String {
+    let info = NSDictionary(contentsOf: appURL.appendingPathComponent("Info.plist"))
+    let name = [info?["CFBundleDisplayName"], info?["CFBundleName"]]
+      .compactMap { $0 as? String }
+      .first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+      ?? appURL.deletingPathExtension().lastPathComponent
+    return name.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+  }
+
   static func installAndLaunch(appURL: URL) throws -> URL {
     #if os(macOS) && arch(arm64)
       if let bundleID = Bundle(url: appURL)?.bundleIdentifier {
@@ -112,14 +125,25 @@ struct MacCompatibilityRunner {
         }
       }
 
-      let installedURL = appURL.deletingLastPathComponent()
+      // Named like an App Store install, "<display name>.app/Wrapper/<product>.app": macOS names
+      // the app after the outer bundle in the Dock, the app switcher and Force Quit.
+      let installRoot = appURL.deletingLastPathComponent()
         .appendingPathComponent(".MacInstall", isDirectory: true)
-        .appendingPathComponent(
-          appURL.lastPathComponent, isDirectory: true)
+      let installedURL = installRoot.appendingPathComponent(
+        "\(wrapperName(for: appURL)).app", isDirectory: true)
       let wrapper = installedURL.appendingPathComponent("Wrapper", isDirectory: true)
       let wrappedApp = wrapper.appendingPathComponent(
         appURL.lastPathComponent, isDirectory: true)
       let fileManager = FileManager.default
+      // An earlier install under the product's name, which LaunchServices would keep listing.
+      let productNamedURL = installRoot.appendingPathComponent(
+        appURL.lastPathComponent, isDirectory: true)
+      if productNamedURL.path != installedURL.path,
+        fileManager.fileExists(atPath: productNamedURL.path)
+      {
+        _ = try ProcessRunner.run(executable: lsregisterPath, arguments: ["-u", productNamedURL.path])
+        try fileManager.removeItem(at: productNamedURL)
+      }
       if fileManager.fileExists(atPath: installedURL.path) {
         try fileManager.removeItem(at: installedURL)
       }
@@ -130,9 +154,7 @@ struct MacCompatibilityRunner {
         withDestinationPath: "Wrapper/\(appURL.lastPathComponent)")
 
       let register = try ProcessRunner.run(
-        executable:
-          "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister",
-        arguments: ["-f", installedURL.path])
+        executable: lsregisterPath, arguments: ["-f", installedURL.path])
       guard register.succeeded else {
         throw Error.installFailed(register.failureOutput)
       }

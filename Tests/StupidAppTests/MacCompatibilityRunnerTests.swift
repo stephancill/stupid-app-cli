@@ -63,4 +63,20 @@ struct MacCompatibilityRunnerTests {
 
     #expect(MacCompatibilityRunner.enumerateNestedAppExtensions(in: dir).isEmpty)
   }
+
+  @Test("names the installed wrapper after the display name, else the product")
+  func wrapperName() throws {
+    let dir = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+      .appendingPathComponent("NoFeedSocial.app")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
+    let plist = dir.appendingPathComponent("Info.plist")
+
+    #expect(MacCompatibilityRunner.wrapperName(for: dir) == "NoFeedSocial")
+    try (["CFBundleName": "stupid social"] as NSDictionary).write(to: plist)
+    #expect(MacCompatibilityRunner.wrapperName(for: dir) == "stupid social")
+    try (["CFBundleName": "x", "CFBundleDisplayName": "a/b: c"] as NSDictionary).write(to: plist)
+    #expect(MacCompatibilityRunner.wrapperName(for: dir) == "a-b- c")
+  }
 }

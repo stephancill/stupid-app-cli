@@ -16,6 +16,20 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth. Historical entries record the implementation at their date. Use the current handover and bundled command reference for operational instructions.
 
+## 2026-10-30 - run --mac Names The Install After The Display Name
+
+- `run --mac` installs to `.build/<triple>/<config>/.MacInstall/<display name>.app/Wrapper/<product>.app`,
+  the shape of an App Store install. macOS names an iOS app on a Mac after the outer bundle in
+  LaunchServices, the Dock, the app switcher and Force Quit, so the old `<product>.app` outer name
+  showed the Swift product (such as `NoFeedSocial`) instead of the app's name.
+- `MacCompatibilityRunner.wrapperName(for:)` takes `CFBundleDisplayName`, else `CFBundleName`, else the
+  product, with `/` and `:` replaced by `-`. An earlier install under the product's name is unregistered
+  (`lsregister -u`) and removed, so LaunchServices doesn't keep listing it.
+- The executable keeps the product's name, so the process name doesn't change.
+
+Verified with `swift test --filter MacCompatibilityRunnerTests` (5 tests) and `run --mac` on
+stupid social: `lsappinfo` reports "stupid social" and the old `NoFeedSocial.app` install is gone.
+
 ## 2026-10-29 - Build Failures Report Compiler Errors
 
 ### Summary
