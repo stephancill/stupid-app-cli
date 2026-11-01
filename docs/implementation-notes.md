@@ -16,6 +16,25 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth. Historical entries record the implementation at their date. Use the current handover and bundled command reference for operational instructions.
 
+## 2026-11-01 - release status --live And beta-notes Find Builds An Upload Did Not Record
+
+- What happened: after `release upload` without `--wait`, `release status --live` failed with
+  "did not resolve to a build" for as long as the manifest existed, even once App Store Connect
+  had processed the build (`VALID`, internal `IN_BETA_TESTING`). `release beta-notes` without
+  `--build-id` failed the same way.
+- Cause: an upload without `--wait` returns before App Store Connect creates the build, so the
+  manifest's `buildId` stays empty. `status --live` and `beta-notes` read only that field;
+  `external-beta` already fell back to `findBuild`.
+- Fix: `ASCOperations.buildID(for:)` returns the manifest's `buildId`, else finds the build by the
+  manifest's bundle ID (`findApp`), marketing version and build number (`findBuild`), else nil
+  while it is not visible yet. `status --live` uses it and writes a found id back to the
+  manifest; `beta-notes` uses it for its default build. The not-yet-visible error now says the
+  build appears a few minutes after upload instead of asking for `upload --wait`.
+- Verification: `ManifestBuildTests` (3 tests) cover the recorded id (no request), a looked-up
+  build and a build not yet visible, against a `URLProtocol` stub of App Store Connect, with no
+  credentials. Against a real app whose upload ran without `--wait`, the built CLI's
+  `status --live` now reports `VALID` and `IN_BETA_TESTING` and saves the build id.
+
 ## 2026-10-30 - Release 0.0.24
 
 ### Summary

@@ -66,11 +66,16 @@ struct ReleaseStatusCommand: AsyncParsableCommand {
 
     guard live else { return }
 
-    guard let buildID = manifest.buildId else {
-      throw ReleaseStatusError.noBuildID(manifest.buildUploadId)
-    }
     let context = try ASCContext.resolve(home: home, purpose: "release status")
     let operations = context.operations()
+    guard let buildID = try operations.buildID(for: manifest) else {
+      throw ReleaseStatusError.noBuildID(manifest.buildUploadId)
+    }
+    if manifest.buildId == nil {
+      var resolved = manifest
+      resolved.buildId = buildID
+      try resolved.write(to: manifestURL)
+    }
 
     let build = try operations.getBuild(id: buildID)
     print("Live App Store Connect state:")
@@ -97,7 +102,7 @@ enum ReleaseStatusError: Error, CustomStringConvertible {
         "The release manifest at '\(path)' could not be decoded. Re-run `stupid-app release upload`."
     case .noBuildID(let buildUploadID):
       return
-        "The last upload (\(buildUploadID)) did not resolve to a build, so live state is unavailable. Run `stupid-app release upload --wait`."
+        "App Store Connect has not created a build for the last upload (\(buildUploadID)) yet. It appears a few minutes after upload; try again shortly."
     }
   }
 }

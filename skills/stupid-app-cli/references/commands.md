@@ -243,8 +243,11 @@ stupid-app release beta-notes --whats-new <text> [--build-id <id>] [--home <dir>
   exists (e.g. from a killed earlier run) is reported as an already-uploaded
   state pointing at `release status --live`, not a packaging failure.
 - `status` — reports the recorded last release; `--live` queries App Store
-  Connect for the current processing/beta state of the resolved build. Also
-  reports the recorded external-beta submission and group ids.
+  Connect for the current processing/beta state of the resolved build. An upload
+  without `--wait` records no build, so `--live` looks it up by app, version and
+  build number and saves it to the manifest; until App Store Connect creates it (a
+  few minutes after upload) it says to try again. Also reports the recorded
+  external-beta submission and group ids.
 - `new-build` — suggests the next integer build number based on the latest
   uploaded build, or increments `--build-number` when given.
 - `bump` — increments `CFBundleVersion` in `Info.plist` and every bundled
@@ -264,3 +267,5 @@ stupid-app release beta-notes --whats-new <text> [--build-id <id>] [--home <dir>
   `add-tester` enrolls a tester by email (internal groups cannot be assigned builds by
   hand — internal testers see all builds automatically).
 - `beta-notes` — sets the per-build "What to Test" note without submitting.
+  Without `--build-id` it uses the last release's build, looked up the same way as
+  `status --live` when the upload recorded none.

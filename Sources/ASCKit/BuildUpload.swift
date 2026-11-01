@@ -304,6 +304,16 @@ public extension ASCOperations {
         return envelope.data.first?.attributes.version
     }
 
+    /// The build a release manifest's upload became: the recorded id, else found by the
+    /// manifest's app, marketing version and build number. An upload without `--wait`
+    /// returns before App Store Connect creates the build, so it records none. Nil while
+    /// the build is not visible yet.
+    func buildID(for manifest: ReleaseManifest) throws -> String? {
+        if let buildID = manifest.buildId { return buildID }
+        guard let appID = try findApp(bundleID: manifest.appBundleId) else { return nil }
+        return try findBuild(appID: appID, version: manifest.marketingVersion, buildNumber: manifest.buildNumber)?.id
+    }
+
     /// Fetches a single build, used to poll processing state.
     func getBuild(id: String) throws -> ASCBuild {
         let response = try client.request(method: .get, path: "builds/\(id)")

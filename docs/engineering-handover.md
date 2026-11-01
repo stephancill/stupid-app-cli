@@ -1727,7 +1727,8 @@ owner-only credential/identity/pairing permissions, device prerequisites, and
 project configuration plus referenced files. Diagnostics
 do not load or print secret values. `stupid-app release status` reports the recorded
 last release and, with `--live`, the current App Store Connect processing and beta state
-of the resolved build.
+of the resolved build, looking the build up by app, version and build number (and saving
+it to the manifest) when an upload without `--wait` recorded none.
 
 Clean-host verification on the isolated WSL host is current: the source builds and all
 tests pass after a clean rebuild (the earlier stale `CLZFSE` module state is cleared),

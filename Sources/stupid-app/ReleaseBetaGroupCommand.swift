@@ -128,21 +128,21 @@ struct ReleaseBetaNotesCommand: AsyncParsableCommand {
   mutating func run() async throws {
     let context = try ASCContext.resolve(home: home, purpose: "release beta-notes")
     let operations = context.operations()
-    guard let buildID = buildID ?? resolveManifestBuildID() else {
+    guard let buildID = try buildID ?? loadManifest().flatMap({ try operations.buildID(for: $0) }) else {
       throw ReleaseNotesError.noBuild
     }
     _ = try operations.setWhatsNew(buildID: buildID, whatsNew: whatsNew)
     print("Set 'What to Test' on build \(buildID)")
   }
 
-  private func resolveManifestBuildID() -> String? {
+  private func loadManifest() -> ReleaseManifest? {
     let outputDir = URL(
       fileURLWithPath: output ?? URL(fileURLWithPath: ".").appendingPathComponent(".release").path)
     let url = outputDir.appendingPathComponent("release-manifest.json")
     guard let data = try? Data(contentsOf: url),
       let manifest = try? JSONDecoder().decode(ReleaseManifest.self, from: data)
     else { return nil }
-    return manifest.buildId
+    return manifest
   }
 }
 
@@ -169,7 +169,7 @@ enum ReleaseNotesError: Error, CustomStringConvertible {
   var description: String {
     switch self {
     case .noBuild:
-      return "Could not resolve a build to annotate. Pass --build-id or run `stupid-app release upload --wait` first."
+      return "Could not resolve a build to annotate. Pass --build-id, or wait a few minutes after `stupid-app release upload` for App Store Connect to create the build."
     }
   }
 }
