@@ -16,6 +16,22 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth. Historical entries record the implementation at their date. Use the current handover and bundled command reference for operational instructions.
 
+## 2026-11-01 - Release 0.0.25
+
+### Summary
+
+- Released `stupid-app 0.0.25`, whose `release status --live` and `release beta-notes` find a build that an upload without `--wait` did not record (see the following entry).
+- Bumped `StupidApp.productVersion` from `0.0.24` to `0.0.25`. The fix commit already updated the handover and `references/commands.md`; no command or option changed, and the release process and asset names are unchanged.
+- Built from a clean worktree of the release commit so uncommitted local work is not included in the binaries.
+
+### Verification
+
+- `swift test`: 329 Swift Testing tests and 7 XCTest tests (1 skipped) passed, except `RemotePairingIdentityTests`, which timed out on usbmuxd in the full run and passed on its own.
+- Skill-creator validation of `skills/stupid-app-cli` passed.
+- `swift build -c release` succeeded; the built CLI reports `stupid-app 0.0.25`.
+- Built CLI SHA-256: `e655cc6e8a42c4f5ba77be27533f13846bc0675458318916b30f812f700400be`.
+- Built GUI SHA-256: `8d468a9153fba4c7a43d96de795a50d9d514e8705edd44bc3e36b4af72c20960`.
+
 ## 2026-11-01 - release status --live And beta-notes Find Builds An Upload Did Not Record
 
 - What happened: after `release upload` without `--wait`, `release status --live` failed with
