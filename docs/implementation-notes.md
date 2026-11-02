@@ -16,6 +16,22 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth. Historical entries record the implementation at their date. Use the current handover and bundled command reference for operational instructions.
 
+## 2026-11-02 - Release 0.0.26
+
+### Summary
+
+- Released `stupid-app 0.0.26`, whose `release external-beta` reads App Store Connect's `betaReviewState`, resumes a build's existing review submission on re-run, records the submission when a wait times out, and takes `--whats-new` notes that start with `-` (see the following entry; `beta-notes` takes them too).
+- Bumped `StupidApp.productVersion` from `0.0.25` to `0.0.26`. The fix commit updated the handover, `SKILL.md` and `references/commands.md`; no command or option was added, and the release process and asset names are unchanged.
+- Built from a clean worktree of the release commit's source so uncommitted local work is not included in the binaries.
+
+### Verification
+
+- `swift test`: 333 Swift Testing tests and 7 XCTest tests (1 skipped) passed, except `RemotePairingIdentityTests`, which timed out on usbmuxd in the full run and passed on its own.
+- Skill-creator validation of `skills/stupid-app-cli` passed.
+- `swift build -c release` succeeded; the built CLI reports `stupid-app 0.0.26`.
+- Built CLI SHA-256: `9a8a5536bb84b78c367c275e85af383c47c06ddc99752d6bc78e42dcfb5f6427`.
+- Built GUI SHA-256: `b3d805ff49d23c1d17f330bb6376bb628d4697f6539dd0ea1dededa517d439c4`.
+
 ## 2026-11-02 - release external-beta Reads betaReviewState And Resumes Submissions
 
 - What happened: `release external-beta` timed out on "external beta review approval" after
