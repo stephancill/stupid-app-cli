@@ -224,21 +224,21 @@ public extension ASCOperations {
         return try Self.decodeBetaAppReviewSubmission(response.data)
     }
 
-    /// Returns the most recently created beta review submission for a build, if any.
+    /// Returns the build's beta review submission, if any. A build has at most one; App Store
+    /// Connect rejects `sort` on this request with `PARAMETER_ERROR.ILLEGAL`.
     func findLatestBetaAppReviewSubmission(buildID: String) throws -> ASCBetaAppReviewSubmission? {
         let response = try client.request(
             method: .get,
             path: "betaAppReviewSubmissions",
             query: [
                 URLQueryItem(name: "filter[build]", value: buildID),
-                URLQueryItem(name: "sort", value: "-createdDate"),
                 URLQueryItem(name: "limit", value: "1"),
             ]
         )
         struct Envelope: Decodable {
             struct Data: Decodable {
                 let id: String
-                struct Attributes: Decodable { let state: String?; let submissionState: String? }
+                struct Attributes: Decodable { let betaReviewState: String? }
                 let attributes: Attributes
             }
             let data: [Data]
@@ -247,8 +247,7 @@ public extension ASCOperations {
             throw ASCError.malformedPayload("betaAppReviewSubmissions lookup")
         }
         guard let first = envelope.data.first else { return nil }
-        return ASCBetaAppReviewSubmission(
-            id: first.id, state: first.attributes.submissionState ?? first.attributes.state)
+        return ASCBetaAppReviewSubmission(id: first.id, state: first.attributes.betaReviewState)
     }
 
     /// Lists `betaBuildLocalizations` for a build.
@@ -311,7 +310,7 @@ public extension ASCOperations {
         struct Envelope: Decodable {
             struct Data: Decodable {
                 let id: String
-                struct Attributes: Decodable { let submissionState: String?; let state: String? }
+                struct Attributes: Decodable { let betaReviewState: String? }
                 let attributes: Attributes
             }
             let data: Data
@@ -321,7 +320,7 @@ public extension ASCOperations {
         }
         return ASCBetaAppReviewSubmission(
             id: envelope.data.id,
-            state: envelope.data.attributes.submissionState ?? envelope.data.attributes.state)
+            state: envelope.data.attributes.betaReviewState)
     }
 
     static func decodeBetaResourceID(_ data: Data, resource: String) throws -> String {
@@ -345,23 +344,25 @@ public extension ASCOperations {
 
     // MARK: - Pure state decisions (credential-free, unit-testable)
 
-    /// Classifies an external beta review submission into a decision.
+    /// Classifies an external beta review submission's `betaReviewState`.
     enum ExternalReviewDecision: Equatable, Sendable {
         case keepPolling
         case approved
         case rejected(String)
+        /// A missing or undocumented state: fail rather than poll on a field that may not be read.
+        case unexpected(String?)
     }
 
     static func externalReviewDecision(_ state: String?) -> ExternalReviewDecision {
         switch state {
-        case "BETA_APPROVED", "IN_BETA_TESTING":
+        case "APPROVED":
             return .approved
-        case "BETA_REJECTED", "REJECTED":
-            return .rejected(state ?? "REJECTED")
-        case .none, "", "WAITING_FOR_APP_REVIEW", "WAITING_FOR_REVIEW", "IN_REVIEW", "PROCESSING":
+        case "REJECTED":
+            return .rejected("REJECTED")
+        case "WAITING_FOR_REVIEW", "IN_REVIEW":
             return .keepPolling
         default:
-            return .rejected(state ?? "unknown")
+            return .unexpected(state)
         }
     }
 
@@ -372,16 +373,16 @@ public extension ASCOperations {
         case terminal(String)
     }
 
+    /// `externalBuildState` passes through review (`WAITING_FOR_BETA_REVIEW`, `IN_BETA_REVIEW`,
+    /// `BETA_APPROVED`) on its way to `IN_BETA_TESTING`.
     static func externalBetaDecision(_ state: String?) -> ExternalBetaState {
         switch state {
         case "IN_BETA_TESTING", "READY_FOR_BETA_TESTING":
             return .ready
-        case "PROCESSING_EXCEPTION", "EXPIRED", "MISSING_EXPORT_COMPLIANCE":
-            return .terminal(state ?? "unknown")
-        case .none, "", "PROCESSING":
+        case "PROCESSING", "IN_EXPORT_COMPLIANCE_REVIEW", "WAITING_FOR_BETA_REVIEW", "IN_BETA_REVIEW", "BETA_APPROVED":
             return .keepPolling
         default:
-            return .terminal(state ?? "unknown")
+            return .terminal(state ?? "missing externalBuildState")
         }
     }
 }

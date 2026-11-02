@@ -335,7 +335,9 @@ Store Connect for the current processing/beta state.
 testable: it resolves an external beta group (by `--group` id or by name, creating
 one as needed), adds the build to it, optionally sets the "What to Test" note, and
 submits an external beta review submission, then (by default) waits until external
-`IN_BETA_TESTING` — pass `--no-wait` to only create the submission. `release beta-group list/create/add-build/add-tester` manage
+`IN_BETA_TESTING` — pass `--no-wait` to only create the submission. Apple's review
+often takes longer than the five-minute wait: the time-out records the submission,
+and re-running `release external-beta` resumes it rather than resubmitting. `release beta-group list/create/add-build/add-tester` manage
 external groups and their testers, and `release beta-notes` sets the per-build
 "What to Test" note alone. Manual prerequisites the API cannot perform (`create the
 App Store Connect app record before the first upload`, and complete the app's Beta

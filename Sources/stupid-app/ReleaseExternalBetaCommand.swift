@@ -24,7 +24,10 @@ struct ReleaseExternalBetaCommand: AsyncParsableCommand {
     help: "External beta group name to resolve or create (default: External Testers).")
   var betaGroupName: String = "External Testers"
 
-  @Option(name: .customLong("whats-new"), help: "Set the per-build 'What to Test' note before submitting.")
+  // Unconditional so a note that starts with "-", such as a bulleted list, is taken as the value.
+  @Option(
+    name: .customLong("whats-new"), parsing: .unconditional,
+    help: "Set the per-build 'What to Test' note before submitting.")
   var whatsNew: String?
 
   @Option(name: .customLong("home"), help: "Credential store directory.")
@@ -84,16 +87,32 @@ struct ReleaseExternalBetaCommand: AsyncParsableCommand {
       return
     }
 
-    // Create the external beta review submission.
-    let submissionID = try operations.createBetaAppReviewSubmission(buildID: buildID)
-    print("Created external beta review submission \(submissionID)")
+    // A re-run resumes the build's pending or approved submission: a build takes one.
+    let submissionID: String
+    if let existing = try operations.findLatestBetaAppReviewSubmission(buildID: buildID),
+      existing.state != "REJECTED"
+    {
+      submissionID = existing.id
+      print("Using external beta review submission \(submissionID) (state=\(existing.state ?? "?"))")
+    } else {
+      submissionID = try operations.createBetaAppReviewSubmission(buildID: buildID)
+      print("Created external beta review submission \(submissionID)")
+    }
 
     guard !noWait else {
       try recordManifest(buildID: buildID, groupID: group.id, submissionID: submissionID, externalState: detail.externalBuildState)
       return
     }
 
-    try pollExternal(buildID: buildID, submissionID: submissionID, operations: operations)
+    do {
+      try pollExternal(buildID: buildID, submissionID: submissionID, operations: operations)
+    } catch let error as ReleaseExternalBetaError {
+      if case .timedOut = error {
+        let state = try? operations.getBuildBetaDetail(buildID: buildID).externalBuildState
+        try recordManifest(buildID: buildID, groupID: group.id, submissionID: submissionID, externalState: state)
+      }
+      throw error
+    }
     try recordManifest(buildID: buildID, groupID: group.id, submissionID: submissionID, externalState: "IN_BETA_TESTING")
   }
 
@@ -126,9 +145,11 @@ struct ReleaseExternalBetaCommand: AsyncParsableCommand {
         approved = true
       case .rejected(let state):
         throw ReleaseExternalBetaError.reviewRejected(state)
+      case .unexpected(let state):
+        throw ReleaseExternalBetaError.unexpectedReviewState(state)
       case .keepPolling:
         if Date() > approvalDeadline {
-          throw ReleaseExternalBetaError.timedOut("external beta review approval for submission \(submissionID)")
+          throw ReleaseExternalBetaError.timedOut("waiting for external beta review of submission \(submissionID)")
         }
         Thread.sleep(forTimeInterval: pollInterval)
       }
@@ -146,7 +167,7 @@ struct ReleaseExternalBetaCommand: AsyncParsableCommand {
         throw ReleaseExternalBetaError.externalBetaFailed(state)
       case .keepPolling:
         if Date() > externalDeadline {
-          throw ReleaseExternalBetaError.timedOut("external IN_BETA_TESTING for build \(buildID)")
+          throw ReleaseExternalBetaError.timedOut("waiting for build \(buildID) to reach external IN_BETA_TESTING")
         }
         Thread.sleep(forTimeInterval: pollInterval)
       }
@@ -195,6 +216,7 @@ enum ReleaseExternalBetaError: Error, CustomStringConvertible {
   case appNotFound(String)
   case noBuild
   case reviewRejected(String)
+  case unexpectedReviewState(String?)
   case externalBetaFailed(String)
   case timedOut(String)
 
@@ -208,10 +230,12 @@ enum ReleaseExternalBetaError: Error, CustomStringConvertible {
       return "Could not resolve which build to submit. Pass --build-id or run `stupid-app release upload --wait` first."
     case .reviewRejected(let state):
       return "External beta review was rejected (state '\(state)'). Fix the build and resubmit."
+    case .unexpectedReviewState(let state):
+      return "External beta review submission has an unexpected betaReviewState '\(state ?? "missing")'. Check the submission in App Store Connect."
     case .externalBetaFailed(let state):
       return "Build could not reach external TestFlight (external build state '\(state)'). Check export compliance and resolve violations."
     case .timedOut(let phase):
-      return "Timed out while \(phase). Check the state in App Store Connect and re-run `stupid-app release external-beta`."
+      return "Timed out \(phase); Apple's review can take hours. The submission is recorded in the release manifest: check `stupid-app release status --live`, or re-run `stupid-app release external-beta` to resume waiting without resubmitting."
     }
   }
 }

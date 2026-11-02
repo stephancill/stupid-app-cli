@@ -3,23 +3,26 @@ import Testing
 @testable import ASCKit
 
 struct TestFlightTests {
-  @Test("external review decision accepts approval states")
+  @Test("external review decision accepts App Store Connect's approval state")
   func reviewApproved() {
-    #expect(ASCOperations.externalReviewDecision("BETA_APPROVED") == .approved)
-    #expect(ASCOperations.externalReviewDecision("IN_BETA_TESTING") == .approved)
+    #expect(ASCOperations.externalReviewDecision("APPROVED") == .approved)
   }
 
-  @Test("external review decision keeps polling transient states")
+  @Test("external review decision keeps polling while in review")
   func reviewPolling() {
     #expect(ASCOperations.externalReviewDecision("WAITING_FOR_REVIEW") == .keepPolling)
     #expect(ASCOperations.externalReviewDecision("IN_REVIEW") == .keepPolling)
-    #expect(ASCOperations.externalReviewDecision(nil) == .keepPolling)
   }
 
-  @Test("external review decision rejects terminal states")
+  @Test("external review decision reports rejection")
   func reviewRejected() {
-    #expect(ASCOperations.externalReviewDecision("BETA_REJECTED") == .rejected("BETA_REJECTED"))
-    #expect(ASCOperations.externalReviewDecision("PLAN_REQUIRED") == .rejected("PLAN_REQUIRED"))
+    #expect(ASCOperations.externalReviewDecision("REJECTED") == .rejected("REJECTED"))
+  }
+
+  @Test("external review decision fails on a missing or undocumented state instead of polling")
+  func reviewUnexpected() {
+    #expect(ASCOperations.externalReviewDecision(nil) == .unexpected(nil))
+    #expect(ASCOperations.externalReviewDecision("BETA_APPROVED") == .unexpected("BETA_APPROVED"))
   }
 
   @Test("external beta readiness decision classifies readiness")
@@ -27,24 +30,33 @@ struct TestFlightTests {
     #expect(ASCOperations.externalBetaDecision("IN_BETA_TESTING") == .ready)
     #expect(ASCOperations.externalBetaDecision("READY_FOR_BETA_TESTING") == .ready)
     #expect(ASCOperations.externalBetaDecision("PROCESSING") == .keepPolling)
-    #expect(ASCOperations.externalBetaDecision(nil) == .keepPolling)
     #expect(ASCOperations.externalBetaDecision("MISSING_EXPORT_COMPLIANCE") == .terminal("MISSING_EXPORT_COMPLIANCE"))
+    #expect(ASCOperations.externalBetaDecision("BETA_REJECTED") == .terminal("BETA_REJECTED"))
+    #expect(ASCOperations.externalBetaDecision(nil) == .terminal("missing externalBuildState"))
   }
 
-  @Test("decodes a beta app review submission resource")
+  @Test("external beta readiness keeps polling while the build is in beta review")
+  func betaDecisionDuringReview() {
+    #expect(ASCOperations.externalBetaDecision("WAITING_FOR_BETA_REVIEW") == .keepPolling)
+    #expect(ASCOperations.externalBetaDecision("IN_BETA_REVIEW") == .keepPolling)
+    #expect(ASCOperations.externalBetaDecision("BETA_APPROVED") == .keepPolling)
+  }
+
+  @Test("decodes a beta app review submission's betaReviewState")
   func decodeSubmission() throws {
+    // Shape of a live App Store Connect response (observed 2026-11-02).
     let json = """
     {
       "data": {
         "type": "betaAppReviewSubmissions",
         "id": "submission-1",
-        "attributes": { "submissionState": "IN_REVIEW" }
+        "attributes": { "betaReviewState": "APPROVED", "submittedDate": null }
       }
     }
     """
     let submission = try ASCOperations.decodeBetaAppReviewSubmission(Data(json.utf8))
     #expect(submission.id == "submission-1")
-    #expect(submission.state == "IN_REVIEW")
+    #expect(submission.state == "APPROVED")
   }
 
   @Test("decodes a created beta resource id")

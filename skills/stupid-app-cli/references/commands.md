@@ -258,8 +258,12 @@ stupid-app release beta-notes --whats-new <text> [--build-id <id>] [--home <dir>
 - `external-beta` — makes an already-uploaded build externally testable. Resolves an
   external beta group (`--group` id, or by `--group-name`, creating one as needed),
   adds the build to it, optionally sets the `--whats-new` note, creates an external
-  beta review submission, and polls until external `IN_BETA_TESTING` by default;
-  `--no-wait` exits after creating the submission. The app's portal-managed Beta App
+  beta review submission (a re-run resumes the build's existing one unless it was
+  rejected), and polls until external `IN_BETA_TESTING` by default; `--no-wait` exits
+  after creating the submission. Each wait gives up after five minutes: Apple's review
+  can take hours, so a time-out records the submission in the manifest and a later
+  re-run resumes waiting without resubmitting. A `--whats-new` note may start with `-`
+  (e.g. a bulleted list). The app's portal-managed Beta App
   Description must exist or Apple returns `MISSING_BETA_APP_DESCRIPTION`. Writes the
   submission/group ids and external state into the release manifest.
 - `beta-group` — `list` shows the app's beta groups; `create` makes an external group
@@ -268,4 +272,4 @@ stupid-app release beta-notes --whats-new <text> [--build-id <id>] [--home <dir>
   hand — internal testers see all builds automatically).
 - `beta-notes` — sets the per-build "What to Test" note without submitting.
   Without `--build-id` it uses the last release's build, looked up the same way as
-  `status --live` when the upload recorded none.
+  `status --live` when the upload recorded none. The note may start with `-`.

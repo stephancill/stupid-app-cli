@@ -412,7 +412,14 @@ TestFlight **control-plane** APIs are implemented:
 
 - `release external-beta` — resolves an external beta group (by `--group` id or by name,
   creating one as the build needs), adds the build, creates an external beta review
-  submission, and with `--wait` polls until the build reaches external `IN_BETA_TESTING`.
+  submission (or resumes the build's existing one that isn't `REJECTED`; a build takes
+  one), and unless `--no-wait` polls until the build reaches external `IN_BETA_TESTING`.
+  Review state is the submission's `betaReviewState` (`WAITING_FOR_REVIEW`, `IN_REVIEW`,
+  `APPROVED`, `REJECTED`); a missing or other value fails rather than polling. The build's
+  `externalBuildState` passes through `WAITING_FOR_BETA_REVIEW`, `IN_BETA_REVIEW` and
+  `BETA_APPROVED` while polling. Each wait gives up after five minutes; Apple's review can
+  take hours, so a time-out records the submission in the manifest and a re-run resumes it.
+  `--whats-new` takes a note starting with `-` (it is parsed unconditionally).
 - `release beta-group [list|create|add-build|add-tester]` — manages external beta groups
   and external testers. Internal groups cannot be assigned builds via the API.
 - `release beta-notes` — sets the per-build “What to Test” note.

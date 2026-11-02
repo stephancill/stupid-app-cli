@@ -116,7 +116,8 @@ struct ReleaseBetaNotesCommand: AsyncParsableCommand {
   @Option(name: .customLong("build-id"), help: "App Store Connect build id (default: manifest build).")
   var buildID: String?
 
-  @Option(name: .customLong("whats-new"), help: "The 'What to Test' note to set.")
+  // Unconditional so a note that starts with "-", such as a bulleted list, is taken as the value.
+  @Option(name: .customLong("whats-new"), parsing: .unconditional, help: "The 'What to Test' note to set.")
   var whatsNew: String
 
   @Option(name: .customLong("home"), help: "Credential store directory.")

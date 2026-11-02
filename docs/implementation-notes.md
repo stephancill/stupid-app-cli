@@ -16,6 +16,35 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth. Historical entries record the implementation at their date. Use the current handover and bundled command reference for operational instructions.
 
+## 2026-11-02 - release external-beta Reads betaReviewState And Resumes Submissions
+
+- What happened: `release external-beta` timed out on "external beta review approval" after
+  five minutes and asked for a re-run, while App Store Connect had already approved the
+  submission and the build was in external testing. A `--whats-new` note starting with `-` (a
+  bulleted list) failed with "Missing value for '--whats-new'".
+- Cause: the submission decoders read `submissionState`/`state`; App Store Connect returns
+  `betaReviewState` (`WAITING_FOR_REVIEW`, `IN_REVIEW`, `APPROVED`, `REJECTED`), so the state was
+  always nil and nil meant keep polling. The decision tables used names App Store Connect does
+  not send (`BETA_APPROVED` for the submission), so a correctly read `APPROVED` would have been
+  reported as rejected, and treated the build's in-review `externalBuildState` values
+  (`WAITING_FOR_BETA_REVIEW`, `IN_BETA_REVIEW`, `BETA_APPROVED`) as terminal. The tests encoded
+  the same assumed names. A re-run during review would have created a second submission, and
+  `findLatestBetaAppReviewSubmission` sent `sort`, which App Store Connect rejects on this request
+  (`PARAMETER_ERROR.ILLEGAL`). Swift Argument Parser treats a value starting with `-` as the next
+  option.
+- Fix: both decoders read `betaReviewState`. `externalReviewDecision` maps the four documented
+  values and fails on a missing or other value (`unexpected`) instead of polling;
+  `externalBetaDecision` keeps polling through the review states. `external-beta` resumes the
+  build's existing submission unless it is `REJECTED` (the lookup no longer sends `sort`), and a
+  time-out records the submission and current external state in the manifest and says a re-run
+  resumes waiting. `--whats-new` on `external-beta` and `beta-notes` is parsed unconditionally.
+- Verification: the live submission and lookup responses (observed 2026-11-02) carry
+  `betaReviewState`, and `sort` returns HTTP 400. `TestFlightTests` decode that response shape
+  and cover the real review and external states, including a missing state;
+  `ReleaseWhatsNewParsingTests` parse a bulleted note for both commands. `swift test`: 333 Swift
+  Testing tests and 7 XCTest tests (1 skipped) passed, except `RemotePairingIdentityTests`, which
+  timed out on usbmuxd in the full run and passed on its own.
+
 ## 2026-11-01 - Release 0.0.25
 
 ### Summary
