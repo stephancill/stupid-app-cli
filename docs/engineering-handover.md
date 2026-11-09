@@ -490,7 +490,18 @@ Initial supported inputs:
 - SwiftPM resource bundles.
 - Explicit raw resources.
 - PNG app icons generated from one square source image.
-- Pure Swift dependencies that cross-compile successfully.
+- Pure Swift dependencies that cross-compile successfully, from the root package or from
+  package dependencies (`.package(url:)`, `.package(path:)`). When the manifest declares
+  dependencies, the planner runs `swift package show-dependencies --format json` (which
+  resolves like `swift build`, honoring and writing the project's `Package.resolved`),
+  describes each dependency package at its checkout, and follows product dependencies into
+  them for resource bundles, dynamic library products and binary targets. The packer copies
+  the project's `Package.resolved` into each synthetic builder package, because SwiftPM
+  ignores a path dependency's pins; builds keep `--disable-automatic-resolution`, so they
+  use exactly the project's pinned versions. Covered by `PackageDependencyTests` (local
+  `file://` git fixtures, two levels, resources, a pin older than the newest tag).
+  Verified on the Xcode-present macOS path; the imported-bundle Linux path is not yet
+  qualified. Macros and build-tool plugins in dependencies are not validated.
 - App Intents and App Shortcuts declared in the app or an extension target. On
   Xcode-present hosts the packer emits the compiler const-values and runs
   `appintentsmetadataprocessor`, packaging `Metadata.appintents` at the bundle root so
@@ -634,7 +645,9 @@ The first compatibility pair should be explicitly pinned after the SDK/build pro
 
 Adapt the design in xtool's `Sources/PackLib`:
 
-1. Ask SwiftPM for machine-readable package description and dependency data.
+1. Ask SwiftPM for machine-readable package description and dependency data: `describe`
+   for the root, and when it declares dependencies, `show-dependencies` for the resolved
+   graph plus `describe` for each dependency checkout.
 2. Select the configured application library product.
 3. Create a synthetic executable target that depends on that product.
 4. Build it with the imported `arm64-apple-ios` Swift SDK.
@@ -654,7 +667,8 @@ Correct known xtool weaknesses while extracting this design:
   manifests and stubs are rewritten only when their content changes; UUID temporary
   directories are limited to unsigned bundle assembly and are removed afterward. Each
   product scratch records a hash of the current SwiftPM target/source/resource/dependency
-  layout. A changed layout (including added, removed, or renamed source files) invalidates
+  layout (of every package in the graph, plus the project's `Package.resolved` when it has
+  dependencies, so a pin change rebuilds cleanly). A changed layout (including added, removed, or renamed source files) invalidates
   only that product scratch before building; unchanged layouts retain the warm cache. A
   legacy scratch without a layout marker is invalidated once rather than trusted.
 - Emit the App Store-required build-system Info.plist keys (`DTPlatformName`,

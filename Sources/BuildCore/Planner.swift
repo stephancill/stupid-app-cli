@@ -32,18 +32,10 @@ public struct Planner: Sendable {
     public func makePlan() throws -> BuildPlan {
         let root = try describePackage(at: projectRoot)
         let library = try selectLibrary(from: root.products ?? [], matching: config.product)
+        let graph = try packageGraph(root: root)
 
         var resources: [BuildPlan.Resource] = []
-        let packages = root.productsByName()
-        // Walk target dependencies within the root package. Version 1 expects a single
-        // self-contained package; dependency packages are resolved by SwiftPM at build
-        // time and their resource bundles still appear under the root-target output.
-        try collectResources(
-            from: library.targets,
-            in: root,
-            packages: packages,
-            into: &resources
-        )
+        try collectResources(from: library.targets, in: graph, into: &resources)
         if let configured = config.resources {
             resources += configured.map(BuildPlan.Resource.root)
         }
@@ -70,12 +62,7 @@ public struct Planner: Sendable {
                         extensionConfig.product, config.product)
                 }
                 var extensionResources: [BuildPlan.Resource] = []
-                try collectResources(
-                    from: product.targets,
-                    in: root,
-                    packages: packages,
-                    into: &extensionResources
-                )
+                try collectResources(from: product.targets, in: graph, into: &extensionResources)
                 if let configured = extensionConfig.resources {
                     extensionResources += configured.map(BuildPlan.Resource.root)
                 }
@@ -113,7 +100,7 @@ public struct Planner: Sendable {
             moduleNames: library.targets,
             deploymentTarget: deploymentTarget,
             bundleID: config.bundleID,
-            packageLayoutHash: root.packageLayoutHash,
+            packageLayoutHash: graph.layoutHash(resolvedFile: projectRoot.appendingPathComponent("Package.resolved")),
             infoPlist: infoPlist,
             resources: resources,
             iconPath: config.iconPath,
@@ -124,6 +111,43 @@ public struct Planner: Sendable {
     }
 
     // MARK: - Package description
+
+    /// The root package and, when its manifest declares dependencies, every package it
+    /// depends on. `show-dependencies` resolves the graph the way `swift build` would,
+    /// honoring and writing the project's `Package.resolved`, and reports each package's
+    /// checkout; `describe` then reads each manifest without resolving again.
+    private func packageGraph(root: PackageDump) throws -> PackageGraph {
+        guard !(root.dependencies ?? []).isEmpty else {
+            return PackageGraph(
+                rootIdentity: PackageGraph.rootKey,
+                packages: [PackageGraph.rootKey: .init(dump: root, url: projectRoot, dependencies: [])])
+        }
+        let result = try ProcessRunner.run(
+            executable: HostInfo.resolveExecutable(swiftPath),
+            arguments: ["package", "--package-path", projectRoot.path, "show-dependencies", "--format", "json"]
+        )
+        guard result.succeeded else {
+            throw BuildError.dependencyResolutionFailed(result.failureOutput)
+        }
+        guard let tree = try? JSONDecoder().decode(
+            DependencyNode.self, from: Self.JSONData(from: result.stdout))
+        else {
+            throw BuildError.malformedPackageDescription
+        }
+
+        var packages: [String: PackageGraph.Package] = [
+            tree.identity: .init(dump: root, url: projectRoot, dependencies: tree.dependencies.map(\.identity)),
+        ]
+        var pending = tree.dependencies
+        while let node = pending.popLast() {
+            guard packages[node.identity] == nil else { continue }
+            let url = URL(fileURLWithPath: node.path, isDirectory: true)
+            packages[node.identity] = .init(
+                dump: try describePackage(at: url), url: url, dependencies: node.dependencies.map(\.identity))
+            pending += node.dependencies
+        }
+        return PackageGraph(rootIdentity: tree.identity, packages: packages)
+    }
 
     private func describePackage(at url: URL) throws -> PackageDump {
         let result = try ProcessRunner.run(
@@ -168,39 +192,40 @@ public struct Planner: Sendable {
         }
     }
 
+    /// Walks the targets a product is made of, across packages, for the resource bundles and
+    /// dynamic libraries the bundle must carry. A product dependency resolves among the products
+    /// of the packages the depending target's package declares.
     private func collectResources(
         from initialTargets: [String],
-        in package: PackageDump,
-        packages: [String: PackageDump.Product],
+        in graph: PackageGraph,
         into resources: inout [BuildPlan.Resource]
     ) throws {
-        var seenTargets = Set<String>()
-        var pending = initialTargets
-        while let targetName = pending.popLast() {
-            guard !seenTargets.contains(targetName) else { continue }
-            seenTargets.insert(targetName)
-            guard let target = package.targets?.first(where: { $0.name == targetName }) else {
-                throw BuildError.targetNotFound(targetName, package.name)
+        struct Pending: Hashable {
+            let target: String
+            let package: String
+        }
+        var seen = Set<Pending>()
+        var pending = initialTargets.map { Pending(target: $0, package: graph.rootIdentity) }
+        while let next = pending.popLast() {
+            guard seen.insert(next).inserted else { continue }
+            let package = try graph.package(next.package)
+            guard let target = package.dump.targets?.first(where: { $0.name == next.target }) else {
+                throw BuildError.targetNotFound(next.target, package.dump.name)
             }
             if target.moduleType == "BinaryTarget" {
-                try validateStaticXCFramework(name: targetName, path: target.path)
+                try validateStaticXCFramework(name: target.name, path: target.path, packageRoot: package.url)
                 continue
             }
             if let declaredResources = target.resources, !declaredResources.isEmpty {
-                resources.append(.bundle(package: package.name, target: targetName))
+                resources.append(.bundle(package: package.dump.name, target: target.name))
             }
-            for dependency in target.targetDependencies ?? [] {
-                pending.append(dependency)
-            }
-            for productDependency in target.productDependencies ?? [] {
-                // A product dependency must resolve within the root package in v1.
-                guard let product = packages[productDependency] else {
-                    throw BuildError.unsupportedModule("product dependency '\(productDependency)'")
-                }
+            pending += (target.targetDependencies ?? []).map { Pending(target: $0, package: next.package) }
+            for productName in target.productDependencies ?? [] {
+                let (owner, product) = try graph.product(named: productName, dependencyOf: next.package)
                 if product.isDynamicLibrary {
-                    resources.append(.library(name: productDependency))
+                    resources.append(.library(name: productName))
                 }
-                pending.append(contentsOf: product.targets)
+                pending += product.targets.map { Pending(target: $0, package: owner) }
             }
         }
     }
@@ -208,12 +233,12 @@ public struct Planner: Sendable {
     /// Binary targets are supported only as local XCFrameworks of static archives. Those link into
     /// the executable, so the bundle embeds and signs nothing extra; dynamic frameworks would need
     /// embedding and nested signing, which version 1 does not do.
-    func validateStaticXCFramework(name: String, path: String?) throws {
+    func validateStaticXCFramework(name: String, path: String?, packageRoot: URL? = nil) throws {
         guard let path, path.hasSuffix(".xcframework"), !path.hasPrefix("/") else {
             throw BuildError.unsupportedBinaryTarget(
                 name, "it is not a local .xcframework inside the package (remote and artifact-bundle binaries are unsupported)")
         }
-        let infoURL = projectRoot.appendingPathComponent(path).appendingPathComponent("Info.plist")
+        let infoURL = (packageRoot ?? projectRoot).appendingPathComponent(path).appendingPathComponent("Info.plist")
         guard
             let data = try? Data(contentsOf: infoURL),
             let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
@@ -352,10 +377,6 @@ public struct ExtensionPlan: Sendable {
 }
 
 private extension PackageDump {
-    func productsByName() -> [String: PackageDump.Product] {
-        Dictionary(uniqueKeysWithValues: (products ?? []).map { ($0.name, $0) })
-    }
-
     var iosDeploymentTarget: String? {
         platforms?.first { $0.name == "ios" }?.version
     }
@@ -381,6 +402,61 @@ private extension PackageDump {
         }
         return SHA256.hex(data: Data(targetDescriptions.joined(separator: "\u{0}").utf8))
     }
+}
+
+/// The packages a build reads, keyed by SwiftPM package identity.
+private struct PackageGraph {
+    /// The root's key when the manifest declares no dependencies and nothing is resolved.
+    static let rootKey = ""
+
+    struct Package {
+        let dump: PackageDump
+        let url: URL
+        /// Identities of the packages this package's manifest depends on.
+        let dependencies: [String]
+    }
+
+    let rootIdentity: String
+    let packages: [String: Package]
+
+    func package(_ identity: String) throws -> Package {
+        guard let package = packages[identity] else {
+            throw BuildError.unsupportedModule("package '\(identity)'")
+        }
+        return package
+    }
+
+    /// The product a target of `dependent` names: exactly one of its dependency packages must
+    /// export it.
+    func product(named name: String, dependencyOf dependent: String) throws -> (package: String, product: PackageDump.Product) {
+        let matches = try package(dependent).dependencies.compactMap { identity -> (String, PackageDump.Product)? in
+            guard let product = try package(identity).dump.products?.first(where: { $0.name == name }) else { return nil }
+            return (identity, product)
+        }
+        guard matches.count == 1, let match = matches.first else {
+            throw BuildError.unsupportedModule(
+                "product dependency '\(name)' (\(matches.isEmpty ? "no" : "more than one") dependency package exports it)")
+        }
+        return match
+    }
+
+    /// Every package's target layout, plus the pinned versions, so a change in either rebuilds
+    /// from a clean scratch.
+    func layoutHash(resolvedFile: URL) -> String {
+        guard packages.count > 1 else { return packages[rootIdentity]?.dump.packageLayoutHash ?? "" }
+        var parts = packages.keys.sorted().map { "\($0):\(packages[$0]!.dump.packageLayoutHash)" }
+        let resolved = (try? Data(contentsOf: resolvedFile)) ?? Data()
+        parts.append("resolved:\(SHA256.hex(data: resolved))")
+        return SHA256.hex(data: Data(parts.joined(separator: "\u{0}").utf8))
+    }
+}
+
+/// `swift package show-dependencies --format json`: the root, then each dependency with its
+/// checkout path and its own dependencies.
+private struct DependencyNode: Decodable {
+    let identity: String
+    let path: String
+    let dependencies: [DependencyNode]
 }
 
 private struct PackageDump: Decodable {
@@ -447,7 +523,12 @@ private struct PackageDump: Decodable {
         let version: String
     }
 
+    struct Dependency: Decodable {
+        let identity: String
+    }
+
     let name: String
+    let dependencies: [Dependency]?
     let products: [Product]?
     let targets: [Target]?
     let platforms: [Platform]?
@@ -463,6 +544,7 @@ public enum BuildError: Error, Equatable, Sendable, CustomStringConvertible {
     case targetNotFound(String, String)
     case unsupportedModule(String)
     case unsupportedBinaryTarget(String, String)
+    case dependencyResolutionFailed(String)
     case infoPlistMissing(String)
     case infoPlistInvalid(String)
     case unsupportedResource(String)
@@ -489,6 +571,8 @@ public enum BuildError: Error, Equatable, Sendable, CustomStringConvertible {
             return "Unsupported build input '\(name)'. Version 1 supports pure Swift/PMM resources and static-library XCFrameworks only; plugins and other inputs fail loudly."
         case let .unsupportedBinaryTarget(name, reason):
             return "Unsupported binary target '\(name)': \(reason). Version 1 links local XCFrameworks of static libraries (.a) with an arm64 slice for the build's platform; repackage the dependency that way or depend on its sources."
+        case let .dependencyResolutionFailed(output):
+            return "Resolving the package's dependencies failed (`swift package show-dependencies`). Check network access and access to each dependency's repository, then retry or run `swift package resolve` in the project.\n\(output)"
         case let .infoPlistMissing(path):
             return "Configured Info.plist '\(path)' does not exist at the project root."
         case let .infoPlistInvalid(path):

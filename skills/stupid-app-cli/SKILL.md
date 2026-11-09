@@ -38,7 +38,10 @@ from a source checkout.
   extensions (e.g. a WidgetKit extension) sharing App Groups. A `binaryTarget` is
   accepted only as a local XCFramework of static libraries (`.a`) with an arm64 slice
   for the build's platform (device, or `ios-arm64-simulator` for `run --simulator`);
-  it links into the executable. Xcode project inputs, storyboards, un-compiled asset
+  it links into the executable. Package dependencies (`.package(url:)` or
+  `.package(path:)`) are supported: the build resolves them like `swift build`, uses the
+  versions pinned in the project's `Package.resolved`, and bundles their resources;
+  dependency repositories must be reachable with the host's git access. Xcode project inputs, storyboards, un-compiled asset
   catalogs, Core Data models, ExtensionKit products, dynamic or remote binary targets,
   and other unsupported resources must fail loudly.
 

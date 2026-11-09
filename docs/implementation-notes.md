@@ -16,6 +16,63 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth. Historical entries record the implementation at their date. Use the current handover and bundled command reference for operational instructions.
 
+## 2026-11-09 - Package Dependencies
+
+### Summary
+
+Apps can depend on other packages (`.package(url:)` and `.package(path:)`). Before this,
+the planner rejected any product dependency outside the root package
+(`unsupportedModule`), and the synthetic builder package (which depends on the project by
+path and builds with `--disable-automatic-resolution`) failed with "a resolved file is
+required when automatic dependency resolution is disabled".
+
+- `Planner` builds a package graph when the root manifest declares dependencies:
+  `swift package show-dependencies --format json` resolves the graph (honoring and
+  writing the project's `Package.resolved`, as `swift build` does) and reports each
+  checkout; `describe` reads each dependency's manifest without resolving again.
+  `collectResources` walks targets across packages: a product dependency resolves among
+  the products of the depending package's own dependencies (exactly one must export it),
+  resource bundles take the declaring package's manifest name (`<Package>_<Target>.bundle`,
+  confirmed against SwiftPM output), and binary targets are validated relative to their
+  own package.
+- `Packer.copyResolvedFile` copies the project's `Package.resolved` into each builder
+  package (or removes a stale copy). SwiftPM ignores a dependency's pins, so without it
+  the builder would float to the newest allowed versions. The build keeps
+  `--disable-automatic-resolution`; with the copied pins it builds exactly the project's
+  versions without a separate resolve step.
+- The layout hash covers every package in the graph and the project's `Package.resolved`,
+  so a pin change or a changed path dependency rebuilds from a clean scratch. Projects
+  without dependencies keep their previous hash.
+- Resolution failures report `dependencyResolutionFailed` with network and repository
+  access guidance.
+
+### Decisions
+
+- `describe` over `dump-package` for dependencies: it reuses the existing decoder, lists
+  resolved resource files and module types, and (observed with Swift 6.2) does not
+  resolve or write into the checkout.
+- No resolve step in the builder: copying the pins was sufficient in testing, and keeps
+  network access to planning only.
+- Dependencies are cloned twice (the project's `.build/checkouts` for planning and the
+  builder scratch for building). Accepted for now; sharing them would mean pointing the
+  builder at the project's scratch.
+
+### Verification
+
+- `PackageDependencyTests`: an Xcode-present end-to-end build of an app → `DepKit`
+  (tags 1.0.0 and 1.1.0, resource) → `Leaf` (resource) from local `file://` git
+  repositories, pinned to 1.0.0; the app contains both resource bundles with the 1.0.0
+  contents. Also: a pin change changes the layout hash; pins are copied and removed.
+- Full suite: 336 tests pass.
+- Dogfood: a scaffolded app depending on a chat-framework library product in another
+  repository (by branch) built and ran with `run --simulator`; its resource bundle loaded.
+
+### Follow-Up
+
+- Qualify the imported-bundle Linux path.
+- Validate macros and build-tool plugins in dependencies, or reject them explicitly.
+- Remote binary targets (`url:` plus `checksum:`) remain unsupported.
+
 ## 2026-11-02 - Release 0.0.26
 
 ### Summary

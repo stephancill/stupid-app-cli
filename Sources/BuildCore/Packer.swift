@@ -187,6 +187,7 @@ public struct Packer: Sendable {
       scratch, packageLayoutHash: Self.scratchLayoutKey(plan.packageLayoutHash))
     try writeSyntheticPackage(
       into: builderDir, product: product, sdkVersion: sdkVersion, isExtension: isExtension)
+    try Self.copyResolvedFile(from: projectRoot, to: builderDir)
     try build(builderDir: builderDir, scratch: scratch)
     try Self.recordPackageLayout(Self.scratchLayoutKey(plan.packageLayoutHash), in: scratch)
     return
@@ -292,6 +293,20 @@ public struct Packer: Sendable {
       """
     try Self.writeGeneratedFile(
       Data(package.utf8), to: packageDir.appendingPathComponent("Package.swift"))
+  }
+
+  /// The builder depends on the project by path, and SwiftPM ignores a dependency's
+  /// `Package.resolved`, so the project's pins are copied in for the builder to build
+  /// exactly the versions the project resolved (the build disables automatic resolution).
+  /// A project without one leaves the builder without one.
+  static func copyResolvedFile(from projectRoot: URL, to builderDir: URL) throws {
+    let destination = builderDir.appendingPathComponent("Package.resolved")
+    guard let pins = try? Data(contentsOf: projectRoot.appendingPathComponent("Package.resolved"))
+    else {
+      try? FileManager.default.removeItem(at: destination)
+      return
+    }
+    try writeGeneratedFile(pins, to: destination)
   }
 
   static func writeGeneratedFile(_ data: Data, to destination: URL) throws {
