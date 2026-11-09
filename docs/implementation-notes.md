@@ -16,6 +16,22 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth. Historical entries record the implementation at their date. Use the current handover and bundled command reference for operational instructions.
 
+## 2026-11-09 - Release 0.0.27
+
+### Summary
+
+- Released `stupid-app 0.0.27`, which builds apps with package dependencies (see the following entry). The feature commit updated the handover and `SKILL.md`; no command or option was added, and the release process and asset names are unchanged.
+- Bumped `StupidApp.productVersion` from `0.0.26` to `0.0.27`.
+- Built from a clean worktree of the release commit's source so uncommitted local work is not included in the binaries.
+
+### Verification
+
+- `swift test`: 336 tests passed (run on the feature commit).
+- Skill-creator validation of `skills/stupid-app-cli` passed.
+- `swift build -c release` succeeded; the built CLI reports `stupid-app 0.0.27`.
+- Built CLI SHA-256: `03fdd1b57db94679785ca71fcd2738b6f40300506e977b89af9566433ae15be5`.
+- Built GUI SHA-256: `74f3e34ed57e99c28e6a194ee09cdf4314d04ff413aa9e79f9ac22ece8c734da`.
+
 ## 2026-11-09 - Package Dependencies
 
 ### Summary
