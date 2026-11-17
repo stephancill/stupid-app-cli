@@ -101,6 +101,12 @@ simulator's `stupidsim`.
   on reinstalling, x86Sim folded the app into its translation image and every swipe landed
   (Xcode's own build of the app behaved the same on the same device). Agents should let a
   freshly built app settle before relying on gestures.
+- A fresh Claude Code cloud session (4 vCPU, 16 GB) ran `scripts/cloud-setup.sh` from
+  GitHub in 3 min 7 s (toolchain 85 s, SDKs 23 s, then the simulator store), booted in
+  106 s, and with a new `stupid-app new` app: first `run --simulator` 35 s (on screen 5 s
+  after launch), an edit rebuilt and relaunched in 16.6 s with the new text in the tree, and
+  a `@State` counter's `tap --verify` incremented it. 4.2 GB of memory in use; 11 GB of disk
+  left free.
 - The static Linux package (`stupid-app` 0.0.28 and `stupid-app-macros`, Swift's standard
   library linked statically) needs only Ubuntu 24.04 libraries that `cloud-setup.sh`
   installs.
