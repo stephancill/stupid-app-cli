@@ -63,7 +63,9 @@ Without this step the CLI works identically; the skill only adds agent guidance.
 ## Supported platforms
 
 - **Linux:** x86_64 Ubuntu 24.04 LTS — the primary deployment host for building,
-  signing, and releasing iOS apps.
+  signing, and releasing iOS apps, and, with [x86Sim](https://github.com/x86sim/x86sim)
+  through [stupid simulator](https://github.com/stephancill/stupid-simulator), for running
+  them in an iOS simulator.
 - **macOS:** Apple Silicon macOS 14+ — build against Xcode's SDK in place, or from an
   imported SDK bundle (Xcode-absent mode), including a simulator run loop.
 
@@ -74,7 +76,7 @@ stupid-app --version              Print the product and toolchain version
 stupid-app doctor                  Check toolchain, SDK, signer, credentials, and device dependencies
 stupid-app gui                     (macOS) open the native desktop GUI (toolbar + menus)
 stupid-app new <name>              Scaffold a SwiftPM/SwiftUI iOS project
-stupid-app sdk export ...          (macOS) export a device-only Swift SDK bundle
+stupid-app sdk export ...          (macOS) export a device or simulator Swift SDK bundle
 stupid-app sdk import <archive>    (Linux) validate and install an SDK bundle
 stupid-app build                   Build an unsigned iOS .app with the imported SDK
 stupid-app credentials add         Store ASC API key + team ID (0600 files)
@@ -83,9 +85,9 @@ stupid-app devices                  List App Store Connect devices
 stupid-app device pair --usb        Pair lockdown natively, then bootstrap CoreDevice pairing
 stupid-app run --usb                Build, sign, install, and launch over USB
 stupid-app run --network --udid ... Build, sign, install, and launch over the network
-stupid-app run --simulator [--udid] Build, sign, install, and launch in a simulator (Xcode-present)
+stupid-app run --simulator [--udid] Build, ad-hoc sign, install, and launch in a simulator
 stupid-app run --mac                Build, sign, install, and launch an iOS app on this Mac
-stupid-app simulators               List simulator runtimes and devices
+stupid-app simulators               List simulator runtimes and devices (x86Sim's on Linux)
 stupid-app release preflight         Local gates before upload (versions + export compliance)
 stupid-app release archive          Build, sign (once, no timestamps), package the IPA
 stupid-app release upload --wait    Upload the IPA and wait for internal TestFlight
@@ -197,9 +199,40 @@ swift run stupid-app sdk export \
 ```
 
 Produces `stupid-app-ios-arm64-apple-ios-x86_64-unknown-linux-gnu.artifactbundle.tar.zst`
-and prints its SHA-256. The export is device-only (no simulator/macOS content) and pins
+and prints its SHA-256. The export holds one platform (no macOS content) and pins
 the Linux-hosted Darwin toolset (`ld64.lld`, `libtool`, `dsymutil`) by version and
 checksum.
+
+`--target arm64-apple-ios-simulator` exports the simulator instead, as the Swift SDK
+`stupid-app-ios-simulator`
+(`stupid-app-ios-simulator-arm64-apple-ios-simulator-x86_64-unknown-linux-gnu.artifactbundle.tar.zst`).
+Import it beside the device SDK; `run --simulator` on Linux builds with it.
+
+## Simulators on Linux
+
+On Linux the simulator is [x86Sim](https://github.com/x86sim/x86sim)'s, set up by
+[stupid simulator](https://github.com/stephancill/stupid-simulator)'s `stupidsim-linux`.
+`stupid-app simulators` lists its devices, and `stupid-app run --simulator [--udid <name or
+UDID>]` builds with the imported simulator SDK, ad-hoc signs natively (the signature
+`codesign -s -` makes; simulator output only), boots the device if needed, and installs and
+launches the app. `stupidsim` then reads and drives the screen. Verified on Ubuntu 24.04
+(Swift 6.4.2, Xcode 27 SDKs): a new app built and launched, and an edit rebuilt and
+relaunched in 17 s.
+
+## Claude Code cloud sessions and CI
+
+One command sets up a fresh x86-64 Ubuntu 24.04 machine with no Mac: the Swift toolchain,
+`stupid-app`, both SDKs, and an iOS simulator with `stupidsim`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/stephancill/stupid-app-cli/main/scripts/cloud-setup.sh | bash
+stupidsim-linux boot                       # each session; waits for the home screen
+cd MyApp && stupid-app run --simulator     # build, install and launch; then stupidsim
+```
+
+Everything comes from stupid simulator's public store. That includes the device and
+simulator SDKs exported from Xcode (Apple's SDK files, published there by the maintainer's
+decision) and the Swift toolchain, mirrored because cloud sessions cannot reach swift.org.
 
 ## Import (Linux)
 

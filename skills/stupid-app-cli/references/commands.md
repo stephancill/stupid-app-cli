@@ -70,12 +70,15 @@ optional for local build/run but required by App Store Connect. New scaffolds se
 ## sdk
 
 ```text
-stupid-app sdk export --host <triple> [--xcode <path>] [--target arm64-apple-ios] [--output <dir>] [--scratch <dir>]
+stupid-app sdk export --host <triple> [--xcode <path>] [--target arm64-apple-ios|arm64-apple-ios-simulator] [--output <dir>] [--scratch <dir>]
 stupid-app sdk import <archive> [--expected-sha256 <sha256>] [--swift <path>]
 ```
 
-- `export` (macOS only) writes a device-only, checksummed
-  `stupid-app-ios-<target>-<host>.artifactbundle.tar.zst`. `--xcode` defaults to
+- `export` (macOS only) writes a checksummed bundle for one platform:
+  `stupid-app-ios-arm64-apple-ios-<host>.artifactbundle.tar.zst` (Swift SDK
+  `stupid-app-ios`), or with `--target arm64-apple-ios-simulator`
+  `stupid-app-ios-simulator-arm64-apple-ios-simulator-<host>.artifactbundle.tar.zst`
+  (Swift SDK `stupid-app-ios-simulator`, for `run --simulator` on Linux). `--xcode` defaults to
   `/Applications/Xcode.app`. Linux host triples download the pinned Linux
   darwin-tools; macOS host triples stage pinned Homebrew LLVM tools for the
   Xcode-absent path.
@@ -188,8 +191,11 @@ Builds, signs once (Apple Development), packages, installs, and launches.
   install and launch on macOS and Linux. Pair via
   `device pair --usb` beforehand. Supports one tunnel per process and 16 service
   streams, with MTU capped at 1500 and bounded buffers.
-- `--simulator` — macOS Xcode-present only; builds for the simulator SDK,
-  ad-hoc signs, boots, installs, launches via `simctl`.
+- `--simulator` — builds for the simulator SDK, ad-hoc signs, boots, installs and
+  launches: via `simctl` with Xcode (macOS), or on Linux with the imported
+  `stupid-app-ios-simulator` SDK, a native ad-hoc signature and x86Sim (booting through
+  stupid simulator's `stupidsim-linux`). `--udid` there takes an x86Sim device name or
+  UDID; `--sdk-id` defaults to `stupid-app-ios-simulator`.
 - `--mac` — Apple Silicon macOS only; builds the ordinary `arm64-apple-ios`
   app, development-signs it for this Mac's provisioning UDID, creates the
   `Wrapper/<app>.app` + `WrappedBundle` compatibility layout inside
@@ -206,7 +212,8 @@ Builds, signs once (Apple Development), packages, installs, and launches.
 stupid-app simulators [--json]
 ```
 
-Lists simulator runtimes and devices (macOS Xcode-present). `--json` prints a
+Lists simulator runtimes and devices: Xcode's (macOS), or x86Sim's devices on Linux
+(runtime `x86sim`, state `Booted` or `Shutdown`). `--json` prints a
 machine-readable object (`{"runtimes":[...],"devices":[...]}`) with each device's
 `name`, `udid`, `state`, and `runtimeIdentifier`; the GUI uses this for its refreshed
 device list.

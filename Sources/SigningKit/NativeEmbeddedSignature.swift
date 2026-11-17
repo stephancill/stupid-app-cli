@@ -17,7 +17,8 @@ enum NativeEmbeddedSignature {
     executableSegmentLimit: UInt64
   ) -> Data {
     let identifierData = Data((identifier + "\0").utf8)
-    let teamData = Data((teamID + "\0").utf8)
+    // An ad-hoc signature has no team: no team string and a zero team offset.
+    let teamData = teamID.isEmpty ? Data() : Data((teamID + "\0").utf8)
     let headerSize = 88
     let identifierOffset = headerSize
     let teamOffset = identifierOffset + identifierData.count
@@ -43,7 +44,7 @@ enum NativeEmbeddedSignature {
     result += Data([32, 2, 0, 12])
     result += be32(0)
     result += be32(0)
-    result += be32(UInt32(teamOffset))
+    result += be32(teamID.isEmpty ? 0 : UInt32(teamOffset))
     result += be32(0)
     result += be64(UInt64(executablePrefix.count))
     result += be64(executableSegmentBase)

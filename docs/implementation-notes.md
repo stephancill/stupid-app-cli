@@ -16,6 +16,102 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth. Historical entries record the implementation at their date. Use the current handover and bundled command reference for operational instructions.
 
+## 2026-11-18 - Simulators On Linux, Cloud Sessions, And Open Macro Plugins
+
+### Summary
+
+A Linux machine with no Mac (a Claude Code cloud session, a CI runner) can now change an
+iOS app and check it end to end: build for the simulator, run it in
+[x86Sim](https://github.com/x86sim/x86sim)'s iOS simulator, and drive it with stupid
+simulator's `stupidsim`.
+
+- **Simulator SDK export.** `sdk export --target arm64-apple-ios-simulator` exports the
+  iPhoneSimulator platform as its own Swift SDK, `stupid-app-ios-simulator`
+  (`Exporter.Platform`). The device export is unchanged. The imported-bundle build path no
+  longer refuses the simulator platform: `BuildToolchain`, `Packer` and `SDKVersion` read
+  the simulator bundle's manifest as they read the device one.
+- **Native ad-hoc signing.** `NativeSigner.adHocSign` writes the signature `codesign -s -`
+  makes (a `CS_ADHOC` CodeDirectory with no team, an empty requirement set, an empty CMS
+  blob, the sanitized simulator entitlements), extensions first, then the app sealing
+  them. It is the scoped simulator exception only; device and release output still gets
+  exactly one real signing pass. `NativeSignatureVerifier` models device signatures, so
+  the ad-hoc path is checked by Apple's own `codesign --verify --strict` in
+  `NativeAdHocSignerTests` (macOS).
+- **x86Sim backend.** Without Xcode, `run --simulator` and `simulators` use x86Sim
+  (`BuildCore/X86Sim.swift`): devices from x86Sim's data directory, booted when their
+  input socket answers (stupidsim's test), booted through `stupidsim-linux boot`, installed
+  and launched through x86Sim's simctl-like command line. Each run replaces the running
+  instance, writes the app's stdout/stderr to `data/tmp/stupid-app/` in the device, and
+  then waits (up to 90 s) for the app to be in front, reading the front application from
+  `stupidsim ui-tree`. An app that exits, or never comes to the front (on x86Sim usually
+  missing runtime files: stupid simulator's `STUPIDSIM_APPS` manifests), fails with its
+  output.
+- **Open macro plugins.** Xcode 27's iOS SDK implements `@State` (and `@Entry`,
+  `@Model`, `#Preview`) with macro plugins it ships only as macOS binaries
+  (`libSwiftUIMacros.dylib` and others), so even a device build with an Xcode 27 SDK failed
+  on Linux at the first `@State`. `Tools/StupidAppMacros` (swift-syntax 604.0.0) serves the
+  modules `SwiftUIMacros`, `SwiftDataMacros` and `PreviewsMacros` from one executable,
+  `stupid-app-macros`, which imported-SDK builds load with `-load-plugin-executable`
+  (found beside `stupid-app` or at `$STUPID_APP_MACROS`, required). Expansions follow
+  Apple's, dumped with `-dump-macro-expansions`:
+  - `@State`: the common form (`_x = State(initialValue:)`, `init`/`get`/`nonmutating set`
+    accessors, `$x` through `_PropertyWrapperProjectedValue`). Apple's plugin uses a lazily
+    initialized storage for `private` typed properties; that optimisation is not reproduced,
+    so `@State` behaves as in apps built with earlier SDKs.
+  - `@Entry` in `EnvironmentValues`, `Transaction` and `ContainerValues` (others fail by
+    name); `@Model` with `@Attribute`, `@Relationship` and `@Transient`; `#Preview`,
+    `@Previewable` and the other preview macros expand to nothing (they serve Xcode's
+    canvas).
+  - Not implemented, failing by name: `@Animatable`, `@ModelActor`, `#Index`, `#Unique`,
+    `@_TransformablePersistedProperty`, and AppIntents, TipKit and FoundationModels macros.
+    The Linux toolchain's Observation plugin is used as is. Its `FoundationMacros` plugin is
+    built for Linux and expands `#Predicate` to `FoundationEssentials` names, which Apple's
+    SDK does not have; stupid-app-macros therefore also serves `FoundationMacros`, from
+    swift-foundation's own sources (vendored at `swift-6.4.2-RELEASE`, Apache-2.0) built
+    with `FOUNDATION_FRAMEWORK`, which emits `Foundation` names as Apple's build does.
+- **Swift/SDK guard.** An imported-SDK build refuses a toolchain whose Swift major.minor
+  differs from the SDK's. A `.swift-version` pinning Swift 6.2 against an Xcode 27 (Swift
+  6.4) SDK otherwise made the compiler rebuild every SDK module from its interface; a cold
+  build ran for over 30 minutes before being stopped.
+- **Cloud bootstrap.** `scripts/cloud-setup.sh` installs Swift's apt dependencies, the
+  Swift toolchain, `stupid-app` (with `stupid-app-macros`), both SDKs, and then stupid
+  simulator's runtime store and device. Claude Code cloud sessions cannot reach swift.org,
+  so the toolchain is mirrored in stupid simulator's public store (checked against
+  swift.org's signature when mirrored, and its SHA-256 at install); the SDKs are published
+  there too, by the maintainer's decision. AGENTS.md's SDK rule now says where they may go.
+
+### Verification
+
+- macOS: `swift test` passes; `NativeAdHocSignerTests` passes (codesign accepts the
+  native ad-hoc signature with and without entitlements); `StupidAppMacros` expansion tests
+  pass; a sample using `@State` (all forms), `@Entry`, `@Model` with attributes,
+  relationships and transients, and `#Preview` type-checks with Xcode 27's compiler and
+  SDK when `stupid-app-macros` replaces Apple's plugins.
+- Ubuntu 24.04 (WSL 2, Swift 6.4.2, Xcode 27 SDKs imported): a new `stupid-app new` app
+  built with `run --simulator`, signed, installed and launched in x86Sim (270 s including
+  the device's boot); `stupidsim ui-tree` read its text and a screenshot showed it. An edit
+  rebuilt and relaunched in 17 s, and the tree showed the new text.
+- The Swift/SDK guard rejected StupidSocial's `.swift-version` (6.2) before building.
+- StupidSocial (two package dependencies, a Notification Service Extension, 155 `@State`,
+  `@Entry`, `@Model` with `@Attribute(.unique)`, `#Predicate`) built for the simulator on
+  Linux, launched in x86Sim, and `run --simulator` reported it on screen 17 s after launch.
+  With stupidsim it paged between its two pages in both directions, `tap --label Settings
+  --verify` registered, and the Settings screen's "Add Account" appeared. The first swipe
+  after the very first launch of a new binary was lost while x86Sim translated the app live;
+  on reinstalling, x86Sim folded the app into its translation image and every swipe landed
+  (Xcode's own build of the app behaved the same on the same device). Agents should let a
+  freshly built app settle before relying on gestures.
+- The static Linux package (`stupid-app` 0.0.28 and `stupid-app-macros`, Swift's standard
+  library linked statically) needs only Ubuntu 24.04 libraries that `cloud-setup.sh`
+  installs.
+
+### Follow-Up
+
+- Behaviour of the reproduced macros at runtime on more apps; the lazy `@State` storage.
+- `sdk export` names the bundle after the source Xcode only in its manifest; a store
+  holding SDKs for several Xcode versions needs a layout for that.
+- Projects whose `.swift-version` pins another Swift must update it for Xcode 27 SDKs.
+
 ## 2026-11-09 - Release 0.0.27
 
 ### Summary

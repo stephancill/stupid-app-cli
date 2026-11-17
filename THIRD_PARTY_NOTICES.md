@@ -96,3 +96,19 @@ INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
 CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
 IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
 OF SUCH DAMAGE.
+
+## swift-foundation FoundationMacros
+
+`Tools/StupidAppMacros/Sources/VendoredFoundationMacros` contains `PredicateMacro.swift` and
+`BundleMacro.swift` from <https://github.com/swiftlang/swift-foundation> at tag
+`swift-6.4.2-RELEASE`, unmodified, built with `FOUNDATION_FRAMEWORK` defined so `#Predicate`
+expands to `Foundation` names for Apple's iOS SDK. Copyright (c) Apple Inc. and the Swift
+project authors. Licensed under the Apache License v2.0 with Runtime Library Exception; the
+license text is in that directory's `LICENSE.md`.
+
+## swift-syntax
+
+`stupid-app-macros` (`Tools/StupidAppMacros`) links
+<https://github.com/swiftlang/swift-syntax> 604.0.0. Copyright (c) Apple Inc. and the Swift
+project authors. Licensed under the Apache License v2.0 with Runtime Library Exception
+(<https://swift.org/LICENSE.txt>).

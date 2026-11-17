@@ -550,6 +550,8 @@ public enum BuildError: Error, Equatable, Sendable, CustomStringConvertible {
     case unsupportedResource(String)
     case missingSimulatorSDK(String)
     case simulatorRequiresXcode
+    case macroPluginMissing(String)
+    case swiftVersionMismatch(sdk: String, sdkSwift: String, host: String)
 
     public var description: String {
         switch self {
@@ -583,6 +585,10 @@ public enum BuildError: Error, Equatable, Sendable, CustomStringConvertible {
             return "Xcode at \(app) has no iPhoneSimulator SDK, but a simulator build requires one. Install a simulator runtime or add the iPhoneSimulator platform."
         case .simulatorRequiresXcode:
             return "Simulator builds require an Xcode-present host because simulators cannot exist without Xcode. Build for a physical device or install Xcode."
+        case let .macroPluginMissing(path):
+            return "stupid-app-macros is missing at \(path). Imported-SDK builds need it for the SDK's @State, @Entry, @Model and #Preview macros; install it beside stupid-app (Tools/StupidAppMacros, or the release's Linux package) or set STUPID_APP_MACROS."
+        case let .swiftVersionMismatch(sdk, sdkSwift, host):
+            return "The build's Swift is \(host), but the '\(sdk)' SDK was exported with Swift \(sdkSwift). Use a matching toolchain (check for a `.swift-version` file pinning another version), or import an SDK exported for this Swift."
         }
     }
 }

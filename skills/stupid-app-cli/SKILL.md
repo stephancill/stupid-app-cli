@@ -47,12 +47,15 @@ from a source checkout.
 
 ## Environment requirements
 
-- **Linux (production):** x86_64 Ubuntu 24.04 LTS. Swift 6.2.x toolchain, the
-  imported `stupid-app-ios` Swift SDK (registered via `swift sdk install`),
+- **Linux (production):** x86_64 Ubuntu 24.04 LTS. A Swift toolchain matching the
+  SDK's Swift major.minor (6.4 for Xcode 27 exports), the imported `stupid-app-ios`
+  Swift SDK (registered via `swift sdk install`; `stupid-app-ios-simulator` too for
+  simulators),
   OpenSSL 3.x (`libssl-dev`), `zstd`, and `zip`/`unzip`. USB installs under
   WSL USBIP need the qualified MTU-patched `usbmuxd`.
 - **macOS:** Apple Silicon macOS 14+. Either Xcode-present (builds in place) or
-  Xcode-absent (uses an imported bundle). `run --simulator` is Xcode-present-only.
+  Xcode-absent (uses an imported bundle). `run --simulator` uses Xcode's simulators
+  there, and x86Sim's on Linux.
 - **Physical device:** a paid Apple Developer Program account, an iPhone with
   Developer Mode enabled, unlocked/on-screen during pairing and install, and on
   the same LAN as the deployment host for network runs.
@@ -124,10 +127,12 @@ on a Linux host.
 # macOS, once per (Xcode, host triple) pair:
 stupid-app sdk export --xcode /Applications/Xcode.app --host x86_64-unknown-linux-gnu --target arm64-apple-ios --output .
 # Produces stupid-app-ios-arm64-apple-ios-<host>.artifactbundle.tar.zst + SHA-256.
+# For simulators on Linux, also --target arm64-apple-ios-simulator
+# (-> stupid-app-ios-simulator-arm64-apple-ios-simulator-<host>.artifactbundle.tar.zst).
 
 # Linux, per host:
 stupid-app sdk import <archive> --expected-sha256 <sha256>
-swift sdk list   # -> stupid-app-ios
+swift sdk list   # -> stupid-app-ios (and stupid-app-ios-simulator)
 ```
 
 The importer verifies the archive and every declared file checksum, rejects path
@@ -262,15 +267,30 @@ uses the same command. Keep the phone unlocked on the deployment host's network.
 Consult `device pair --help` for initial pairing requirements on the selected host.
 `--replace-lockdown-record` regenerates the lockdown trust during pairing.
 
-### 5. macOS simulator
+### 5. Simulator (macOS with Xcode, or Linux with x86Sim)
 
 ```bash
 stupid-app simulators
-stupid-app run --simulator [--udid <udid>]
+stupid-app run --simulator [--udid <udid or x86Sim device name>]
 ```
 
-Xcode-present-only. Lists runtimes/devices and builds for the simulator SDK,
-ad-hoc signs, boots, installs, and launches via `simctl`. Simulator ad-hoc
+With Xcode (macOS): lists runtimes/devices and builds for the simulator SDK, ad-hoc
+signs, boots, installs, and launches via `simctl`.
+
+On Linux the simulator is x86Sim's, set up by stupid simulator's `stupidsim-linux`
+(`stupidsim` then reads and drives the screen). It builds with the imported
+`stupid-app-ios-simulator` SDK, ad-hoc signs natively, boots the device through
+`stupidsim-linux boot` when it is not running, and installs and launches through x86Sim.
+An edit-and-run cycle on a booted device takes seconds. A fresh Ubuntu 24.04 machine or
+Claude Code cloud session gets everything with one command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/stephancill/stupid-app-cli/main/scripts/cloud-setup.sh | bash
+stupidsim-linux boot                # each session
+stupid-app run --simulator          # from the app's directory
+```
+
+Simulator ad-hoc
 signing embeds a sanitized entitlement override: `keychain-access-groups`,
 `aps-environment`, and all `com.apple.developer.*` capabilities are dropped
 (they make SpringBoard reject the team-less launch), while

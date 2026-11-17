@@ -3,8 +3,8 @@ import BuildCore
 import Foundation
 import SDKCore
 
-/// `stupid-app simulators`: list the available simulator runtimes and devices. This is
-/// an Xcode-present-only feature; simulators cannot exist without Xcode.
+/// `stupid-app simulators`: list the available simulator runtimes and devices: Xcode's
+/// through `simctl`, or without Xcode (Linux) x86Sim's devices.
 struct SimulatorsCommand: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "simulators",
@@ -16,7 +16,30 @@ struct SimulatorsCommand: AsyncParsableCommand {
 
   mutating func run() async throws {
     guard case .xcodeInPlace = HostSDKMode.detect() else {
-      throw BuildError.simulatorRequiresXcode
+      // Without Xcode (Linux), the simulators are x86Sim's.
+      let devices = try X86Sim.listDevices()
+      if json {
+        let payload = SimulatorsJSON(
+          runtimes: [],
+          devices: devices.map {
+            DeviceJSON(
+              name: $0.name, udid: $0.udid, state: $0.booted ? "Booted" : "Shutdown",
+              runtimeIdentifier: "x86sim")
+          }
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        print(String(data: try encoder.encode(payload), encoding: .utf8) ?? "{}")
+        return
+      }
+      print("x86Sim devices:")
+      for device in devices {
+        print("  \(device.name) (\(device.udid)) \(device.booted ? "Booted" : "Shutdown")")
+      }
+      if devices.isEmpty {
+        print("No x86Sim devices. Set one up with stupid simulator's `stupidsim-linux setup --no-boot`.")
+      }
+      return
     }
 
     let runtimes = try Simctl.listRuntimes()

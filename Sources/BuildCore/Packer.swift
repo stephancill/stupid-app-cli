@@ -117,6 +117,7 @@ public struct Packer: Sendable {
   /// including any configured extensions as `PlugIns/<product>.appex` nested bundles.
   /// Returns the `.app` bundle URL.
   public func pack() throws -> URL {
+    try checkSwiftMatchesImportedSDK()
     let sdkVersion = try self.sdkVersion()
     let session = FileManager.default.temporaryDirectory.appendingPathComponent(
       "stupid-app-build-\(UUID().uuidString)")
@@ -172,6 +173,27 @@ public struct Packer: Sendable {
     try? FileManager.default.removeItem(at: output)
     try FileManager.default.moveItem(at: appDir, to: output)
     return output
+  }
+
+  /// An imported SDK's module interfaces were written by the exporting Xcode's Swift; an
+  /// older or newer compiler rebuilds every SDK module from them, which is extremely slow
+  /// (a project's `.swift-version` pinning another toolchain did this), or fails. Refuse
+  /// a mismatched major.minor before building, as `sdk import` does.
+  private func checkSwiftMatchesImportedSDK() throws {
+    guard case .importedBundle(let sdkID) = sdkInput,
+      let bundle = try SDKVersion.installedBundle(
+        sdkID: sdkID, targetTriple: targetTriple, swiftPath: swiftPath),
+      let data = try? Data(contentsOf: bundle.appendingPathComponent("sdk-manifest.json"))
+    else { return }
+    let manifest = try SDKManifest.decode(data)
+    let host = try HostInfo.detect(swiftPath: swiftPath)
+    guard host.swiftMajor == manifest.swiftCompiler.major,
+      host.swiftMinor == manifest.swiftCompiler.minor
+    else {
+      throw BuildError.swiftVersionMismatch(
+        sdk: sdkID, sdkSwift: manifest.swiftCompiler.version,
+        host: "\(host.swiftMajor).\(host.swiftMinor)")
+    }
   }
 
   /// Builds one SwiftPM library product (the app or an extension) through a synthetic
@@ -309,6 +331,29 @@ public struct Packer: Sendable {
     try writeGeneratedFile(pins, to: destination)
   }
 
+  /// Modules whose Apple macro plugins are macOS-only and that stupid-app-macros serves.
+  static let macroPluginModules = "SwiftUIMacros,SwiftDataMacros,PreviewsMacros,FoundationMacros"
+
+  /// `stupid-app-macros`, from `$STUPID_APP_MACROS` or beside the running `stupid-app`.
+  static func macroPlugin() throws -> URL {
+    if let override = ProcessInfo.processInfo.environment["STUPID_APP_MACROS"] {
+      let url = URL(fileURLWithPath: override)
+      guard FileManager.default.isExecutableFile(atPath: url.path) else {
+        throw BuildError.macroPluginMissing(url.path)
+      }
+      return url
+    }
+    // The running binary itself (/proc/self/exe on Linux), not argv[0], which is a bare
+    // name when stupid-app was found on PATH.
+    let executable = (Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0]))
+      .resolvingSymlinksInPath()
+    let candidate = executable.deletingLastPathComponent().appendingPathComponent("stupid-app-macros")
+    guard FileManager.default.isExecutableFile(atPath: candidate.path) else {
+      throw BuildError.macroPluginMissing(candidate.path)
+    }
+    return candidate
+  }
+
   static func writeGeneratedFile(_ data: Data, to destination: URL) throws {
     if let existing = try? Data(contentsOf: destination), existing == data {
       return
@@ -368,9 +413,6 @@ public struct Packer: Sendable {
         "-Xswiftc", constGatherProtocols.path,
       ]
     case .importedBundle(let sdkID):
-      guard plan.platform == .device else {
-        throw BuildError.simulatorRequiresXcode
-      }
       swift = HostInfo.resolveExecutable(swiftPath)
       arguments = [
         "build",
@@ -380,6 +422,10 @@ public struct Packer: Sendable {
         "--swift-sdk", sdkID,
         "--build-system", "native",
         "--disable-automatic-resolution",
+        // Xcode's iOS SDK expands `@State`, `@Entry`, `@Model` and `#Preview` through macro
+        // plugins it ships only as macOS binaries; stupid-app-macros implements them.
+        "-Xswiftc", "-load-plugin-executable",
+        "-Xswiftc", "\(try Self.macroPlugin().path)#\(Self.macroPluginModules)",
       ]
     }
 
@@ -647,9 +693,6 @@ public struct Packer: Sendable {
         )
       }
     case .importedBundle(let sdkID):
-      guard plan.platform == .device else {
-        throw BuildError.simulatorRequiresXcode
-      }
       guard
         let bundle = try SDKVersion.installedBundle(
           sdkID: sdkID,

@@ -4,8 +4,10 @@ import SDKCore
 import FoundationNetworking
 #endif
 
-/// macOS-side exporter that produces a device-only, checksummed Swift SDK bundle from an
-/// installed Xcode. This is the Gate 0 deliverable; `SDKExportCommand` wraps it.
+/// macOS-side exporter that produces a checksummed Swift SDK bundle for one iOS platform
+/// (the device, `arm64-apple-ios`, or the simulator, `arm64-apple-ios-simulator`) from an
+/// installed Xcode. This is the Gate 0 deliverable; `SDKExportCommand` wraps it. Each
+/// platform is its own bundle and Swift SDK, so the device SDK stays exactly as it was.
 struct Exporter {
     struct Options {
         var xcodeAppURL: URL
@@ -15,27 +17,56 @@ struct Exporter {
         var scratchURL: URL
     }
 
-    /// Paths copied from Xcode into the bundle, expressed relative to `Contents/Developer`.
-    /// Device-only: no simulator or macOS content. The `swiftResourcesPath` must include
-    /// `iphoneos/prebuilt-modules` because the SwiftUI/UIKit/Foundation module interfaces
-    /// for the device live there in Xcode 26.
-    static let wanted: [String] = [
-        "Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk",
-        "Platforms/iPhoneOS.platform/Developer/usr/lib",
-        "Platforms/iPhoneOS.platform/Developer/Library/Frameworks",
-        "Platforms/iPhoneOS.platform/Developer/Library/PrivateFrameworks",
-        "Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/iphoneos",
-        "Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/clang",
-        "Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/_InternalSwiftScan",
-        "Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/apinotes",
-        "Toolchains/XcodeDefault.xctoolchain/usr/lib/clang",
-    ]
+    /// One iOS platform's names in Xcode's layout and in the Swift SDK it becomes.
+    struct Platform: Equatable {
+        /// `Platforms/<directory>.platform` and `<directory>.sdk`.
+        var directory: String
+        /// The toolchain's `usr/lib/swift/<swiftResources>` directory.
+        var swiftResources: String
+        /// The Swift SDK artifact identifier `swift build --swift-sdk` selects.
+        var artifactID: String
+
+        static let device = Platform(
+            directory: "iPhoneOS", swiftResources: "iphoneos", artifactID: "stupid-app-ios")
+        static let simulator = Platform(
+            directory: "iPhoneSimulator", swiftResources: "iphonesimulator",
+            artifactID: "stupid-app-ios-simulator")
+
+        static func forTarget(_ triple: String) throws -> Platform {
+            switch triple {
+            case "arm64-apple-ios": return .device
+            case "arm64-apple-ios-simulator": return .simulator
+            default: throw ExportError.unsupportedTarget(triple)
+            }
+        }
+    }
+
+    /// Paths copied from Xcode into the bundle, expressed relative to `Contents/Developer`:
+    /// one platform's SDK and libraries, nothing of the other platforms. The
+    /// `swiftResourcesPath` must include `<platform>/prebuilt-modules` because the
+    /// SwiftUI/UIKit/Foundation module interfaces live there since Xcode 26.
+    static func wanted(for platform: Platform) -> [String] {
+        let root = "Platforms/\(platform.directory).platform/Developer"
+        return [
+            "\(root)/SDKs/\(platform.directory).sdk",
+            "\(root)/usr/lib",
+            "\(root)/Library/Frameworks",
+            "\(root)/Library/PrivateFrameworks",
+            "Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/\(platform.swiftResources)",
+            "Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/clang",
+            "Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/_InternalSwiftScan",
+            "Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/apinotes",
+            "Toolchains/XcodeDefault.xctoolchain/usr/lib/clang",
+        ]
+    }
 
     private let options: Options
+    private let platform: Platform
     private let fileManager = FileManager.default
 
-    init(options: Options) {
+    init(options: Options) throws {
         self.options = options
+        self.platform = try Platform.forTarget(options.targetTriple)
     }
 
     func run() throws -> URL {
@@ -70,7 +101,7 @@ struct Exporter {
 
     var bundleName: String {
         let host = hostArchComponent(options.hostTriple)
-        return "stupid-app-ios-\(options.targetTriple)-\(host).artifactbundle"
+        return "\(platform.artifactID)-\(options.targetTriple)-\(host).artifactbundle"
     }
 
     private func hostArchComponent(_ triple: String) -> String {
@@ -81,7 +112,7 @@ struct Exporter {
     // MARK: - Copy
 
     private func copyWanted(from developerDir: URL, to destination: URL) throws {
-        for relative in Self.wanted {
+        for relative in Self.wanted(for: platform) {
             let source = developerDir.appendingPathComponent(relative)
             let dest = destination.appendingPathComponent(relative)
             guard fileManager.fileExists(atPath: source.path) else {
@@ -137,18 +168,19 @@ struct Exporter {
 
     private func discoverIPhoneOSVersion(from developerDir: URL) throws -> String {
         let sdkDir = developerDir
-            .appendingPathComponent("Platforms/iPhoneOS.platform/Developer/SDKs")
+            .appendingPathComponent("Platforms/\(platform.directory).platform/Developer/SDKs")
         guard let contents = try? fileManager.contentsOfDirectory(atPath: sdkDir.path) else {
             throw ExportError.noNumericIOSSDK(sdkDir.path)
         }
         // Numeric SDK directories (e.g. iPhoneOS.sdk is a symlink; the real one is
         // iPhoneOS26.2.sdk). Match the canonical name against the manifest.
-        let candidates = contents.filter { $0.hasPrefix("iPhoneOS") && $0.hasSuffix(".sdk") }
-        guard let versioned = candidates.first(where: { $0 != "iPhoneOS.sdk" }) else {
+        let name = platform.directory
+        let candidates = contents.filter { $0.hasPrefix(name) && $0.hasSuffix(".sdk") }
+        guard let versioned = candidates.first(where: { $0 != "\(name).sdk" }) else {
             throw ExportError.noNumericIOSSDK(sdkDir.path)
         }
         let version = versioned
-            .replacingOccurrences(of: "iPhoneOS", with: "")
+            .replacingOccurrences(of: name, with: "")
             .replacingOccurrences(of: ".sdk", with: "")
         guard !version.isEmpty else {
             throw ExportError.noNumericIOSSDK(sdkDir.path)
@@ -161,8 +193,8 @@ struct Exporter {
     /// metadata is fatal because the exported bundle could not stamp
     /// `DTPlatformBuild`/`DTSDKBuild`, which App Store Connect requires.
     private func discoverIPhoneOSSDKBuild(from developerDir: URL) throws -> String {
-        let sdkURL = developerDir
-            .appendingPathComponent("Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk")
+        let sdkURL = developerDir.appendingPathComponent(
+            "Platforms/\(platform.directory).platform/Developer/SDKs/\(platform.directory).sdk")
         let systemVersion = sdkURL
             .appendingPathComponent("System/Library/CoreServices/SystemVersion.plist")
         guard
@@ -387,7 +419,7 @@ struct Exporter {
         let info = InfoJSON(
             schemaVersion: "1.0",
             artifacts: [
-                "stupid-app-ios": InfoJSON.Artifact(
+                platform.artifactID: InfoJSON.Artifact(
                     type: "swiftSDK",
                     version: iphoneosVersion,
                     variants: [
@@ -398,13 +430,14 @@ struct Exporter {
         )
         try JSONEncoder.withSortedKeys().encode(info).write(to: bundle.appendingPathComponent("info.json"))
 
+        let platformRoot = "Developer/Platforms/\(platform.directory).platform/Developer"
         let swiftSDK = SwiftSDKJSON(
             schemaVersion: "4.0",
             targetTriples: [
                 options.targetTriple: SwiftSDKJSON.Triple(
-                    sdkRootPath: "Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk",
-                    includeSearchPaths: ["Developer/Platforms/iPhoneOS.platform/Developer/usr/lib"],
-                    librarySearchPaths: ["Developer/Platforms/iPhoneOS.platform/Developer/usr/lib"],
+                    sdkRootPath: "\(platformRoot)/SDKs/\(platform.directory).sdk",
+                    includeSearchPaths: ["\(platformRoot)/usr/lib"],
+                    librarySearchPaths: ["\(platformRoot)/usr/lib"],
                     swiftResourcesPath: "Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift",
                     toolsetPaths: ["toolset.json"]
                 )

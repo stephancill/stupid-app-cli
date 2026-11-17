@@ -49,7 +49,9 @@ Do not include timeline estimates in planning documents. Use ordered dependencie
 
 - Normal project creation, build, signing, wireless deployment, and release must not require Xcode or macOS at runtime.
 - A one-time Mac-side SDK export from the user's own Xcode installation is an accepted prerequisite.
-- Do not distribute Apple SDK files or derived SDK bundles.
+- Do not put Apple SDK files or derived SDK bundles in this repository or its releases. The
+  maintainer publishes the exported device and simulator SDKs in stupid simulator's public
+  runtime store for cloud sessions (`scripts/cloud-setup.sh`); that is the only place they go.
 - Version 1 supports CLI-owned SwiftPM/SwiftUI physical-device applications, not arbitrary Xcode projects.
 - Keep unsupported resource and project types explicit. Fail loudly instead of silently copying or degrading them.
 - Paid Apple Developer Program membership is required.
@@ -70,7 +72,8 @@ Do not include timeline estimates in planning documents. Use ordered dependencie
 - Implement the primary CLI in Swift unless a proof gate establishes a better concrete architecture.
 - Adapt the separable planner and packer ideas from xtool's `Sources/PackLib`; do not copy the monolithic development command.
 - Keep SDK handling, build planning, packaging, Apple APIs, signing, device transport, and release upload as independent modules.
-- Use a versioned, checksummed, device-only Swift SDK export and atomic Linux import.
+- Use a versioned, checksummed, per-platform Swift SDK export (`stupid-app-ios` for devices,
+  `stupid-app-ios-simulator` for x86Sim's simulators) and atomic Linux import.
 - Validate exact Swift compiler, Xcode SDK, host triple, and Darwin-tool compatibility.
 - Evaluate a pinned `apple-codesign`/`rcodesign` revision as the signing kernel.
 - Do not add Zupersign as a fallback.

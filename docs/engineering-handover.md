@@ -8,6 +8,16 @@ Historical work belongs in `docs/implementation-notes.md`. This document should 
 
 ## Current Status
 
+**Linux simulators and cloud sessions (2026-11-18).** Without Xcode, `run --simulator`
+builds with the imported `stupid-app-ios-simulator` SDK (`sdk export --target
+arm64-apple-ios-simulator`), ad-hoc signs natively, and installs and launches in x86Sim's
+simulator (set up by stupid simulator's `stupidsim-linux`), then checks the app reached the
+front. Imported-SDK builds need `stupid-app-macros` (`Tools/StupidAppMacros`) because
+Xcode 27's SDK expands `@State`, `@Entry`, `@Model` and `#Preview` through macOS-only
+plugins, and refuse a Swift whose major.minor differs from the SDK's.
+`scripts/cloud-setup.sh` sets up a fresh Ubuntu 24.04 machine (toolchain, stupid-app,
+SDKs, simulator) from stupid simulator's public store.
+
 macOS host support is scoped in `docs/macos-host-support-scope.md` as an additive
 initiative with confirmed design decisions: two host modes selected by Xcode presence
 (the Xcode-present mode builds against Xcode's iPhoneOS SDK, linker, and bundled `swift`
@@ -335,7 +345,9 @@ Successful TestFlight processing and installation are the release correctness pr
 - A paid Apple Developer Program membership is required.
 - Authentication uses an App Store Connect team API key and public APIs. Apple ID password, anisette, GrandSlam, and other private authentication APIs are out of scope.
 - Version 1 supports CLI-owned SwiftPM applications with code-based SwiftUI interfaces.
-- Version 1 targets physical ARM64 iPhones. Simulator execution is out of scope.
+- Version 1 targets physical ARM64 iPhones for release. Simulator execution is for
+  development only: `simctl` with Xcode on macOS, and x86Sim on Linux (2026-11-18), with
+  ad-hoc signing scoped to simulator output.
 - One USB connection to the deployment host is acceptable for initial iPhone trust and pairing. Subsequent development runs must work over the local network.
 - Device and release builds must use real Apple certificates. The pipeline must not pseudo-sign or ad-hoc sign an application as an intermediate step.
 - The exact configured bundle identifier is retained. Do not add xtool-style `XTL-*` prefixes.
@@ -523,7 +535,10 @@ Inputs that must initially fail loudly:
 - Core Data models requiring `momc`.
 - Metal source requiring Apple tooling.
 - Arbitrary Xcode build phases.
-- Build tool plugins or macros not validated on the host and target pair.
+- Build tool plugins or macros not validated on the host and target pair. Imported-SDK
+  builds load `stupid-app-macros` for the SDK's own macOS-only macro plugins
+  (SwiftUIMacros, SwiftDataMacros, PreviewsMacros); a macro it does not implement fails by
+  name (see the 2026-11-18 implementation notes).
 - App Intents declarations on a host without an Xcode toolchain: the packer generates
   `Metadata.appintents` automatically on Xcode-present hosts, but an imported-SDK build
   cannot, so a module that declares App Intents then fails loudly rather than producing a

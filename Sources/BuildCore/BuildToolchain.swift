@@ -6,8 +6,8 @@ import SDKCore
 ///
 /// With a usable Xcode (Xcode SDK in place) the toolchain is Xcode's bundled `swift`
 /// and builds target Xcode's iPhoneOS or iPhoneSimulator SDK in place; otherwise the
-/// caller's host `swift` and the imported `stupid-app` artifact bundle are used (which
-/// can only target the device because simulators cannot exist without Xcode). Commands
+/// caller's host `swift` and an imported `stupid-app` artifact bundle are used: the
+/// device bundle, or the simulator bundle for x86Sim's simulators on Linux. Commands
 /// resolve this once and hand it to the planner and packer so the two modes share one
 /// code path.
 public struct BuildToolchain: Sendable {
@@ -19,8 +19,8 @@ public struct BuildToolchain: Sendable {
   /// Resolves the toolchain for a detected host mode. `swiftPath` is the caller's
   /// requested compiler; with Xcode in place the default (`"swift"`) is replaced by
   /// Xcode's toolchain `swift` unless the caller explicitly overrode it. The simulator
-  /// platform resolves its SDK version from the in-place Xcode installation and fails
-  /// loudly when no Xcode is present.
+  /// platform resolves its SDK version from the in-place Xcode installation, or from the
+  /// imported simulator bundle's manifest.
   public static func resolve(
     swiftPath: String,
     sdkID: String,
@@ -58,11 +58,6 @@ public struct BuildToolchain: Sendable {
         }
         return simulatorVersion
       }
-    case (.importedBundle, .simulator):
-      // Simulators cannot exist without Xcode; fail loudly before any build starts.
-      hostSDKVersion = { @Sendable in
-        throw BuildError.simulatorRequiresXcode
-      }
     case (.xcodeInPlace(let installation), .device):
       // Use the SDK version of the selected Xcode installation rather than
       // re-detecting via xcode-select, which can resolve a different Xcode than the
@@ -75,7 +70,9 @@ public struct BuildToolchain: Sendable {
         }
         return installationSDKVersion
       }
-    case (.importedBundle, .device):
+    case (.importedBundle, _):
+      // The device and the simulator each have their own imported bundle
+      // (`stupid-app-ios`, `stupid-app-ios-simulator`); its manifest carries the SDK version.
       hostSDKVersion = { @Sendable in
         try SDKVersion.resolve(
           sdkID: resolvedSDKID,

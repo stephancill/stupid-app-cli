@@ -122,4 +122,78 @@ import Foundation
     try FileManager.default.setAttributes(
       [.posixPermissions: 0o755], ofItemAtPath: plan.executableURL.path)
   }
+
+  /// Ad-hoc signs one `.app` or `.appex` for a simulator, the signature `codesign -s -`
+  /// makes: a CodeDirectory flagged `CS_ADHOC` with no team, an empty requirement set and
+  /// an empty CMS wrapper. Only simulator builds use it (the scoped simulator exception);
+  /// device and release output always gets a real identity through `sign`. Sign nested
+  /// `.appex` bundles first and their container last with `mode: .deep`, so the container
+  /// seals the signed extensions.
+  public func adHocSign(
+    appBundle: URL,
+    entitlements: [String: Any],
+    mode: NativeAppClassifier.Mode = .shallow
+  ) throws {
+    let csAdhoc: UInt32 = 0x0000_0002
+    let plan = try NativeAppClassifier.classify(appBundle: appBundle, mode: mode)
+    let infoData = try Data(contentsOf: plan.appBundle.appendingPathComponent("Info.plist"))
+    let executable = try Data(contentsOf: plan.executableURL)
+    let codeResources = try NativeCodeResources.write(
+      appBundle: plan.appBundle, executableName: plan.executableName,
+      deep: mode == .deep)
+    // An empty requirement set: magic, length 12, no requirements.
+    let requirements = Data([0xFA, 0xDE, 0x0C, 0x01, 0, 0, 0, 12, 0, 0, 0, 0])
+    var specialContent: [UInt32: Data] = [1: infoData, 2: requirements, 3: codeResources]
+    var entitlementBlobs: [(UInt32, Data)] = []
+    if !entitlements.isEmpty {
+      let xml = try PropertyListSerialization.data(
+        fromPropertyList: entitlements, format: .xml, options: 0)
+      let xmlBlob = NativeEmbeddedSignature.blob(magic: 0xFADE_7171, payload: xml)
+      let derBlob = NativeEmbeddedSignature.blob(
+        magic: 0xFADE_7172,
+        payload: try NativeSigningSerialization.entitlementDER(entitlements))
+      specialContent[5] = xmlBlob
+      specialContent[7] = derBlob
+      entitlementBlobs = [(5, xmlBlob), (7, derBlob)]
+    }
+    let specialHashes = specialContent.mapValues(NativeEmbeddedSignature.digest)
+    var executableSegmentFlags: UInt64 = 0x1  // MAIN_BINARY
+    if entitlements["get-task-allow"] as? Bool == true {
+      executableSegmentFlags |= 0x10  // ALLOW_UNSIGNED
+    }
+    let emptyCMS = NativeEmbeddedSignature.blob(magic: 0xFADE_0B01, payload: Data())
+
+    var expectedSize = 0
+    var finalExecutable: Data?
+    for _ in 0..<4 {
+      let layout = try NativeMachOEditor.layout(executable: executable, signatureSize: expectedSize)
+      let codeDirectory = NativeEmbeddedSignature.codeDirectory(
+        executablePrefix: layout.prefix,
+        identifier: plan.bundleIdentifier,
+        teamID: "",
+        specialSlots: specialHashes,
+        flags: csAdhoc,
+        executableSegmentFlags: executableSegmentFlags,
+        executableSegmentBase: layout.executableSegmentBase,
+        executableSegmentLimit: layout.executableSegmentLimit)
+      let superBlob = NativeEmbeddedSignature.superBlob(
+        [(0, codeDirectory), (2, requirements)] + entitlementBlobs + [(0x1_0000, emptyCMS)])
+      if superBlob.count == expectedSize {
+        finalExecutable = layout.prefix + superBlob
+        break
+      }
+      expectedSize = superBlob.count
+    }
+    guard let finalExecutable else { throw Error.unstableSignatureSize }
+
+    // NativeSignatureVerifier models the device signature (exactly one designated
+    // requirement and a CMS chain), which an ad-hoc signature deliberately lacks; Apple's
+    // `codesign --verify --strict` is the check for this format (NativeAdHocSignerTests).
+    try NativeCodeResources.verify(
+      appBundle: plan.appBundle, executableName: plan.executableName, data: codeResources,
+      deep: mode == .deep)
+    try finalExecutable.write(to: plan.executableURL, options: .atomic)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o755], ofItemAtPath: plan.executableURL.path)
+  }
 }

@@ -15,6 +15,7 @@ public enum ExportError: Error, Equatable, Sendable, CustomStringConvertible {
     case homebrewToolMissing(String)
     case toolRelocationFailed(String, String)
     case toolRelocationUnverified(String)
+    case unsupportedTarget(String)
 
     public var description: String {
         switch self {
@@ -23,7 +24,7 @@ public enum ExportError: Error, Equatable, Sendable, CustomStringConvertible {
         case let .developerDirMissing(url):
             return "Xcode does not appear to be an Xcode installation: no 'Contents/Developer' at '\(url.path)'."
         case let .noNumericIOSSDK(platform):
-            return "No numeric iPhoneOS SDK found under \(platform)."
+            return "No numeric iPhoneOS or iPhoneSimulator SDK found under \(platform)."
         case let .multipleNumericIOSSDKs(versions):
             return "Multiple iPhoneOS SDK versions found; refusing to pick: \(versions.joined(separator: ", "))."
         case let .hostArchUnsupported(arch):
@@ -42,6 +43,8 @@ public enum ExportError: Error, Equatable, Sendable, CustomStringConvertible {
             return "Could not find a required Homebrew tool at '\(path)'. Install it (e.g. `brew install lld@20 llvm@20`) and rerun the export."
         case let .toolRelocationFailed(path, reason):
             return "Failed to relocate the macOS tool at '\(path)': \(reason)"
+        case let .unsupportedTarget(triple):
+            return "Unsupported export target '\(triple)': use arm64-apple-ios (devices) or arm64-apple-ios-simulator (simulators)."
         case let .toolRelocationUnverified(path):
             return "The relocated macOS tool at '\(path)' still references an absolute Homebrew path; the bundle would not be relocatable. Re-run the export or update the pinned toolset."
         }

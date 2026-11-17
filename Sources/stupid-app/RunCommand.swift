@@ -295,12 +295,14 @@ struct RunCommand: AsyncParsableCommand {
 
   private func runSimulator(projectRoot: URL, config: AppConfig) throws {
     let mode = HostSDKMode.detect()
-    guard case .xcodeInPlace = mode else {
-      throw BuildError.simulatorRequiresXcode
-    }
+    // Without Xcode the simulator is x86Sim's (Linux), built with the imported simulator
+    // SDK; the device SDK's default identifier means the simulator one there.
+    let isX86Sim: Bool
+    if case .importedBundle = mode { isX86Sim = true } else { isX86Sim = false }
+    let simulatorSDKID = isX86Sim && sdkID == "stupid-app-ios" ? "stupid-app-ios-simulator" : sdkID
     let toolchain = BuildToolchain.resolve(
       swiftPath: swiftPath,
-      sdkID: sdkID,
+      sdkID: simulatorSDKID,
       targetTriple: TargetPlatform.simulator.targetTriple,
       mode: mode,
       platform: .simulator
@@ -320,7 +322,7 @@ struct RunCommand: AsyncParsableCommand {
       config: config,
       swiftPath: resolvedSwift,
       targetTriple: TargetPlatform.simulator.targetTriple,
-      sdkID: sdkID,
+      sdkID: simulatorSDKID,
       sdkInput: toolchain.sdkInput,
       sdkVersion: toolchain.hostSDKVersion,
       buildConfiguration: .debug
@@ -336,6 +338,27 @@ struct RunCommand: AsyncParsableCommand {
     )
     let extensionEntitlements: [String: String?] = plan.extensions.reduce(into: [:]) {
       $0[$1.product] = $1.entitlementsPath
+    }
+    if isX86Sim {
+      try nativeAdHocSign(
+        appURL: unsignedApp,
+        entitlementsPath: config.entitlementsPath,
+        extensionEntitlements: extensionEntitlements,
+        projectRoot: projectRoot)
+      let device = try X86Sim.selectDevice(udid)
+      print("Using x86Sim device \(device.name) (\(device.udid))")
+      if !device.booted {
+        print("Booting \(device.name) and waiting for the home screen...")
+        try X86Sim.boot(device)
+      }
+      print("Installing \(config.bundleID) on \(device.name)...")
+      try X86Sim.install(device, appURL: unsignedApp)
+      let launch = try X86Sim.launch(device, bundleID: config.bundleID)
+      print("Launched \(config.bundleID) on x86Sim device \(device.name) (pid \(launch.pid)).")
+      print("App output: \(launch.stdout.path)\n            \(launch.stderr.path)")
+      try waitUntilInFront(
+        device: device, bundleID: config.bundleID, appURL: unsignedApp, launch: launch)
+      return
     }
     try adHocSign(
       appURL: unsignedApp,
@@ -391,6 +414,91 @@ struct RunCommand: AsyncParsableCommand {
       appURL: appURL,
       entitlementsPath: entitlementsPath,
       projectRoot: projectRoot)
+  }
+
+  /// A launch is reported only once the app is in front. An app that crashes, or that
+  /// never comes up (on x86Sim, typically because runtime files it needs were not fetched:
+  /// stupid simulator's STUPIDSIM_APPS manifests), fails here with its output instead of
+  /// leaving the home screen up and the command successful.
+  private func waitUntilInFront(
+    device: X86Sim.Device, bundleID: String, appURL: URL, launch: X86Sim.Launch
+  ) throws {
+    let info =
+      (try? PropertyListSerialization.propertyList(
+        from: Data(contentsOf: appURL.appendingPathComponent("Info.plist")), format: nil))
+      as? [String: Any] ?? [:]
+    let names = Set(
+      [info["CFBundleDisplayName"], info["CFBundleName"], info["CFBundleExecutable"]]
+        .compactMap { $0 as? String })
+    guard X86Sim.hasStupidsim else {
+      print("stupidsim is not on PATH, so the launch is not checked; install stupid simulator to verify it.")
+      return
+    }
+    let started = Date()
+    var front: String?
+    while Date().timeIntervalSince(started) < 90 {
+      if !X86Sim.isRunning(device, bundleID: bundleID) {
+        throw RunError.simulatorLaunchFailed(
+          "\(bundleID) exited after launching.", outputTail(launch))
+      }
+      front = X86Sim.frontmostApplication(device)
+      if let front, names.contains(front) {
+        print("\(front) is on screen (\(Int(Date().timeIntervalSince(started))) s after launch).")
+        return
+      }
+      Thread.sleep(forTimeInterval: 2)
+    }
+    throw RunError.simulatorLaunchFailed(
+      "\(bundleID) is running but did not come to the front within 90 s (in front: \(front ?? "unknown")). On x86Sim this usually means the runtime is missing files the app needs: fetch its manifest with stupid simulator's STUPIDSIM_APPS (docs/runbooks/app-manifest.md there).",
+      outputTail(launch))
+  }
+
+  private func outputTail(_ launch: X86Sim.Launch) -> String {
+    [launch.stderr, launch.stdout].map { url -> String in
+      let text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+      let lines = text.split(separator: "\n", omittingEmptySubsequences: false).suffix(30)
+      return "\(url.lastPathComponent):\n" + (text.isEmpty ? "  (empty)" : lines.joined(separator: "\n"))
+    }.joined(separator: "\n")
+  }
+
+  /// The same ad-hoc pass without `/usr/bin/codesign` (Linux): SigningKit writes the
+  /// signature `codesign -s -` makes, extensions first, then the app sealing them.
+  private func nativeAdHocSign(
+    appURL: URL,
+    entitlementsPath: String?,
+    extensionEntitlements: [String: String?],
+    projectRoot: URL
+  ) throws {
+    func entitlements(_ path: String?) throws -> [String: Any] {
+      guard let path else { return [:] }
+      let url = URL(fileURLWithPath: path, relativeTo: projectRoot).standardizedFileURL
+      let plist = try PropertyListSerialization.propertyList(
+        from: try Data(contentsOf: url), options: [], format: nil)
+      guard let dict = plist as? [String: Any] else {
+        throw RunError.simulatorSigningFailed("\(path) is not an entitlements dictionary")
+      }
+      return SimulatorEntitlements.sanitize(dict)
+    }
+    let signer = NativeSigner()
+    let pluginsDir = appURL.appendingPathComponent("PlugIns", isDirectory: true)
+    let appexes =
+      ((try? FileManager.default.contentsOfDirectory(atPath: pluginsDir.path)) ?? [])
+      .filter { $0.hasSuffix(".appex") }.sorted()
+    do {
+      for appex in appexes {
+        let product = (appex as NSString).deletingPathExtension
+        try signer.adHocSign(
+          appBundle: pluginsDir.appendingPathComponent(appex, isDirectory: true),
+          entitlements: try entitlements(extensionEntitlements[product].flatMap { $0 }))
+      }
+      try signer.adHocSign(
+        appBundle: appURL, entitlements: try entitlements(entitlementsPath),
+        mode: appexes.isEmpty ? .shallow : .deep)
+    } catch let error as RunError {
+      throw error
+    } catch {
+      throw RunError.simulatorSigningFailed("\(error)")
+    }
   }
 
   private func adHocSignSingle(
@@ -507,6 +615,7 @@ enum RunError: Error, CustomStringConvertible {
   case deviceSelection(Int)
   case networkDeviceRequired
   case simulatorSigningFailed(String)
+  case simulatorLaunchFailed(String, String)
   case simulatorNotFound(String)
   case noSimulatorDevice
   case localMacMismatch
@@ -530,6 +639,8 @@ enum RunError: Error, CustomStringConvertible {
         "Network deployment requires --udid because remote pairing identifiers are not device UDIDs."
     case .simulatorSigningFailed(let detail):
       return "Ad-hoc simulator signing failed. \(detail)"
+    case .simulatorLaunchFailed(let reason, let output):
+      return "\(reason)\nThe app's output:\n\(output)"
     case .simulatorNotFound(let udid):
       return
         "No simulator device exists with UDID '\(udid)'. Run `stupid-app simulators` to list them."

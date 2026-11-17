@@ -2,17 +2,19 @@ import ArgumentParser
 import Foundation
 import SDKCore
 
-/// `stupid-app sdk export`: builds a device-only, checksummed Swift SDK bundle from an
-/// installed Xcode installation. Runs on macOS; the artifact is imported elsewhere with
+/// `stupid-app sdk export`: builds a checksummed Swift SDK bundle for the device or the
+/// simulator from an installed Xcode installation. Runs on macOS; the artifact is imported elsewhere with
 /// `stupid-app sdk import`.
 struct SDKExportCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "export",
-        abstract: "Export a device-only, checksummed Swift SDK bundle from an installed Xcode.",
+        abstract: "Export a checksummed device or simulator Swift SDK bundle from an installed Xcode.",
         discussion: """
         Produces a tar.zst archive containing a SwiftPM artifact bundle for cross-compiling
-        arm64-apple-ios on a host. Requires an installed Xcode on this Mac. The archive is
-        imported on a supported host with `stupid-app sdk import`.
+        arm64-apple-ios (Swift SDK `stupid-app-ios`) or, with
+        `--target arm64-apple-ios-simulator`, simulator apps (Swift SDK
+        `stupid-app-ios-simulator`, for x86Sim on Linux). Requires an installed Xcode on
+        this Mac. The archive is imported on a supported host with `stupid-app sdk import`.
 
         A Linux host triple (e.g. x86_64-unknown-linux-gnu) downloads the pinned Linux
         darwin-tools archive. A macOS host triple (e.g. arm64-apple-macosx) stages the
@@ -26,7 +28,7 @@ struct SDKExportCommand: AsyncParsableCommand {
     @Option(name: .customLong("host"), help: "Host triple the bundle will run on, e.g. x86_64-unknown-linux-gnu or arm64-apple-macosx.")
     var hostTriple: String
 
-    @Option(name: .customLong("target"), help: "Target triple (default arm64-apple-ios).")
+    @Option(name: .customLong("target"), help: "Target triple: arm64-apple-ios (default) or arm64-apple-ios-simulator.")
     var targetTriple: String = "arm64-apple-ios"
 
     @Option(name: .customLong("output"), help: "Directory in which to write the archive.")
@@ -52,7 +54,7 @@ struct SDKExportCommand: AsyncParsableCommand {
         }
         defer { try? FileManager.default.removeItem(at: scratchURL) }
 
-        let exporter = Exporter(options: .init(
+        let exporter = try Exporter(options: .init(
             xcodeAppURL: xcodeURL,
             hostTriple: hostTriple,
             targetTriple: targetTriple,

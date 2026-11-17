@@ -117,19 +117,20 @@ struct SimulatorPlatformTests {
     #expect(try toolchain.hostSDKVersion() == "26.1")
   }
 
-  @Test("simulator toolchain on an importedBundle host fails loudly")
-  func simulatorRequiresXcode() {
+  @Test("simulator toolchain on an importedBundle host builds with the imported simulator SDK")
+  func simulatorUsesImportedSimulatorSDK() {
     let toolchain = BuildToolchain.resolve(
       swiftPath: "swift",
-      sdkID: "stupid-app-ios",
+      sdkID: "stupid-app-ios-simulator",
       targetTriple: TargetPlatform.simulator.targetTriple,
       mode: .importedBundle,
       platform: .simulator
     )
-    #expect {
-      try toolchain.hostSDKVersion()
-    } throws: { error in
-      error as? BuildError == .simulatorRequiresXcode
+    guard case .importedBundle(let sdkID) = toolchain.sdkInput else {
+      Issue.record("expected the imported bundle")
+      return
     }
+    #expect(sdkID == "stupid-app-ios-simulator")
+    #expect(toolchain.swiftPath == "swift")
   }
 }
