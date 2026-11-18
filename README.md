@@ -34,7 +34,17 @@ the same directory.
 
 ### Linux
 
-Build from source with a Swift 6.2 toolchain (x86_64 Ubuntu 24.04 LTS):
+Download the prebuilt package (x86_64 Ubuntu 24.04 LTS; Swift's standard library is linked in,
+and `stupid-app-macros` must stay beside `stupid-app`):
+
+```bash
+curl -fL https://github.com/stephancill/stupid-app-cli/releases/latest/download/stupid-app-linux-x86_64.tar.gz \
+  | tar -xz -C ~/.local/bin stupid-app stupid-app-macros
+stupid-app --version
+```
+
+Building still needs a Swift toolchain whose major.minor matches the imported SDK's (6.4 for
+Xcode 27 exports). Or build from source:
 
 ```bash
 git clone https://github.com/stephancill/stupid-app-cli.git

@@ -16,6 +16,31 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth. Historical entries record the implementation at their date. Use the current handover and bundled command reference for operational instructions.
 
+## 2026-11-18 - Release 0.0.28
+
+### Summary
+
+- Released `stupid-app 0.0.28`: simulators on Linux through x86Sim, the simulator SDK
+  export, native ad-hoc signing for simulator output, `stupid-app-macros`, the Swift/SDK
+  guard and `scripts/cloud-setup.sh` (see the following entry).
+- New release asset `stupid-app-linux-x86_64.tar.gz` (`stupid-app` and `stupid-app-macros`
+  for x86-64 Ubuntu 24.04, Swift's standard library linked statically). AGENTS.md's release
+  process and the README's Linux install use it; the macOS assets are unchanged.
+- Bumped `StupidApp.productVersion` from `0.0.27` to `0.0.28`.
+- Built from a clean worktree (macOS) and a `git archive` (Linux) of the release commit's
+  source.
+
+### Verification
+
+- `swift test`: every suite passed except one `RemoteXPCConnectionTests` case ("peer closed
+  the connection"), unrelated to this release, which then passed in three isolated runs.
+- `stupid-app-macros` expansion tests passed; skill-creator validation of
+  `skills/stupid-app-cli` passed.
+- Both builds report `stupid-app 0.0.28`.
+- CLI (macOS) SHA-256: `3c992a28b8ebc0b17eecf0143aaf00776078b3641f1158c69b607b99e75755cf`.
+- GUI (macOS) SHA-256: `59c07d46204488eaf429c93b620f614bf3da53a2eefcb6f17024c292521dd567`.
+- Linux package SHA-256: `1ad211d2657d925a1ea618c786e5a9da5ac51d064ac71480900e1f12cd18ece2`.
+
 ## 2026-11-18 - Simulators On Linux, Cloud Sessions, And Open Macro Plugins
 
 ### Summary

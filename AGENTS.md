@@ -159,7 +159,8 @@ Publishing a new `stupid-app` version:
    `stupid-app gui` can find it beside `stupid-app`:
 
    ```bash
-   gh release create v<version> /tmp/stupid-app-macos-arm64 /tmp/stupid-app-gui-macos-arm64 THIRD_PARTY_NOTICES.md \
+   gh release create v<version> /tmp/stupid-app-macos-arm64 /tmp/stupid-app-gui-macos-arm64 \
+     /tmp/stupid-app-linux-x86_64.tar.gz THIRD_PARTY_NOTICES.md \
      --title "stupid-app v<version> for Apple Silicon macOS" --notes "..."
    ```
 
@@ -168,7 +169,15 @@ Publishing a new `stupid-app` version:
    `releases/latest/download/stupid-app-gui-macos-arm64`; because the asset names carry
    no version, the `latest` download keeps working across releases without editing the
    README. Keep the asset names stable (`stupid-app-macos-arm64`,
-   `stupid-app-gui-macos-arm64`) on every release.
+   `stupid-app-gui-macos-arm64`, `stupid-app-linux-x86_64.tar.gz`) on every release.
+
+   The Linux asset is built on x86-64 Ubuntu 24.04 from a `git archive` of the release
+   commit: `swift build -c release --static-swift-stdlib --product stupid-app` and, in
+   `Tools/StupidAppMacros`, `swift build -c release --static-swift-stdlib`; the tarball holds
+   `stupid-app`, `stupid-app-macros`, `THIRD_PARTY_NOTICES.md` and the vendored
+   swift-foundation `LICENSE.md` (as `swift-foundation-LICENSE.md`). Also upload it to stupid
+   simulator's store as `packages/stupid-app-linux-x86_64.tar.gz`, which
+   `scripts/cloud-setup.sh` installs.
 6. Update the local installation from the published release assets using an atomic
    replacement, then verify both the reported version and checksum. Download each asset
    to a sibling `.new` path, set it executable, verify it before replacement, and only
