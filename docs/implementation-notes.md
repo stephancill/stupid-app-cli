@@ -16,6 +16,27 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth. Historical entries record the implementation at their date. Use the current handover and bundled command reference for operational instructions.
 
+## 2026-11-18 - Release 0.0.29
+
+### Summary
+
+- Released `stupid-app 0.0.29` with the darwin-tools v1.1.0 pin (following entry), so SDKs
+  exported by this version link device builds against Xcode 27 SDKs on Linux. No command or
+  option changed; asset names and the release process are unchanged.
+- Bumped `StupidApp.productVersion` from `0.0.28` to `0.0.29`.
+- Built from a clean worktree (macOS) and a `git archive` (Linux) of the release commit's
+  source.
+
+### Verification
+
+- The fix was verified before release: StupidSocial's device build links on Ubuntu 24.04 and in
+  a fresh Claude Code cloud session (previous entry); `DarwinToolsTests` passes.
+- Both builds report `stupid-app 0.0.29`.
+- CLI (macOS) SHA-256: `93f2eb14868939b6ba5fdc49209602eee09e610a5696505fc4cc3207c7b8b4fd`.
+- GUI (macOS) SHA-256: `59c07d46204488eaf429c93b620f614bf3da53a2eefcb6f17024c292521dd567`
+  (unchanged from 0.0.28).
+- Linux package SHA-256: `245aca14a44684a820e89ccd93a9630d94de6f89bdedaade82c4af6feedf3cc0`.
+
 ## 2026-11-18 - Linux Device Builds With Xcode 27 SDKs: darwin-tools v1.1.0
 
 ### Summary
