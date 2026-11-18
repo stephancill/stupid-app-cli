@@ -21,23 +21,25 @@ public enum DarwinTools {
         }
     }
 
-    /// Pinned v1.0.1 release of `xtool-org/darwin-tools-linux-llvm`.
+    /// Pinned v1.1.0 release of `xtool-org/darwin-tools-linux-llvm` (LLD 21.1.6). v1.0.1's LLD 20
+    /// rejected Xcode 27's iOS stubs (`arm64e.x1-ios` targets) as malformed .tbd files, so device
+    /// builds with an Xcode 27 SDK failed to link.
     public static let pinned: [Source] = [
         Source(
             arch: "x86_64",
             url: URL(
-                string: "https://github.com/xtool-org/darwin-tools-linux-llvm/releases/download/v1.0.1/toolset-x86_64.tar.gz"
+                string: "https://github.com/xtool-org/darwin-tools-linux-llvm/releases/download/v1.1.0/toolset-x86_64.tar.gz"
             )!,
-            version: "1.0.1",
-            sha256: "58f567cbea08afb89aaee5ca0c2200e6c9fe7c014022fe380f0188e940d8d071"
+            version: "1.1.0",
+            sha256: "a5166f2d56ac45707e5ef2f3c20a41a94af8ef0c0456354224dd08656e874188"
         ),
         Source(
             arch: "aarch64",
             url: URL(
-                string: "https://github.com/xtool-org/darwin-tools-linux-llvm/releases/download/v1.0.1/toolset-aarch64.tar.gz"
+                string: "https://github.com/xtool-org/darwin-tools-linux-llvm/releases/download/v1.1.0/toolset-aarch64.tar.gz"
             )!,
-            version: "1.0.1",
-            sha256: "2660178e19983ab23bbeaea5f2ff2fefbe516302936a066ccd2370f36e019bbe"
+            version: "1.1.0",
+            sha256: "a6fc628a1db47ff6f209d32e66aec72eb77112d3f0b1ac1fcf5f6af7f34a9d08"
         ),
     ]
 

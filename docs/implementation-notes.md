@@ -16,6 +16,34 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth. Historical entries record the implementation at their date. Use the current handover and bundled command reference for operational instructions.
 
+## 2026-11-18 - Linux Device Builds With Xcode 27 SDKs: darwin-tools v1.1.0
+
+### Summary
+
+- A cloud agent's `stupid-app build` (device, `arm64-apple-ios`) of StupidSocial failed to
+  link: `ld64.lld: error: could not load TAPI file at .../Security.framework/Security.tbd:
+  malformed file`. Xcode 27's iOS stubs list `arm64e-ios` and a new `arm64e.x1-ios` target
+  (and no `arm64`); LLD 20 in the pinned `xtool-org/darwin-tools-linux-llvm` v1.0.1 does not
+  know `arm64e.x1`. Simulator stubs list `arm64-ios-simulator`, so simulator builds linked.
+- Pinned darwin-tools v1.1.0 (LLD 21.1.6), whose release notes name this fix
+  (llvm/llvm-project#222721). Its release publishes no checksums; the pinned SHA-256s were
+  computed from the GitHub release assets.
+- Re-exported both Xcode 27 SDKs with the new toolset and replaced them in stupid simulator's
+  store (`sdks/current.txt` names the new checksums), so `scripts/cloud-setup.sh` installs
+  them.
+
+### Verification
+
+- On Ubuntu 24.04, StupidSocial's device build failed with v1.0.1's `ld64.lld` and succeeded
+  with v1.1.0's (`Mach-O arm64 ios min 18.0.0 sdk 27.0.0`), 50 s incremental.
+- `DarwinToolsTests` passes with the new pin; both re-exported bundles carry v1.1.0's
+  `ld64.lld` (checksum matches the release asset's).
+
+### Follow-Up
+
+- The macOS Xcode-absent mode stages Homebrew `lld@20`, also LLD 20, which likely fails the
+  same way with Xcode 27 SDKs; it needs a newer LLD there too.
+
 ## 2026-11-18 - Release 0.0.28
 
 ### Summary

@@ -27,8 +27,8 @@ struct DarwinToolsTests {
   func aarch64LinuxToolset() {
     let src = DarwinTools.source(for: "aarch64")
     #expect(src?.arch == "aarch64")
-    #expect(src?.version == "1.0.1")
-    #expect(src?.sha256 == "2660178e19983ab23bbeaea5f2ff2fefbe516302936a066ccd2370f36e019bbe")
+    #expect(src?.version == "1.1.0")
+    #expect(src?.sha256 == "a6fc628a1db47ff6f209d32e66aec72eb77112d3f0b1ac1fcf5f6af7f34a9d08")
     #expect(src?.url.lastPathComponent == "toolset-aarch64.tar.gz")
   }
 
