@@ -285,7 +285,7 @@ An edit-and-run cycle on a booted device takes seconds. A fresh Ubuntu 24.04 mac
 Claude Code cloud session gets everything with one command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/stephancill/stupid-app-cli/main/scripts/cloud-setup.sh | bash
+curl -fsSL -o cloud-setup.sh https://raw.githubusercontent.com/stephancill/stupid-app-cli/main/scripts/cloud-setup.sh && bash cloud-setup.sh   # download, then run: piping into bash may be refused
 stupidsim-linux boot                # each session
 stupid-app run --simulator          # from the app's directory
 ```
