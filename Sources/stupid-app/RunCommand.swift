@@ -417,9 +417,9 @@ struct RunCommand: AsyncParsableCommand {
   }
 
   /// A launch is reported only once the app is in front. An app that crashes, or that
-  /// never comes up (on x86Sim, typically because runtime files it needs were not fetched:
-  /// stupid simulator's STUPIDSIM_APPS manifests), fails here with its output instead of
-  /// leaving the home screen up and the command successful.
+  /// never comes up, fails here with its output instead of leaving the home screen up and the
+  /// command successful. stupid simulator (0.7.0 and later) fetches the runtime files an app
+  /// opens on first use; one it could not fetch is a FAILED line in its fetch log, quoted here.
   private func waitUntilInFront(
     device: X86Sim.Device, bundleID: String, appURL: URL, launch: X86Sim.Launch
   ) throws {
@@ -431,7 +431,9 @@ struct RunCommand: AsyncParsableCommand {
       [info["CFBundleDisplayName"], info["CFBundleName"], info["CFBundleExecutable"]]
         .compactMap { $0 as? String })
     guard X86Sim.hasStupidsim else {
-      print("stupidsim is not on PATH, so the launch is not checked; install stupid simulator to verify it.")
+      print(
+        "stupidsim is not on PATH, so the launch is not checked; install stupid simulator to verify it."
+      )
       return
     }
     let started = Date()
@@ -448,16 +450,26 @@ struct RunCommand: AsyncParsableCommand {
       }
       Thread.sleep(forTimeInterval: 2)
     }
-    throw RunError.simulatorLaunchFailed(
-      "\(bundleID) is running but did not come to the front within 90 s (in front: \(front ?? "unknown")). On x86Sim this usually means the runtime is missing files the app needs: fetch its manifest with stupid simulator's STUPIDSIM_APPS (docs/runbooks/app-manifest.md there).",
-      outputTail(launch))
+    var reason =
+      "\(bundleID) is running but did not come to the front within 90 s (in front: \(front ?? "unknown"))."
+    if let log = X86Sim.runtimeFetchLog(device) {
+      let failed = X86Sim.failedFetches(
+        inLog: (try? String(contentsOf: log, encoding: .utf8)) ?? "")
+      reason +=
+        failed.isEmpty
+        ? " No runtime file failed to fetch (\(log.path)); the app's output is below."
+        : " The simulator could not fetch runtime files (\(log.path)):\n"
+          + failed.joined(separator: "\n")
+    }
+    throw RunError.simulatorLaunchFailed(reason, outputTail(launch))
   }
 
   private func outputTail(_ launch: X86Sim.Launch) -> String {
     [launch.stderr, launch.stdout].map { url -> String in
       let text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
       let lines = text.split(separator: "\n", omittingEmptySubsequences: false).suffix(30)
-      return "\(url.lastPathComponent):\n" + (text.isEmpty ? "  (empty)" : lines.joined(separator: "\n"))
+      return "\(url.lastPathComponent):\n"
+        + (text.isEmpty ? "  (empty)" : lines.joined(separator: "\n"))
     }.joined(separator: "\n")
   }
 

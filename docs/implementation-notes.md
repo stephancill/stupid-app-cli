@@ -117,9 +117,10 @@ simulator's `stupidsim`.
   and launched through x86Sim's simctl-like command line. Each run replaces the running
   instance, writes the app's stdout/stderr to `data/tmp/stupid-app/` in the device, and
   then waits (up to 90 s) for the app to be in front, reading the front application from
-  `stupidsim ui-tree`. An app that exits, or never comes to the front (on x86Sim usually
-  missing runtime files: stupid simulator's `STUPIDSIM_APPS` manifests), fails with its
-  output.
+  `stupidsim ui-tree`. An app that exits, or never comes to the front, fails with its
+  output. stupid simulator 0.7.0 and later fetch the runtime files an app opens on first use
+  (no `STUPIDSIM_APPS` manifest needed); when one could not be fetched, the error quotes the
+  `FAILED` lines of the runtime's fetch log (`runtimes/<runtime>/layers/lazy.log`).
 - **Open macro plugins.** Xcode 27's iOS SDK implements `@State` (and `@Entry`,
   `@Model`, `#Preview`) with macro plugins it ships only as macOS binaries
   (`libSwiftUIMacros.dylib` and others), so even a device build with an Xcode 27 SDK failed
