@@ -75,6 +75,27 @@ public enum X86Sim {
     return data.appendingPathComponent("var", isDirectory: true)
   }
 
+  /// stupid simulator's log of the device's runtime files fetched on first use
+  /// (`$X86SIM_DATA/runtimes/<runtime>/layers/lazy.log`), or nil when its runtime is not fetched
+  /// on demand (stupid simulator before 0.7.0, or x86Sim's own full runtime).
+  public static func runtimeFetchLog(_ device: Device) -> URL? {
+    guard
+      let runtime = try? String(
+        contentsOf: device.directory.appendingPathComponent("runtime"), encoding: .utf8
+      ).trimmingCharacters(in: .whitespacesAndNewlines), !runtime.isEmpty
+    else { return nil }
+    let log = devicesRoot.deletingLastPathComponent()
+      .appendingPathComponent("runtimes/\(runtime)/layers/lazy.log")
+    return FileManager.default.fileExists(atPath: log.path) ? log : nil
+  }
+
+  /// The runtime files that could not be fetched, the last `limit` `FAILED` lines of that log.
+  public static func failedFetches(inLog text: String, limit: Int = 5) -> [String] {
+    Array(
+      text.split(separator: "\n").filter { $0.contains(" FAILED ") }.suffix(limit)
+        .map(String.init))
+  }
+
   public static func listDevices() throws -> [Device] {
     let root = devicesRoot
     let names =
@@ -114,7 +135,8 @@ public enum X86Sim {
       executable: tool, arguments: ["boot", "--device", device.name],
       configuration: .init(maxOutputBytes: 200_000, timeoutSeconds: 1200))
     guard result.succeeded else {
-      throw Error.commandFailed("`stupidsim-linux boot --device \(device.name)`: \(result.failureOutput)")
+      throw Error.commandFailed(
+        "`stupidsim-linux boot --device \(device.name)`: \(result.failureOutput)")
     }
   }
 
@@ -175,7 +197,9 @@ public enum X86Sim {
         executable: stupidsim, arguments: ["ui-tree", device.udid], environment: environment,
         configuration: .init(maxOutputBytes: 2_000_000, timeoutSeconds: 30)),
       result.succeeded,
-      let line = result.stdout.split(separator: "\n").first(where: { $0.hasPrefix("Application \"") }),
+      let line = result.stdout.split(separator: "\n").first(where: {
+        $0.hasPrefix("Application \"")
+      }),
       let open = line.firstIndex(of: "\""), let close = line.lastIndex(of: "\""), open < close
     else { return nil }
     return String(line[line.index(after: open)..<close])
@@ -195,7 +219,8 @@ public enum X86Sim {
       executable: launcher, arguments: ["x86sim"] + arguments, environment: environment,
       configuration: .init(maxOutputBytes: 2_000_000, timeoutSeconds: 600))
     guard result.succeeded else {
-      throw Error.commandFailed("`x86sim \(arguments.joined(separator: " "))`: \(result.failureOutput)")
+      throw Error.commandFailed(
+        "`x86sim \(arguments.joined(separator: " "))`: \(result.failureOutput)")
     }
     return result.stdout
   }

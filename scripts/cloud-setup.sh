@@ -4,15 +4,17 @@
 # device and simulator Swift SDKs, and (through stupid simulator) an iOS simulator with stupidsim.
 #
 #   curl -fsSL https://raw.githubusercontent.com/stephancill/stupid-app-cli/main/scripts/cloud-setup.sh \
-#     | STUPIDSIM_APPS="" bash
+#     | bash
 #
 # Then, at the start of each session:   stupidsim-linux boot
 # and in an app's directory:             stupid-app run --simulator
 #
 # Everything comes from stupid simulator's public store: swift.org's own download host is not
 # reachable from Claude Code cloud sessions, so the toolchain is mirrored there (checked against
-# swift.org's signature when it was mirrored, and against its SHA-256 here). STUPIDSIM_APPS names
-# runtime manifests of apps to fetch besides the base (stupid simulator's cloud-setup.sh).
+# swift.org's signature when it was mirrored, and against its SHA-256 here). The simulator fetches
+# the iOS runtime files an app needs the first time it opens them (stupid simulator 0.7.0 and
+# later), so any app runs; STUPIDSIM_APPS optionally names recorded runtime manifests to fetch up
+# front (stupid simulator's cloud-setup.sh).
 set -euo pipefail
 started=$(date +%s)
 swift_version=6.4.2
