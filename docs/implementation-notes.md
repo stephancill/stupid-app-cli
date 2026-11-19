@@ -16,6 +16,46 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth. Historical entries record the implementation at their date. Use the current handover and bundled command reference for operational instructions.
 
+## 2026-11-19 - Release 0.0.30
+
+### Summary
+
+- Released `stupid-app 0.0.30`: `run --simulator`'s error for an app that never comes to the front
+  now reports the runtime files stupid simulator could not fetch (following entry), and the
+  setup instructions download `cloud-setup.sh` before running it. No command or option
+  changed; asset names and the release process are unchanged.
+- Bumped `StupidApp.productVersion` from `0.0.29` to `0.0.30`.
+- Built from the release commit (macOS) and a `git archive` of it (Linux, Swift 6.4.2).
+
+### Verification
+
+- `swift test --filter X86SimFetchLogTests` passed (3 tests); the skill-creator validation
+  passed for `skills/stupid-app-cli`.
+- Both builds report `stupid-app 0.0.30`.
+- CLI (macOS) SHA-256: `f220ebfa34925307adaba2438a6048de77513d3c4e0d6d755cdbfc279ea6fac2`.
+- GUI (macOS) SHA-256: `6ef0e85b18ddeddbc3d1ff549d187a45be6ed6c4ad280ed13c88e00b5459e073`.
+- Linux package SHA-256: `2a7b11bd0eaf31cdde4438fe85ce1185ef3ce3323c6e6acb0b2288b98f352d1e`.
+
+## 2026-11-19 - Simulator Runs On stupid simulator 0.8 (Lazy Runtime, x86Sim 0.5.0)
+
+### Summary
+
+- stupid simulator 0.7.0 and later fetch the iOS runtime files an app opens on first use, so an
+  app no longer needs a recorded `STUPIDSIM_APPS` manifest; 0.8.x runs x86Sim 0.5.0.
+- When `run --simulator`'s app never comes to the front, the error now quotes the last `FAILED`
+  lines of the runtime's fetch log (`$X86SIM_DATA/runtimes/<runtime>/layers/lazy.log`), or says
+  none failed, instead of pointing at manifests (`X86Sim.runtimeFetchLog`, `failedFetches`).
+- `cloud-setup.sh`, the README and the skill no longer suggest `STUPIDSIM_APPS`, and show
+  downloading `cloud-setup.sh` and running the file: in a Claude Code cloud session the agent's
+  permission check refused `curl ... | bash`.
+
+### Verification
+
+- In a fresh Claude Code cloud session (4 vCPU, 16 GB) with stupid-app 0.0.29 and stupid
+  simulator 0.8.1: setup 172 s; boot 175 s; `stupid-app new` then `run --simulator` 39.9 s, the
+  app on screen 4 s after launch; `tap --label "Count: 0" --verify` turned it into `Count: 1`;
+  an edit-and-run cycle 15.8 s; 23 runtime units fetched, none failed.
+
 ## 2026-11-18 - Release 0.0.29
 
 ### Summary
