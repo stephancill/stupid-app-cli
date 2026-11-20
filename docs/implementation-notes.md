@@ -16,6 +16,33 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth. Historical entries record the implementation at their date. Use the current handover and bundled command reference for operational instructions.
 
+## 2026-11-20 - Cloud Setup Downloads In Parallel
+
+### Summary
+
+- `scripts/cloud-setup.sh` ran every step one after the other: apt, the Swift toolchain, stupid-app,
+  both SDKs, then stupid simulator's own setup (its packages and the simulator's runtime parts).
+  After apt it now starts stupid simulator's setup and the SDK downloads in the background, installs
+  the toolchain and stupid-app meanwhile, imports the SDKs once downloaded, and then waits for
+  stupid simulator's setup.
+- apt runs first and alone: stupid simulator's setup runs apt-get too, and two at once fail on
+  dpkg's lock.
+- Each background part logs to its own file. The script waits for each one and checks its exit
+  status. A failed SDK download prints its log and fails. A failed stupid simulator setup prints
+  its prefixed output and exits with its status. An `EXIT` trap stops the background parts when
+  the script fails partway.
+- The header's usage comment downloads the script before running it, as the README does.
+
+### Verification
+
+- `bash -n scripts/cloud-setup.sh`.
+- A fresh Claude Code cloud session (4 vCPU, Ubuntu 24.04) ran the branch's script: exit 0 in
+  105 s (136-260 s in earlier sessions with the sequential script). Swift was installed at 81 s,
+  the SDKs imported by 99 s, and stupid simulator's base pack fetched at 90 s in the background.
+  Then `stupidsim-linux boot` (65 s), `stupid-app new` plus `run --simulator` (61 s, the app in front
+  6 s after launch) and `stupidsim tap --label --verify` (exit 0) all worked, with both SDKs listed
+  by `swift sdk list`.
+
 ## 2026-11-19 - Release 0.0.30
 
 ### Summary

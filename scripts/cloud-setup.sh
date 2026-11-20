@@ -3,8 +3,8 @@
 # change an iOS app and check it end to end, with no Mac: the Swift toolchain, stupid-app, its
 # device and simulator Swift SDKs, and (through stupid simulator) an iOS simulator with stupidsim.
 #
-#   curl -fsSL https://raw.githubusercontent.com/stephancill/stupid-app-cli/main/scripts/cloud-setup.sh \
-#     | bash
+#   curl -fsSL -o cloud-setup.sh https://raw.githubusercontent.com/stephancill/stupid-app-cli/main/scripts/cloud-setup.sh
+#   bash cloud-setup.sh
 #
 # Then, at the start of each session:   stupidsim-linux boot
 # and in an app's directory:             stupid-app run --simulator
@@ -50,8 +50,35 @@ if [ ${#missing[@]} -gt 0 ]; then
   step "installed ${missing[*]}"
 fi
 
-# The Swift toolchain, unpacked under ${prefix}/share/swift-<version> and linked onto PATH.
+# The rest downloads in parallel: stupid simulator's setup (the longest part: its own packages, then
+# the simulator's runtime parts) and the SDK archives run in the background while the toolchain
+# downloads here. apt above finished first, so stupid simulator's apt-get does not meet ours on
+# dpkg's lock. Each background part logs to its own file and is waited for, and its exit status
+# checked, before the script ends.
+background=$(mktemp -d)
+# A failure here stops the background parts too, rather than leaving them running.
+trap 'kill $(jobs -p) 2>/dev/null || true' EXIT
 toolchain="${prefix}/share/swift-${swift_version}"
+
+# The simulator: stupid simulator's runtime store, x86Sim, stupidsim and a booted-once device.
+curl -fsSL -o "${background}/stupidsim-setup.sh" \
+  https://raw.githubusercontent.com/stephancill/stupid-simulator/main/linux/cloud-setup.sh
+bash "${background}/stupidsim-setup.sh" > "${background}/stupidsim.log" 2>&1 &
+stupidsim_pid=$!
+
+# The device and simulator Swift SDKs from Xcode, exported by `stupid-app sdk export`: downloaded
+# now, imported once the toolchain and stupid-app are in place. One already imported is skipped.
+sdks=$(get sdks/current.txt)
+(
+  for sdk in ${sdks}; do
+    name="${sdk%%=*}"
+    if "${toolchain}/usr/bin/swift" sdk list 2>/dev/null | grep -qx "${name%%-arm64-*}"; then continue; fi
+    get "sdks/${name}.artifactbundle.tar.zst" > "${background}/${name}.tar.zst"
+  done
+) > "${background}/sdks.log" 2>&1 &
+sdks_pid=$!
+
+# The Swift toolchain, unpacked under ${prefix}/share/swift-<version> and linked onto PATH.
 if ! "${toolchain}/usr/bin/swift" --version 2>/dev/null | grep -q "Swift version ${swift_version}"; then
   key="toolchains/swift-${swift_version}-RELEASE-ubuntu24.04.tar.gz"
   expected=$(get "${key}.sha256" | cut -d' ' -f1)
@@ -74,17 +101,21 @@ install -m 755 "${work}/stupid-app-macros" "${prefix}/bin/stupid-app-macros"
 rm -rf "${work}"
 step "installed $(stupid-app --version)"
 
-# The device and simulator Swift SDKs from Xcode, exported by `stupid-app sdk export`.
-for sdk in $(get sdks/current.txt); do
+if ! wait "${sdks_pid}"; then
+  echo "downloading the SDKs failed:" >&2; cat "${background}/sdks.log" >&2; exit 1
+fi
+for sdk in ${sdks}; do
   name="${sdk%%=*}"; sha="${sdk#*=}"
-  if swift sdk list 2>/dev/null | grep -qx "${name%%-arm64-*}"; then continue; fi
-  work=$(mktemp -d)
-  get "sdks/${name}.artifactbundle.tar.zst" > "${work}/sdk.tar.zst"
-  stupid-app sdk import "${work}/sdk.tar.zst" --expected-sha256 "${sha}" >/dev/null
-  rm -rf "${work}"
+  [ -f "${background}/${name}.tar.zst" ] || continue  # already imported
+  stupid-app sdk import "${background}/${name}.tar.zst" --expected-sha256 "${sha}" >/dev/null
+  rm -f "${background}/${name}.tar.zst"
   step "imported ${name%%-arm64-*}"
 done
 
-# The simulator: stupid simulator's runtime store, x86Sim, stupidsim and a booted-once device.
-curl -fsSL https://raw.githubusercontent.com/stephancill/stupid-simulator/main/linux/cloud-setup.sh | bash
+if wait "${stupidsim_pid}"; then status=0; else status=$?; fi
+sed 's/^/stupid simulator: /' "${background}/stupidsim.log"
+if [ "${status}" != 0 ]; then
+  echo "stupid simulator's setup failed (status ${status}); its output is above" >&2; exit "${status}"
+fi
+rm -rf "${background}"
 step "cloud setup done; boot with: stupidsim-linux boot, then in an app: stupid-app run --simulator"

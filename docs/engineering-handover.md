@@ -16,7 +16,8 @@ front. Imported-SDK builds need `stupid-app-macros` (`Tools/StupidAppMacros`) be
 Xcode 27's SDK expands `@State`, `@Entry`, `@Model` and `#Preview` through macOS-only
 plugins, and refuse a Swift whose major.minor differs from the SDK's.
 `scripts/cloud-setup.sh` sets up a fresh Ubuntu 24.04 machine (toolchain, stupid-app,
-SDKs, simulator) from stupid simulator's public store.
+SDKs, simulator) from stupid simulator's public store. After apt, the simulator's setup and the
+SDK downloads run in the background while the toolchain installs (about 105 s in a cloud session).
 
 macOS host support is scoped in `docs/macos-host-support-scope.md` as an additive
 initiative with confirmed design decisions: two host modes selected by Xcode presence
