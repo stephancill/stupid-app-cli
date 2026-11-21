@@ -1,0 +1,36 @@
+name: stupid-app TestFlight
+description: >
+  Build an iOS app on Ubuntu with stupid-app and upload it to internal TestFlight through a
+  signing broker's release session. The broker holds the App Store Connect key and the
+  distribution private key; the run authenticates with its GitHub OIDC token and waits for the
+  owner's passkey approval. Needs `permissions: id-token: write` (and `contents: write` with
+  commit-build-number).
+inputs:
+  broker:
+    description: Signing broker origin (the OIDC audience).
+    default: https://vault.stupidtech.net
+  project-directory:
+    description: Directory holding stupid-app.yml.
+    default: .
+  commit-build-number:
+    description: Commit and push the new CFBundleVersion before archiving ("true" or "false").
+    default: "true"
+  approval-timeout-minutes:
+    description: How long to wait for approval.
+    default: "10"
+runs:
+  using: composite
+  steps:
+    - name: Install Swift, stupid-app and the device SDK
+      shell: bash
+      run: |
+        bash "${GITHUB_ACTION_PATH}/../../../scripts/cloud-setup.sh" --device-only
+        echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
+    - name: Build, approve, sign and upload
+      shell: bash
+      working-directory: ${{ inputs.project-directory }}
+      env:
+        BROKER: ${{ inputs.broker }}
+        COMMIT_BUILD_NUMBER: ${{ inputs.commit-build-number }}
+        APPROVAL_TIMEOUT_MINUTES: ${{ inputs.approval-timeout-minutes }}
+      run: bash "${GITHUB_ACTION_PATH}/testflight.sh"

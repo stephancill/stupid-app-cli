@@ -15,7 +15,10 @@ request through the session (no JWT is created locally) and `release archive` si
 through it with a `CMSSigner`; `signing fetch` downloads the distribution certificate and
 App Store profiles read-only. The broker side is planned in the permissions-broker
 repository (`docs/APPLE_RELEASE_SESSIONS.md`) for TestFlight uploads from GitHub Actions.
-See "Certificate And Credential Storage" and "Signing Engine".
+See "Certificate And Credential Storage" and "Signing Engine". The composite action
+`.github/actions/testflight` runs this in GitHub Actions (OIDC to the broker, then `signing
+fetch`, build-number bump, `release archive`, `release upload --wait`), after
+`scripts/cloud-setup.sh --device-only`, which skips the simulator and its SDK.
 
 **Linux simulators and cloud sessions (2026-11-18).** Without Xcode, `run --simulator`
 builds with the imported `stupid-app-ios-simulator` SDK (`sdk export --target

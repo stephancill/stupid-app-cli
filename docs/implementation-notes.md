@@ -16,6 +16,27 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth. Historical entries record the implementation at their date. Use the current handover and bundled command reference for operational instructions.
 
+## 2026-11-21 - TestFlight From GitHub Actions: Composite Action And Device-Only Setup
+
+### Summary
+
+- `.github/actions/testflight` (composite action, `testflight.sh`): installs everything with
+  `scripts/cloud-setup.sh --device-only`, builds unsigned (failing before anyone is asked to
+  approve), creates a release session on the broker with the job's GitHub OIDC token
+  (audience: the broker origin), polls until the owner approves, masks the session URL and
+  exports it as `STUPID_APP_RELEASE_SESSION`, then `signing fetch`, `release new-build` (never
+  below the checked-in `CFBundleVersion`), `release bump` and a pushed commit when it changes,
+  `release archive` and `release upload --wait`. The session is closed on exit.
+- A composite action rather than a reusable workflow: the app repository's own steps (writing
+  files from its secrets) run in the same job, and the broker's policy names the app
+  repository's workflow file (`workflow_ref`).
+- `cloud-setup.sh --device-only` skips stupid simulator's setup and the simulator SDK.
+
+### Verification
+
+- `bash -n` on both scripts; the bundle-id and version parsing checked against a project with
+  an extension. Not yet run in GitHub Actions.
+
 ## 2026-11-21 - Release 0.0.31
 
 ### Summary

@@ -154,6 +154,23 @@ sends every App Store Connect call through the broker's release session and has
 certificate and App Store profiles there; it never creates them. See the skill's
 command reference for the session contract.
 
+GitHub Actions can do this with the composite action `.github/actions/testflight`: on an
+Ubuntu runner it installs the toolchain, stupid-app and the device SDK
+(`scripts/cloud-setup.sh --device-only`), builds, asks the broker for a release session with
+the run's GitHub OIDC token, waits for the owner's approval, then runs `signing fetch`, bumps
+and commits the build number, and archives and uploads through the session:
+
+```yaml
+on: workflow_dispatch
+permissions: { contents: write, id-token: write }
+jobs:
+  testflight:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: stephancill/stupid-app-cli/.github/actions/testflight@<commit>
+```
+
 `stupid-app doctor` exits unsuccessfully when a required host dependency is invalid
 and reports incomplete credentials, signing identities, pairing, or project context as
 warnings. It checks the installed SDK against the current host triple and Swift

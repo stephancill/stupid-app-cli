@@ -9,6 +9,9 @@
 # Then, at the start of each session:   stupidsim-linux boot
 # and in an app's directory:             stupid-app run --simulator
 #
+# `bash cloud-setup.sh --device-only` installs only what device builds and releases need (the
+# toolchain, stupid-app and the device SDK), for CI: no simulator SDK and no simulator.
+#
 # Everything comes from stupid simulator's public store: swift.org's own download host is not
 # reachable from Claude Code cloud sessions, so the toolchain is mirrored there (checked against
 # swift.org's signature when it was mirrored, and against its SHA-256 here). The simulator fetches
@@ -16,6 +19,12 @@
 # later), so any app runs; STUPIDSIM_APPS optionally names recorded runtime manifests to fetch up
 # front (stupid simulator's cloud-setup.sh).
 set -euo pipefail
+device_only=false
+case "${1:-}" in
+  --device-only) device_only=true ;;
+  "") ;;
+  *) echo "usage: cloud-setup.sh [--device-only]" >&2; exit 2 ;;
+esac
 started=$(date +%s)
 swift_version=6.4.2
 public="${STUPIDSIM_PUBLIC_STORE:-https://stupidsim-store.stupidtech.net}"
@@ -61,14 +70,18 @@ trap 'kill $(jobs -p) 2>/dev/null || true' EXIT
 toolchain="${prefix}/share/swift-${swift_version}"
 
 # The simulator: stupid simulator's runtime store, x86Sim, stupidsim and a booted-once device.
-curl -fsSL -o "${background}/stupidsim-setup.sh" \
-  https://raw.githubusercontent.com/stephancill/stupid-simulator/main/linux/cloud-setup.sh
-bash "${background}/stupidsim-setup.sh" > "${background}/stupidsim.log" 2>&1 &
-stupidsim_pid=$!
+stupidsim_pid=""
+if [ "${device_only}" = false ]; then
+  curl -fsSL -o "${background}/stupidsim-setup.sh" \
+    https://raw.githubusercontent.com/stephancill/stupid-simulator/main/linux/cloud-setup.sh
+  bash "${background}/stupidsim-setup.sh" > "${background}/stupidsim.log" 2>&1 &
+  stupidsim_pid=$!
+fi
 
 # The device and simulator Swift SDKs from Xcode, exported by `stupid-app sdk export`: downloaded
 # now, imported once the toolchain and stupid-app are in place. One already imported is skipped.
 sdks=$(get sdks/current.txt)
+if [ "${device_only}" = true ]; then sdks=$(printf '%s\n' ${sdks} | grep -v -- -simulator || true); fi
 (
   for sdk in ${sdks}; do
     name="${sdk%%=*}"
@@ -112,10 +125,16 @@ for sdk in ${sdks}; do
   step "imported ${name%%-arm64-*}"
 done
 
-if wait "${stupidsim_pid}"; then status=0; else status=$?; fi
-sed 's/^/stupid simulator: /' "${background}/stupidsim.log"
-if [ "${status}" != 0 ]; then
-  echo "stupid simulator's setup failed (status ${status}); its output is above" >&2; exit "${status}"
+if [ -n "${stupidsim_pid}" ]; then
+  if wait "${stupidsim_pid}"; then status=0; else status=$?; fi
+  sed 's/^/stupid simulator: /' "${background}/stupidsim.log"
+  if [ "${status}" != 0 ]; then
+    echo "stupid simulator's setup failed (status ${status}); its output is above" >&2; exit "${status}"
+  fi
 fi
 rm -rf "${background}"
-step "cloud setup done; boot with: stupidsim-linux boot, then in an app: stupid-app run --simulator"
+if [ "${device_only}" = true ]; then
+  step "cloud setup done (device only): in an app, stupid-app build or stupid-app release archive"
+else
+  step "cloud setup done; boot with: stupidsim-linux boot, then in an app: stupid-app run --simulator"
+fi
