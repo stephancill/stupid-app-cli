@@ -16,6 +16,29 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth. Historical entries record the implementation at their date. Use the current handover and bundled command reference for operational instructions.
 
+## 2026-11-21 - Release 0.0.32: Apple Certificates Compiled In
+
+### Summary
+
+- `release archive` from a released binary crashed on the first signing step: `Fatal error:
+  unable to find bundle named stupid-app_SigningKit`. The pinned Apple WWDR G3 and root
+  certificates were a SwiftPM resource bundle, which the release assets never shipped; the
+  macOS asset only worked where it was built, because `Bundle.module` falls back to the build
+  directory. Found by the first GitHub Actions TestFlight run.
+- The two public certificates are now string constants (`AppleSigningCertificates.swift`),
+  still checked against their pinned SHA-256 and chain before use. SigningKit declares no
+  resources, so the binaries are self-contained again.
+- Bumped `StupidApp.productVersion` from `0.0.31` to `0.0.32`.
+
+### Verification
+
+- `SigningKitTests` and `StupidAppTests` pass. A copy of the debug binary outside the build
+  directory, with the old bundle moved away, passes `doctor`'s native signing trust check.
+- Both builds report `stupid-app 0.0.32`.
+- CLI (macOS) SHA-256: `b4fbcb128102f75d7457de58d4ffce1eb9b68194817c543400f8637972c34580`.
+- GUI (macOS) SHA-256: `067be600199843173902a0aeca6c0d17f5170bfedbf693af522c835a13cde2a6`.
+- Linux package SHA-256: `899a32e78a2127b5326b691c0a2f3306cff56b4fe28a41fc7852739749bb0fa0`.
+
 ## 2026-11-21 - TestFlight From GitHub Actions: Composite Action And Device-Only Setup
 
 ### Summary

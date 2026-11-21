@@ -93,10 +93,6 @@ let package = Package(
         .product(name: "SwiftASN1", package: "swift-asn1"),
         .product(name: "_CryptoExtras", package: "swift-crypto"),
         .product(name: "X509", package: "swift-certificates"),
-      ],
-      resources: [
-        .copy("Resources/AppleIncRootCertificate.pem"),
-        .copy("Resources/AppleWWDRCAG3.pem"),
       ]
     ),
     .target(

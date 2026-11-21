@@ -14,15 +14,12 @@ public enum AppleSigningTrust {
   }
 
   public enum Error: Swift.Error, Equatable, Sendable, CustomStringConvertible {
-    case resourceMissing(String)
     case invalidResource(String)
     case resourceChecksumMismatch(String, actual: String)
     case unsupportedLeafIssuer
 
     public var description: String {
       switch self {
-      case .resourceMissing(let name):
-        return "The bundled Apple signing certificate '\(name)' is missing. Reinstall stupid-app."
       case .invalidResource(let name):
         return "The bundled Apple signing certificate '\(name)' is invalid. Reinstall stupid-app."
       case .resourceChecksumMismatch(let name, let actual):
@@ -37,14 +34,17 @@ public enum AppleSigningTrust {
 
   private struct PinnedCertificate {
     let name: String
+    let pem: String
     let sha256: String
   }
 
   private static let intermediate = PinnedCertificate(
     name: "AppleWWDRCAG3",
+    pem: AppleSigningCertificates.wwdrG3,
     sha256: "dcf21878c77f4198e4b4614f03d696d89c66c66008d4244e1b99161aac91601f")
   private static let root = PinnedCertificate(
     name: "AppleIncRootCertificate",
+    pem: AppleSigningCertificates.appleIncRoot,
     sha256: "b0b1730ecbc7ff4505142c49f1295e6eda6bcaed7e2c68c5be91b5a11001f024")
 
   public static func chain(forLeafCertificatePEM leafPEM: String) throws -> Chain {
@@ -98,13 +98,9 @@ public enum AppleSigningTrust {
   }
 
   private static func load(_ pin: PinnedCertificate) throws -> String {
-    guard let url = Bundle.module.url(forResource: pin.name, withExtension: "pem") else {
-      throw Error.resourceMissing(pin.name)
-    }
-    let pem: String
+    let pem = pin.pem
     let der: Data
     do {
-      pem = try String(contentsOf: url, encoding: .utf8)
       der = try NativeDER.pemDER(pem)
     } catch {
       throw Error.invalidResource(pin.name)
