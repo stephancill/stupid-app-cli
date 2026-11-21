@@ -24,6 +24,10 @@ plist_value() { python3 -c 'import plistlib,sys; print(plistlib.load(open(sys.ar
 version=$(plist_value CFBundleShortVersionString)
 current_build=$(plist_value CFBundleVersion)
 
+# Release sessions need stupid-app 0.0.31 or later (`signing fetch`, STUPID_APP_RELEASE_SESSION).
+stupid-app signing fetch --help >/dev/null 2>&1 \
+  || fail "$(stupid-app --version | head -1) predates release sessions; the store's stupid-app package is stale"
+
 echo "::group::Unsigned build"
 stupid-app build
 echo "::endgroup::"

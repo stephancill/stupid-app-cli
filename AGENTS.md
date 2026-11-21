@@ -177,7 +177,10 @@ Publishing a new `stupid-app` version:
    `stupid-app`, `stupid-app-macros`, `THIRD_PARTY_NOTICES.md` and the vendored
    swift-foundation `LICENSE.md` (as `swift-foundation-LICENSE.md`). Also upload it to stupid
    simulator's store as `packages/stupid-app-linux-x86_64.tar.gz`, which
-   `scripts/cloud-setup.sh` installs.
+   `scripts/cloud-setup.sh` installs. Then purge that URL from Cloudflare's cache, which otherwise keeps serving the previous
+   package to `cloud-setup.sh` (and to CI) for hours:
+   `cf cache purge --zone stupidtech.net --force --body '{"files":["https://stupidsim-store.stupidtech.net/packages/stupid-app-linux-x86_64.tar.gz"]}'`,
+   and check the public URL's SHA-256 matches the asset.
 6. Update the local installation from the published release assets using an atomic
    replacement, then verify both the reported version and checksum. Download each asset
    to a sibling `.new` path, set it executable, verify it before replacement, and only
