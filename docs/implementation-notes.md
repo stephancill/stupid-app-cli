@@ -16,6 +16,26 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth. Historical entries record the implementation at their date. Use the current handover and bundled command reference for operational instructions.
 
+## 2026-11-21 - Release 0.0.31
+
+### Summary
+
+- Released `stupid-app 0.0.31` with release sessions (following entry): the
+  `STUPID_APP_RELEASE_SESSION` variable and the read-only `signing fetch` command. Asset
+  names and the release process are unchanged.
+- Bumped `StupidApp.productVersion` from `0.0.30` to `0.0.31`.
+- Built from a `git archive` of the release commit's source (macOS and Linux, Swift 6.4.2
+  on Linux).
+
+### Verification
+
+- `swift test` for `SigningKitTests`, `ASCKitTests`, `StupidAppTests` and
+  `X86SimFetchLogTests` passed on the rebased tree; the skill-creator validation passed.
+- Both builds report `stupid-app 0.0.31`.
+- CLI (macOS) SHA-256: `bc633dfcac97bd5046708f51998fc60fc2c1800627bf73d16d592728e2a00f8c`.
+- GUI (macOS) SHA-256: `19d34fa9f5584186c2b3ace9316096f60825ce155792b26317dcfa778e937d68`.
+- Linux package SHA-256: `0d526af693027a5fb94b3bbc2aeaabb8d2ac9d8e1b49f33d78dc488d0356222e`.
+
 ## 2026-11-21 - Release Sessions: Signing And App Store Connect Without Local Keys
 
 ### Summary
