@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import ASCKit
 @testable import SigningKit
 
 /// Unit tests for the development/profile preflight and content-addressed ProfileStore
@@ -99,5 +100,37 @@ struct ProfilePreflightAndStoreTests {
 
         let located = try ProfileStore.locate(home: home, kind: .development, bundleID: "net.example.app")
         #expect(located?.resolvingSymlinksInPath().path == legacy.resolvingSymlinksInPath().path)
+    }
+
+    @Test("signing fetch picks the active App Store profile with the certificate that expires last")
+    func selectsFetchedAppStoreProfile() throws {
+        let certificate = Data("distribution-certificate".utf8)
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        func profile(
+            _ id: String, type: String = "IOS_APP_STORE", state: String = "ACTIVE",
+            expiresIn days: Double, certificates: [Data]
+        ) throws -> (summary: ASCOperations.ProfileSummary, content: Data) {
+            (
+                ASCOperations.ProfileSummary(
+                    id: id, name: id, profileType: type, state: state,
+                    expirationDate: now.addingTimeInterval(days * 86_400)),
+                try makeProfileData(["Name": id, "DeveloperCertificates": certificates])
+            )
+        }
+        let candidates = [
+            try profile("other-certificate", expiresIn: 300, certificates: [Data("other".utf8)]),
+            try profile("expired", expiresIn: -1, certificates: [certificate]),
+            try profile("invalid", state: "INVALID", expiresIn: 200, certificates: [certificate]),
+            try profile("development", type: "IOS_APP_DEVELOPMENT", expiresIn: 250, certificates: [certificate]),
+            try profile("older", expiresIn: 30, certificates: [certificate]),
+            try profile("newest", expiresIn: 90, certificates: [Data("other".utf8), certificate]),
+        ]
+
+        let selected = try #require(
+            ProfileStore.selectAppStoreProfile(candidates, certificateDER: certificate, now: now))
+        #expect(try MobileProvisionParser.parse(selected).name == "newest")
+        #expect(
+            ProfileStore.selectAppStoreProfile(
+                Array(candidates.prefix(4)), certificateDER: certificate, now: now) == nil)
     }
 }

@@ -10,7 +10,7 @@ struct SigningCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "signing",
         abstract: "Manage signing identities and provisioning profiles.",
-        subcommands: [SigningSetupCommand.self]
+        subcommands: [SigningSetupCommand.self, SigningFetchCommand.self]
     )
 }
 
@@ -446,7 +446,7 @@ struct SigningSetupCommand: AsyncParsableCommand {
             .appendingPathComponent(".stupid-app/credentials").path
         let store = CredentialStore(home: URL(fileURLWithPath: homePath))
         guard let teamID = try? store.loadTeamID(), let key = try? store.loadASCKey() else { return nil }
-        return ASCContext(apiKey: key, teamID: teamID, homeURL: store.home, credentialStore: store)
+        return ASCContext(access: .apiKey(key), teamID: teamID, homeURL: store.home, credentialStore: store)
     }
 
     /// Imports an existing identity and exact provisioning profile for a kind and

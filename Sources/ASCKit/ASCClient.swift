@@ -8,10 +8,12 @@ import FoundationNetworking
 /// ever echoing the raw JWT or request bodies into diagnostic output.
 public struct ASCClient: Sendable {
     public var baseURL: URL
-    public var jwt: @Sendable () throws -> String
+    /// Creates the bearer JWT for each request. Nil only for a `baseURL` that adds its own
+    /// authorization (a release session's App Store Connect proxy).
+    public var jwt: (@Sendable () throws -> String)?
     public var logger: (@Sendable (String) -> Void)?
 
-    public init(baseURL: URL = URL(string: "https://api.appstoreconnect.apple.com/v1")!, jwt: @escaping @Sendable () throws -> String) {
+    public init(baseURL: URL = URL(string: "https://api.appstoreconnect.apple.com/v1")!, jwt: (@Sendable () throws -> String)?) {
         self.baseURL = baseURL
         self.jwt = jwt
     }
@@ -46,14 +48,17 @@ public struct ASCClient: Sendable {
 
         var request = URLRequest(url: url)
         request.httpMethod = method.rawValue
-        request.setValue("Bearer \(try jwt())", forHTTPHeaderField: "Authorization")
+        if let jwt {
+            request.setValue("Bearer \(try jwt())", forHTTPHeaderField: "Authorization")
+        }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 60
         if let body {
             request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
         }
 
-        logger?("\(method.rawValue) \(url.path)")
+        // The request path only: a release session's base URL carries its secret.
+        logger?("\(method.rawValue) /\(path)")
         let (data, response) = try perform(request)
         guard let http = response as? HTTPURLResponse else {
             throw ASCError.invalidResponse

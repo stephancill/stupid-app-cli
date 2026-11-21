@@ -109,7 +109,7 @@ public enum SigningPipeline {
     try NativeSigner().sign(
       appBundle: input.unsignedApp,
       identity: .init(
-        privateKeyPEM: input.identity.privateKeyPEM,
+        signer: input.identity.signer,
         leafCertificatePEM: input.identity.certificatePEM,
         intermediateCertificatePEM: chain.intermediateCertificatePEM,
         trustedRootCertificatesPEM: [chain.rootCertificatePEM]),
@@ -276,7 +276,7 @@ public enum DeepSigningPipeline {
       try NativeSigner().sign(
         appBundle: extensionInput.appexBundle,
         identity: .init(
-          privateKeyPEM: extensionInput.identity.privateKeyPEM,
+          signer: extensionInput.identity.signer,
           leafCertificatePEM: extensionInput.identity.certificatePEM,
           intermediateCertificatePEM: chain.intermediateCertificatePEM,
           trustedRootCertificatesPEM: [chain.rootCertificatePEM]),
@@ -302,7 +302,7 @@ public enum DeepSigningPipeline {
     try NativeSigner().sign(
       appBundle: input.unsignedApp,
       identity: .init(
-        privateKeyPEM: input.identity.privateKeyPEM,
+        signer: input.identity.signer,
         leafCertificatePEM: input.identity.certificatePEM,
         intermediateCertificatePEM: appChain.intermediateCertificatePEM,
         trustedRootCertificatesPEM: [appChain.rootCertificatePEM]),

@@ -48,13 +48,13 @@ struct NativeSigningSerializationTests {
     let codeDirectory = Data("deterministic-code-directory".utf8)
     let cms = try NativeCMS.sign(
       codeDirectory: codeDirectory,
-      privateKeyPEM: fixture.leafKey.pkcs8PEMRepresentation,
+      signer: .privateKey(pem: fixture.leafKey.pkcs8PEMRepresentation),
       leafCertificatePEM: fixture.leafPEM,
       intermediateCertificatePEM: fixture.intermediatePEM,
       rootCertificatePEM: fixture.rootPEM)
     let repeated = try NativeCMS.sign(
       codeDirectory: codeDirectory,
-      privateKeyPEM: fixture.leafKey.pkcs8PEMRepresentation,
+      signer: .privateKey(pem: fixture.leafKey.pkcs8PEMRepresentation),
       leafCertificatePEM: fixture.leafPEM,
       intermediateCertificatePEM: fixture.intermediatePEM,
       rootCertificatePEM: fixture.rootPEM)
@@ -136,7 +136,7 @@ struct NativeSigningSerializationTests {
     try NativeSigner().sign(
       appBundle: root,
       identity: .init(
-        privateKeyPEM: certificates.leafKey.pkcs8PEMRepresentation,
+        signer: .privateKey(pem: certificates.leafKey.pkcs8PEMRepresentation),
         leafCertificatePEM: certificates.leafPEM,
         intermediateCertificatePEM: certificates.intermediatePEM,
         trustedRootCertificatesPEM: [certificates.rootPEM]),
@@ -157,6 +157,84 @@ struct NativeSigningSerializationTests {
     let cms = try NativeSignatureVerifier.verifyCMS(
       executable: executable, trustedRootCertificatesPEM: [certificates.rootPEM])
     #expect(!cms.hasTimestamp)
+  }
+
+  @Test("a remote signer is asked once per bundle and yields the same signature as the key")
+  func remoteSignerSignsOnceWithIdenticalOutput() throws {
+    let certificates = try certificateFixture()
+    let localApp = try makeFixtureApp()
+    let remoteApp = try makeFixtureApp()
+    defer {
+      try? FileManager.default.removeItem(at: localApp)
+      try? FileManager.default.removeItem(at: remoteApp)
+    }
+
+    try NativeSigner().sign(
+      appBundle: localApp, identity: identity(certificates, signer: .privateKey(pem: certificates.leafKey.pkcs8PEMRepresentation)),
+      entitlements: fixtureEntitlements, teamID: "TEAMID1234")
+
+    // A stand-in for a release session: it holds the key, and records what it is sent.
+    final class Requests: @unchecked Sendable { var received: [CMSSignRequest] = [] }
+    let requests = Requests()
+    let key = certificates.leafKey
+    let remote = CMSSigner { request in
+      requests.received.append(request)
+      return try key.signature(for: request.signedAttributes, padding: .insecurePKCS1v1_5)
+        .rawRepresentation
+    }
+    try NativeSigner().sign(
+      appBundle: remoteApp, identity: identity(certificates, signer: remote),
+      entitlements: fixtureEntitlements, teamID: "TEAMID1234")
+
+    #expect(requests.received.count == 1)
+    let executable = try Data(contentsOf: remoteApp.appendingPathComponent("Fixture"))
+    #expect(executable == (try Data(contentsOf: localApp.appendingPathComponent("Fixture"))))
+    let signature = try NativeSignatureVerifier.parse(executable: executable)
+    #expect(requests.received[0].codeDirectory == signature.blobs.first { $0.slot == 0 }?.data)
+    _ = try NativeSignatureVerifier.verifyCMS(
+      executable: executable, trustedRootCertificatesPEM: [certificates.rootPEM])
+  }
+
+  @Test("a signature that doesn't verify with the certificate fails signing")
+  func mismatchedSignerFails() throws {
+    let certificates = try certificateFixture()
+    let app = try makeFixtureApp()
+    defer { try? FileManager.default.removeItem(at: app) }
+    let otherKey = try _RSA.Signing.PrivateKey(keySize: .bits2048)
+
+    #expect(throws: NativeCMS.Error.self) {
+      try NativeSigner().sign(
+        appBundle: app, identity: identity(certificates, signer: .privateKey(pem: otherKey.pkcs8PEMRepresentation)),
+        entitlements: fixtureEntitlements, teamID: "TEAMID1234")
+    }
+  }
+
+  private let fixtureEntitlements: [String: Any] = [
+    "application-identifier": "TEAMID1234.net.example.fixture", "get-task-allow": false,
+  ]
+
+  private func identity(_ certificates: CertificateFixture, signer: CMSSigner) -> NativeSigner.IdentityInput {
+    .init(
+      signer: signer,
+      leafCertificatePEM: certificates.leafPEM,
+      intermediateCertificatePEM: certificates.intermediatePEM,
+      trustedRootCertificatesPEM: [certificates.rootPEM])
+  }
+
+  private func makeFixtureApp() throws -> URL {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("native-signer-\(UUID().uuidString).app", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let info: [String: Any] = [
+      "CFBundleExecutable": "Fixture", "CFBundleIdentifier": "net.example.fixture",
+    ]
+    try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+      .write(to: root.appendingPathComponent("Info.plist"))
+    let executableURL = root.appendingPathComponent("Fixture")
+    try makeUnsignedMachO().write(to: executableURL)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executableURL.path)
+    try Data("profile".utf8).write(to: root.appendingPathComponent("embedded.mobileprovision"))
+    return root
   }
 }
 

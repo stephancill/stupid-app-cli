@@ -4,18 +4,18 @@ import Foundation
   public static let engineVersion = "native-shallow-v1"
 
   public struct IdentityInput: Sendable {
-    public let privateKeyPEM: String
+    public let signer: CMSSigner
     public let leafCertificatePEM: String
     public let intermediateCertificatePEM: String
     public let trustedRootCertificatesPEM: [String]
 
     public init(
-      privateKeyPEM: String,
+      signer: CMSSigner,
       leafCertificatePEM: String,
       intermediateCertificatePEM: String,
       trustedRootCertificatesPEM: [String]
     ) {
-      self.privateKeyPEM = privateKeyPEM
+      self.signer = signer
       self.leafCertificatePEM = leafCertificatePEM
       self.intermediateCertificatePEM = intermediateCertificatePEM
       self.trustedRootCertificatesPEM = trustedRootCertificatesPEM
@@ -78,8 +78,17 @@ import Foundation
       executableSegmentFlags |= 0x10  // ALLOW_UNSIGNED
     }
 
+    func superBlob(codeDirectory: Data, cms: Data) -> Data {
+      NativeEmbeddedSignature.superBlob([
+        (0, codeDirectory), (2, requirements), (5, xmlBlob), (7, derBlob),
+        (0x1_0000, NativeEmbeddedSignature.blob(magic: 0xFADE_0B01, payload: cms)),
+      ])
+    }
+
+    // Settle the embedded-signature size with a same-size placeholder CMS, then sign the
+    // final CodeDirectory once: a remote signer is asked for exactly one signature.
     var expectedSize = 0
-    var finalExecutable: Data?
+    var settled: (layout: NativeMachOEditor.Layout, codeDirectory: Data)?
     for _ in 0..<4 {
       let layout = try NativeMachOEditor.layout(executable: executable, signatureSize: expectedSize)
       let codeDirectory = NativeEmbeddedSignature.codeDirectory(
@@ -91,23 +100,28 @@ import Foundation
         executableSegmentFlags: executableSegmentFlags,
         executableSegmentBase: layout.executableSegmentBase,
         executableSegmentLimit: layout.executableSegmentLimit)
-      let cms = try NativeCMS.sign(
+      let placeholder = try NativeCMS.sizingPlaceholder(
         codeDirectory: codeDirectory,
-        privateKeyPEM: identity.privateKeyPEM,
         leafCertificatePEM: identity.leafCertificatePEM,
         intermediateCertificatePEM: identity.intermediateCertificatePEM,
         rootCertificatePEM: identity.trustedRootCertificatesPEM[0])
-      let cmsBlob = NativeEmbeddedSignature.blob(magic: 0xFADE_0B01, payload: cms)
-      let superBlob = NativeEmbeddedSignature.superBlob([
-        (0, codeDirectory), (2, requirements), (5, xmlBlob), (7, derBlob), (0x1_0000, cmsBlob),
-      ])
-      if superBlob.count == expectedSize {
-        finalExecutable = layout.prefix + superBlob
+      let size = superBlob(codeDirectory: codeDirectory, cms: placeholder).count
+      if size == expectedSize {
+        settled = (layout, codeDirectory)
         break
       }
-      expectedSize = superBlob.count
+      expectedSize = size
     }
-    guard let finalExecutable else { throw Error.unstableSignatureSize }
+    guard let settled else { throw Error.unstableSignatureSize }
+    let cms = try NativeCMS.sign(
+      codeDirectory: settled.codeDirectory,
+      signer: identity.signer,
+      leafCertificatePEM: identity.leafCertificatePEM,
+      intermediateCertificatePEM: identity.intermediateCertificatePEM,
+      rootCertificatePEM: identity.trustedRootCertificatesPEM[0])
+    let signature = superBlob(codeDirectory: settled.codeDirectory, cms: cms)
+    guard signature.count == expectedSize else { throw Error.unstableSignatureSize }
+    let finalExecutable = settled.layout.prefix + signature
 
     _ = try NativeSignatureVerifier.verifyCodeDirectoryHashes(
       executable: finalExecutable,

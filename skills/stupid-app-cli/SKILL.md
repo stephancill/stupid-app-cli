@@ -369,6 +369,27 @@ reported by Apple as `MISSING_BETA_APP_DESCRIPTION`. External beta requires
 `DTPlatformBuild`/`DTSDKBuild`/canonical `DTXcode` (packaged since 0.0.10) or App
 Store Connect rejects with `BUILD_SDK_NOT_ALLOWED_FOR_EXTERNAL_TESTING`.
 
+#### Releasing through a release session (CI without keys)
+
+A CI host can archive and upload without the App Store Connect key or the distribution
+private key. A signing broker holds both, and an approved release session's URL goes in
+`STUPID_APP_RELEASE_SESSION` (it carries the session's secret: keep it out of logs).
+With it set, every App Store Connect call goes through the session and `release archive`
+asks the session for one signature per bundle:
+
+```bash
+export STUPID_APP_RELEASE_SESSION=<session URL from the broker>
+stupid-app signing fetch      # distribution certificate + App Store profiles (read-only)
+stupid-app release new-build
+stupid-app release archive    # signs through the session; only the certificate is stored
+stupid-app release upload --wait
+```
+
+`signing fetch` never creates certificates or profiles: run `signing setup --kind
+distribution` where the key is (after expiry, a certificate renewal or a new
+capability), and the next fetch picks the new profile up. The session allows only its
+approved bundles, so commands outside a release (devices, profile creation) are refused.
+
 ## Command reference
 
 The complete command and option reference lives in

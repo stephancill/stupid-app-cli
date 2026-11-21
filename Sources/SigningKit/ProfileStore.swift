@@ -1,3 +1,4 @@
+import ASCKit
 import Foundation
 
 /// The provisioning-profile kind. Mirrors the development/distribution split.
@@ -115,5 +116,28 @@ public enum ProfileStore {
                 return "No \(kind.rawValue) provisioning profile is stored for '\(bundleID)'. Run `\(command)` first."
             }
         }
+    }
+}
+
+extension ProfileStore {
+    /// The active, unexpired App Store profile that includes the certificate and expires
+    /// last, from a bundle ID's profiles with their content (`signing fetch`).
+    public static func selectAppStoreProfile(
+        _ profiles: [(summary: ASCOperations.ProfileSummary, content: Data)],
+        certificateDER: Data,
+        now: Date
+    ) -> Data? {
+        profiles
+            .filter { profile in
+                guard profile.summary.profileType == ASCOperations.ProfileType.appStore.rawValue,
+                    profile.summary.state == "ACTIVE",
+                    let expiration = profile.summary.expirationDate, expiration > now,
+                    let parsed = try? MobileProvisionParser.parse(profile.content),
+                    let certificates = parsed.plist["DeveloperCertificates"] as? [Data]
+                else { return false }
+                return certificates.contains(certificateDER)
+            }
+            .max { ($0.summary.expirationDate ?? .distantPast) < ($1.summary.expirationDate ?? .distantPast) }?
+            .content
     }
 }

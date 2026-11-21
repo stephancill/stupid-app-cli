@@ -86,8 +86,12 @@ struct ReleaseArchiveCommand: AsyncParsableCommand {
     let unsignedApp = try packer.pack()
     print("Assembled unsigned \(unsignedApp.path)")
 
-    // 2. Load the distribution identity and App Store profile.
-    let identity = try IdentityManager(store: context.credentialStore).loadDistribution()
+    // 2. Load the distribution identity and App Store profile. A release session signs
+    // with the key it holds, so only the certificate is stored here.
+    let identityManager = IdentityManager(store: context.credentialStore)
+    let identity = try context.releaseSession.map {
+      try identityManager.loadDistribution(remoteSigner: $0.session.signer())
+    } ?? identityManager.loadDistribution()
     guard let teamID = identity.teamID else {
       throw ReleaseArchiveError.identityMissingTeam
     }

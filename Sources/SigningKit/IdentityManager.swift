@@ -24,14 +24,16 @@ public struct IdentityManager {
         case developerTeamID = "developer-team-id"
     }
 
+    /// A certificate and what signs with its key: the stored private key, or a remote
+    /// signer holding it (`loadDistribution(remoteSigner:)`).
     public struct SigningIdentity: Sendable {
-        public var privateKeyPEM: String
+        public var signer: CMSSigner
         public var certificatePEM: String
         public var certificateID: String?
         public var teamID: String?
 
-        public init(privateKeyPEM: String, certificatePEM: String, certificateID: String?, teamID: String?) {
-            self.privateKeyPEM = privateKeyPEM
+        public init(signer: CMSSigner, certificatePEM: String, certificateID: String?, teamID: String?) {
+            self.signer = signer
             self.certificatePEM = certificatePEM
             self.certificateID = certificateID
             self.teamID = teamID
@@ -41,6 +43,7 @@ public struct IdentityManager {
     public enum Error: Swift.Error, Equatable, Sendable, CustomStringConvertible {
         case identityMissing(String)
         case teamIDMissing
+        case distributionKeyForOtherCertificate
 
         public var description: String {
             switch self {
@@ -48,6 +51,8 @@ public struct IdentityManager {
                 return "No \(kind) identity is stored. Run `stupid-app signing setup` first."
             case .teamIDMissing:
                 return "The developer team ID is not stored. Run `stupid-app credentials add` with --team-id."
+            case .distributionKeyForOtherCertificate:
+                return "A distribution private key is stored for a different certificate. Use a separate --home for the fetched certificate, or remove the stored distribution identity first."
             }
         }
     }
@@ -92,12 +97,45 @@ public struct IdentityManager {
         try store.writeSecret(Secret.developerTeamID.rawValue, data: Data(teamID.utf8))
     }
 
+    /// Stores the distribution certificate without a private key, for a host that signs
+    /// through a release session. Refuses to replace a different certificate while a
+    /// distribution key is stored, which would leave that key unusable.
+    public func storeDistributionCertificate(
+        certificatePEM: String,
+        certificateID: String,
+        teamID: String
+    ) throws {
+        let certSecret = Secret.distributionCert.rawValue
+        if store.exists(Secret.distributionKey.rawValue), store.exists(certSecret),
+           String(decoding: try store.readSecret(certSecret), as: UTF8.self) != certificatePEM {
+            throw Error.distributionKeyForOtherCertificate
+        }
+        try store.writeSecret(certSecret, data: Data(certificatePEM.utf8))
+        try store.writeSecret(Secret.distributionCertID.rawValue, data: Data(certificateID.utf8))
+        try store.writeSecret(Secret.developerTeamID.rawValue, data: Data(teamID.utf8))
+    }
+
     public func loadDistribution() throws -> SigningIdentity {
         try load(
             keySecret: Secret.distributionKey.rawValue,
             certSecret: Secret.distributionCert.rawValue,
             certIDSecret: Secret.distributionCertID.rawValue,
             kind: "distribution"
+        )
+    }
+
+    /// The stored distribution certificate, signed by `remoteSigner`, which holds its
+    /// private key. No private key is read, so none needs to be stored.
+    public func loadDistribution(remoteSigner: CMSSigner) throws -> SigningIdentity {
+        let certSecret = Secret.distributionCert.rawValue
+        guard store.exists(certSecret) else {
+            throw Error.identityMissing("distribution certificate")
+        }
+        return SigningIdentity(
+            signer: remoteSigner,
+            certificatePEM: String(decoding: try store.readSecret(certSecret), as: UTF8.self),
+            certificateID: try readOptional(Secret.distributionCertID.rawValue),
+            teamID: try readOptional(Secret.developerTeamID.rawValue)
         )
     }
 
@@ -133,18 +171,16 @@ public struct IdentityManager {
         }
         let privateKey = String(decoding: try store.readSecret(keySecret), as: UTF8.self)
         let certificate = String(decoding: try store.readSecret(certSecret), as: UTF8.self)
-        let certificateID = store.exists(certIDSecret)
-            ? String(decoding: try store.readSecret(certIDSecret), as: UTF8.self)
-            : nil
-        let teamID = store.exists(Secret.developerTeamID.rawValue)
-            ? String(decoding: try store.readSecret(Secret.developerTeamID.rawValue), as: UTF8.self)
-            : nil
         return SigningIdentity(
-            privateKeyPEM: privateKey,
+            signer: .privateKey(pem: privateKey),
             certificatePEM: certificate,
-            certificateID: certificateID,
-            teamID: teamID
+            certificateID: try readOptional(certIDSecret),
+            teamID: try readOptional(Secret.developerTeamID.rawValue)
         )
+    }
+
+    private func readOptional(_ secret: String) throws -> String? {
+        store.exists(secret) ? String(decoding: try store.readSecret(secret), as: UTF8.self) : nil
     }
 
     public func teamID() throws -> String {

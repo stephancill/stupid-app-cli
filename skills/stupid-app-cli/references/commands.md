@@ -134,6 +134,26 @@ The single provisioning command. Options:
   provided (skips a separate `credentials add`).
 - `--home <dir>` — credential store directory.
 
+```text
+stupid-app signing fetch [--bundle-id <id> ...] [--certificate-id <id>] [--home <dir>]
+```
+
+Read-only: downloads the distribution certificate (stored without a private key) and,
+for each bundle (default: the app and extensions in `stupid-app.yml`), the active,
+unexpired App Store profile that includes it and expires last. The certificate ID
+defaults to the release session's, then the stored one. Refuses to replace a different
+certificate while a distribution key is stored. Never creates certificates or profiles:
+when none fits, run `signing setup --kind distribution` where the App Store Connect key is.
+
+### Release sessions
+
+`STUPID_APP_RELEASE_SESSION=<url>` routes every App Store Connect call through a signing
+broker's approved release session and makes `release archive` sign through it, so the
+host needs neither the App Store Connect key nor the distribution private key. The URL
+carries the session's secret; it must be https (http only for localhost). The session
+provides `GET info` (`teamId`, `distributionCertificateId`, `bundleIds`), the App Store
+Connect proxy under `asc/v1/`, and `POST sign` (one RSA signature per signed bundle).
+
 ## devices
 
 ```text
@@ -241,7 +261,9 @@ stupid-app release beta-notes --whats-new <text> [--build-id <id>] [--home <dir>
   mistakes that would otherwise become post-upload rejections.
 - `archive` — release-configure build, one real Apple Distribution signing pass
   (no timestamps), native `Assets.car`, App Store profile embedded, IPA packaged
-  to `./.release/<product>.ipa` (override with `--output`).
+  to `./.release/<product>.ipa` (override with `--output`). With
+  `STUPID_APP_RELEASE_SESSION` set it signs through the session and needs only the
+  stored certificate (`signing fetch`).
 - `upload` — resolves the exact app by bundle ID and version/build number,
   rejects duplicate build numbers, runs `preflight` first, uploads via the
   Build Upload APIs, and with `--wait` polls until internally TestFlight-ready

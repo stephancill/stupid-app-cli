@@ -8,6 +8,15 @@ Historical work belongs in `docs/implementation-notes.md`. This document should 
 
 ## Current Status
 
+**Release sessions (2026-11-21).** A host can archive and upload without the App Store
+Connect key or the distribution private key. With `STUPID_APP_RELEASE_SESSION` set to an
+approved session URL from a signing broker, `ASCContext` sends every App Store Connect
+request through the session (no JWT is created locally) and `release archive` signs
+through it with a `CMSSigner`; `signing fetch` downloads the distribution certificate and
+App Store profiles read-only. The broker side is planned in the permissions-broker
+repository (`docs/APPLE_RELEASE_SESSIONS.md`) for TestFlight uploads from GitHub Actions.
+See "Certificate And Credential Storage" and "Signing Engine".
+
 **Linux simulators and cloud sessions (2026-11-18).** Without Xcode, `run --simulator`
 builds with the imported `stupid-app-ios-simulator` SDK (`sdk export --target
 arm64-apple-ios-simulator`), ad-hoc signs natively, and installs and launches in x86Sim's
@@ -745,6 +754,27 @@ Storage requirements:
 - The App Store Connect API key and Apple signing identities remain separate credentials.
 - Imported profiles and certificate metadata may be cached, but private key material must never be copied into release artifacts.
 
+**Release sessions (explicit security-design change, 2026-11-21).** Signing keys may live
+outside the host instead: an approved release session on a signing broker
+(`STUPID_APP_RELEASE_SESSION`, the session's base URL including its secret) holds the App
+Store Connect key and the distribution private key. The host stores only the
+distribution certificate, its ID, the team ID and the App Store profiles (`signing
+fetch`, `IdentityManager.storeDistributionCertificate`). This is not an environment
+fallback for stored credentials: when the variable is set the session is the only access
+path, and no stored key is read. Contract (relative to the session URL):
+
+- `GET info` returns `teamId`, `distributionCertificateId` and `bundleIds`.
+- `asc/v1/...` is App Store Connect with the broker's authorization. The CLI sends no
+  `Authorization` header there, and `ASCClient` logs request paths only, never the base URL.
+- `POST sign` takes `codeDirectory` and `signedAttributes` (base64; the DER SET the
+  signature covers) and returns `signature` (base64 RSA PKCS#1 v1.5 SHA-256). The broker
+  is expected to check the CodeDirectory's identifier and team and that the attributes
+  name exactly its digests.
+
+Only https session URLs are accepted (http for localhost only). `signing fetch` never
+creates certificates or profiles; it refuses to replace a different certificate while a
+distribution key is stored.
+
 ### Provisioning And Entitlements
 
 Requested entitlements come directly from `App.entitlements`. They must never be recovered from a temporary pseudo-signature.
@@ -816,6 +846,14 @@ shallow-app shape. It owns bundle classification, resource sealing, Mach-O mutat
 CodeDirectory and requirement serialization, XML/DER entitlements, detached RSA-SHA256
 CMS, public Apple chain embedding, and independent post-sign verification. It emits no
 timestamp and has no external signer fallback.
+
+The private-key operation is a `CMSSigner`: the stored key (`.privateKey(pem:)`) or a
+release session's `sign` endpoint, which holds the key. Either way `NativeCMS.sign`
+verifies the returned signature against the leaf certificate and fails loudly otherwise,
+and `NativeSigner` settles the embedded-signature size with a zero placeholder signature
+of the key's length before signing the final CodeDirectory once, so each bundle needs
+exactly one signature. A release session is a remote key holder, not an alternative
+signer: the CodeDirectory, CMS and verification are this project's.
 
 **Sourcing decision (Gate 1):** provision `rcodesign` per target host as a pinned
 **prebuilt release binary**, not a source compile. Upstream publishes statically linked

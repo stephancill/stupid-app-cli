@@ -36,9 +36,46 @@ public enum NativeCMS {
   private static let cdhashesOID = "1.2.840.113635.100.9.2"
   private static let timestampTokenOID = "1.2.840.113549.1.9.16.2.14"
 
+  /// Signs one CodeDirectory. The signer's signature is verified against the leaf
+  /// certificate's public key, so a key that doesn't match the certificate, or a remote
+  /// signer returning anything else, fails here.
   public static func sign(
     codeDirectory: Data,
-    privateKeyPEM: String,
+    signer: CMSSigner,
+    leafCertificatePEM: String,
+    intermediateCertificatePEM: String,
+    rootCertificatePEM: String
+  ) throws -> Data {
+    try build(
+      codeDirectory: codeDirectory, signature: .signer(signer),
+      leafCertificatePEM: leafCertificatePEM,
+      intermediateCertificatePEM: intermediateCertificatePEM,
+      rootCertificatePEM: rootCertificatePEM)
+  }
+
+  /// A CMS of exactly the size `sign` produces for this CodeDirectory, with a zero
+  /// signature, so the embedded-signature size can settle before anything is signed.
+  static func sizingPlaceholder(
+    codeDirectory: Data,
+    leafCertificatePEM: String,
+    intermediateCertificatePEM: String,
+    rootCertificatePEM: String
+  ) throws -> Data {
+    try build(
+      codeDirectory: codeDirectory, signature: .placeholder,
+      leafCertificatePEM: leafCertificatePEM,
+      intermediateCertificatePEM: intermediateCertificatePEM,
+      rootCertificatePEM: rootCertificatePEM)
+  }
+
+  private enum SignatureSource {
+    case signer(CMSSigner)
+    case placeholder
+  }
+
+  private static func build(
+    codeDirectory: Data,
+    signature source: SignatureSource,
     leafCertificatePEM: String,
     intermediateCertificatePEM: String,
     rootCertificatePEM: String
@@ -50,17 +87,28 @@ public enum NativeCMS {
     guard let publicKey = _RSA.Signing.PublicKey(certificate.publicKey) else {
       throw Error.unsupported("signing certificate does not contain an RSA key")
     }
-    let privateKey = try _RSA.Signing.PrivateKey(pemRepresentation: privateKeyPEM)
-    guard privateKey.publicKey.derRepresentation == publicKey.derRepresentation else {
-      throw Error.verificationFailed("private key does not match leaf certificate")
-    }
 
     let identity = try certificateIdentity(leafDER)
     let digest = Data(SHA256.hash(data: codeDirectory))
     let signedAttributes = try attributes(codeDirectoryDigest: digest)
     let signatureInput = NativeDER.node(0x31, signedAttributes)
-    let signature = try privateKey.signature(for: signatureInput, padding: .insecurePKCS1v1_5)
-      .rawRepresentation
+    let signature: Data
+    switch source {
+    case .placeholder:
+      signature = Data(count: publicKey.keySizeInBits / 8)
+    case .signer(let signer):
+      signature = try signer.sign(
+        CMSSignRequest(codeDirectory: codeDirectory, signedAttributes: signatureInput))
+      guard
+        publicKey.isValidSignature(
+          _RSA.Signing.RSASignature(rawRepresentation: signature), for: signatureInput,
+          padding: .insecurePKCS1v1_5)
+      else {
+        throw Error.verificationFailed(
+          "the signature does not verify with the leaf certificate (the signing key does not match it)"
+        )
+      }
+    }
     let digestAlgorithm = try algorithm(sha256OID, includeNull: false)
     let signerInfo = NativeDER.sequence([
       NativeDER.integer(1),

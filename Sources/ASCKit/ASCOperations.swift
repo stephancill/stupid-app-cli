@@ -589,6 +589,83 @@ public struct ASCOperations: Sendable {
         return (id, try downloadProfile(id: id))
     }
 
+    /// One certificate resource by id, with its content.
+    public func getCertificate(id: String) throws -> Certificate {
+        let response = try client.request(method: .get, path: "certificates/\(id)")
+        struct Envelope: Decodable {
+            struct Data: Decodable {
+                let id: String
+                struct Attributes: Decodable {
+                    let certificateContent: String
+                    let serialNumber: String?
+                }
+                let attributes: Attributes
+            }
+            let data: Data
+        }
+        guard let envelope = try? JSONDecoder().decode(Envelope.self, from: response.data) else {
+            throw ASCError.malformedPayload("certificates get")
+        }
+        return Certificate(
+            id: envelope.data.id,
+            certificateContentBase64: envelope.data.attributes.certificateContent,
+            serialNumber: envelope.data.attributes.serialNumber
+        )
+    }
+
+    /// A bundle ID's profiles with their content, through the bundle ID's own
+    /// relationship so the request names the bundle (a release session allows only its
+    /// approved bundles).
+    public func listBundleIDProfiles(bundleIDResourceID: String) throws -> [(summary: ProfileSummary, content: Data)] {
+        let response = try client.request(
+            method: .get,
+            path: "bundleIds/\(bundleIDResourceID)/profiles",
+            query: [
+                URLQueryItem(
+                    name: "fields[profiles]",
+                    value: "name,profileType,profileState,expirationDate,profileContent"),
+                URLQueryItem(name: "limit", value: "200"),
+            ]
+        )
+        return try Self.decodeBundleIDProfiles(response.data)
+    }
+
+    /// Decodes a bundle ID's `ProfilesResponse` with profile content. Pure for hermetic tests.
+    public static func decodeBundleIDProfiles(_ data: Data) throws -> [(summary: ProfileSummary, content: Data)] {
+        struct Envelope: Decodable {
+            struct Resource: Decodable {
+                let id: String
+                struct Attributes: Decodable {
+                    let name: String
+                    let profileType: String?
+                    let profileState: String?
+                    let expirationDate: Date?
+                    let profileContent: String
+                }
+                let attributes: Attributes
+            }
+            let data: [Resource]
+        }
+        let json = JSONDecoder()
+        json.dateDecodingStrategy = .formatted(Self.ascDateFormatter)
+        guard let envelope = try? json.decode(Envelope.self, from: data) else {
+            throw ASCError.malformedPayload("bundle ID profiles")
+        }
+        return try envelope.data.map { resource in
+            guard let content = Data(base64Encoded: resource.attributes.profileContent) else {
+                throw ASCError.malformedPayload("profileContent base64")
+            }
+            let summary = ProfileSummary(
+                id: resource.id,
+                name: resource.attributes.name,
+                profileType: resource.attributes.profileType,
+                state: resource.attributes.profileState,
+                expirationDate: resource.attributes.expirationDate
+            )
+            return (summary, content)
+        }
+    }
+
     /// Returns the decrypted provisioning profile content for a profile resource.
     public func downloadProfile(id: String) throws -> Data {
         let response = try client.request(method: .get, path: "profiles/\(id)")

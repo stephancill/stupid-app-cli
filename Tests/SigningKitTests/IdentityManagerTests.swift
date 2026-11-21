@@ -29,7 +29,6 @@ struct IdentityManagerTests {
         let loaded = try manager.loadDevelopment()
         #expect(loaded.certificateID == "dev-cert-1")
         #expect(loaded.teamID == "TEAMID1234")
-        #expect(loaded.privateKeyPEM.contains("BEGIN PRIVATE KEY"))
         #expect(loaded.certificatePEM.contains("BEGIN CERTIFICATE"))
     }
 
@@ -49,6 +48,41 @@ struct IdentityManagerTests {
         let distribution = try manager.loadDistribution()
         #expect(development.certificateID == "dev-1")
         #expect(distribution.certificateID == "dist-1")
+    }
+
+    @Test("a remotely signed distribution identity needs only the stored certificate")
+    func remoteDistributionIdentity() throws {
+        let (manager, store) = try makeManager()
+        defer { try? FileManager.default.removeItem(at: store.home) }
+
+        try manager.storeDistributionCertificate(
+            certificatePEM: "dist-cert", certificateID: "dist-1", teamID: "TEAMID1234")
+        #expect(!store.exists(IdentityManager.Secret.distributionKey.rawValue))
+        #expect(throws: IdentityManager.Error.self) { _ = try manager.loadDistribution() }
+
+        let remote = CMSSigner { _ in Data([1, 2, 3]) }
+        let identity = try manager.loadDistribution(remoteSigner: remote)
+        #expect(identity.certificatePEM == "dist-cert")
+        #expect(identity.certificateID == "dist-1")
+        #expect(identity.teamID == "TEAMID1234")
+        let request = CMSSignRequest(codeDirectory: Data(), signedAttributes: Data())
+        #expect(try identity.signer.sign(request) == Data([1, 2, 3]))
+    }
+
+    @Test("a fetched certificate never replaces one whose key is stored")
+    func fetchedCertificateKeepsStoredKeyUsable() throws {
+        let (manager, store) = try makeManager()
+        defer { try? FileManager.default.removeItem(at: store.home) }
+
+        try manager.storeDistribution(
+            privateKeyPEM: "dist-key", certificatePEM: "dist-cert", certificateID: "dist-1", teamID: "TEAMID1234")
+        try manager.storeDistributionCertificate(
+            certificatePEM: "dist-cert", certificateID: "dist-1", teamID: "TEAMID1234")
+        #expect(throws: IdentityManager.Error.distributionKeyForOtherCertificate) {
+            try manager.storeDistributionCertificate(
+                certificatePEM: "other-cert", certificateID: "dist-2", teamID: "TEAMID1234")
+        }
+        #expect(try manager.loadDistribution().certificatePEM == "dist-cert")
     }
 
     @Test("loading a missing development identity fails loudly")

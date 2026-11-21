@@ -16,6 +16,68 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth. Historical entries record the implementation at their date. Use the current handover and bundled command reference for operational instructions.
 
+## 2026-11-21 - Release Sessions: Signing And App Store Connect Without Local Keys
+
+### Summary
+
+A host can now archive and upload with neither the App Store Connect key nor the
+distribution private key, which is what a CI runner (GitHub Actions) needs when a
+signing broker holds the keys and releases them only as approved operations. The
+broker side is planned separately (permissions-broker, `docs/APPLE_RELEASE_SESSIONS.md`).
+
+- **`CMSSigner`.** `NativeCMS.sign` takes a signer instead of a private key PEM: the stored
+  key or a closure that returns the RSA signature of the CMS signed attributes. Every
+  signature is verified against the leaf certificate's public key, which replaces the
+  previous key-matches-certificate check and also covers a remote signer.
+  `SigningIdentity` and `NativeSigner.IdentityInput` carry the signer.
+- **One signature per bundle.** `NativeSigner` used to sign on every iteration of the
+  embedded-signature size loop (at least twice). It now settles the size with a
+  same-size placeholder CMS (zero signature of the key's length) and signs the final
+  CodeDirectory once, so a remote signer is asked exactly once per bundle and can cap
+  signatures per session.
+- **`STUPID_APP_RELEASE_SESSION`.** When set, `ASCContext` uses the session: App Store
+  Connect requests go to `<session>/asc/v1` without a JWT, the team comes from
+  `GET <session>/info`, and `release archive` loads only the stored certificate and signs
+  through `POST <session>/sign`. `release upload` now resolves access through
+  `ASCContext` too, so it also requires a stored team ID when using a local key.
+  `ASCClient.jwt` is optional, and the request log prints the request path rather than
+  the URL path, which would include the session's secret.
+- **`signing fetch`.** Read-only: stores the distribution certificate (no key) and, per
+  bundle, the active unexpired App Store profile that includes it and expires last,
+  through `GET bundleIds?filter[identifier]=`, `GET bundleIds/<id>/profiles` (with
+  content) and `GET certificates/<id>`. These requests name the bundle, so a session can
+  allow only its approved bundles. It never creates certificates or profiles.
+
+### Decisions
+
+- Release sessions are an explicit security-design change to credential storage, not an
+  environment fallback: with the variable set, no stored key is read. Recorded in the
+  handover's "Certificate And Credential Storage".
+- The broker signs the CMS signed attributes rather than receiving the whole bundle or
+  building the CMS itself, so the CodeDirectory, CMS layout and verification stay in this
+  project and the broker can still validate exactly what it signs.
+- A session URL must be https (http only for localhost, for a local broker).
+
+### Verification
+
+- `swift test` on macOS: all suites pass except `RemotePairingIdentityTests`, which needs
+  usbmuxd and a device (timed out; unrelated). New tests: a remote signer is called once
+  per bundle and gives byte-identical output to the local key; a signature from another
+  key fails signing; certificate-only identities; `signing fetch` profile selection;
+  bundle-ID profile decoding; session URL validation.
+- End to end on macOS with a local stand-in for the broker (holding the keys, serving
+  `info`, `sign` and a read-only App Store Connect proxy): with an empty credential
+  directory, `signing fetch` stored the certificate and the App Store profile of a
+  scratch app, and `release archive` signed it with one `sign` request. The IPA passed
+  `codesign --verify --strict` with the Apple Distribution chain, and its executable was
+  byte-identical to the same build signed with the local key.
+
+### Follow-Up
+
+- Not yet run on Linux, with an app that has extensions, or through to upload; the first
+  broker-backed CI release covers those.
+- The broker's release sessions, allowlist and signing checks.
+
 ## 2026-11-20 - Cloud Setup Downloads In Parallel
 
 ### Summary

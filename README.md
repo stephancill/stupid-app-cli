@@ -91,6 +91,7 @@ stupid-app sdk import <archive>    (Linux) validate and install an SDK bundle
 stupid-app build                   Build an unsigned iOS .app with the imported SDK
 stupid-app credentials add         Store ASC API key + team ID (0600 files)
 stupid-app signing setup [...]     Bootstrap credentials + provision identities/profiles (see below)
+stupid-app signing fetch            Download the distribution certificate and App Store profiles (read-only)
 stupid-app devices                  List App Store Connect devices
 stupid-app device pair --usb        Pair lockdown natively, then bootstrap CoreDevice pairing
 stupid-app run --usb                Build, sign, install, and launch over USB
@@ -145,6 +146,13 @@ stupid-app signing setup --kind distribution --from-xcode
   entitled installer's launchd registration).
 - `--from-xcode` (macOS only) imports an existing Keychain identity and the exact
   Xcode-managed provisioning profile for the bundle instead of minting new credentials.
+
+A CI host can release without the App Store Connect key or the distribution private key:
+a signing broker holds them, and `STUPID_APP_RELEASE_SESSION=<approved session URL>`
+sends every App Store Connect call through the broker's release session and has
+`release archive` ask it for one signature per bundle. `signing fetch` downloads the
+certificate and App Store profiles there; it never creates them. See the skill's
+command reference for the session contract.
 
 `stupid-app doctor` exits unsuccessfully when a required host dependency is invalid
 and reports incomplete credentials, signing identities, pairing, or project context as

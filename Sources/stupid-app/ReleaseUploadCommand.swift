@@ -46,12 +46,6 @@ struct ReleaseUploadCommand: AsyncParsableCommand {
   var swiftPath: String = "swift"
 
   mutating func run() async throws {
-    let homeURL = URL(
-      fileURLWithPath: home
-        ?? FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".stupid-app/credentials").path)
-    let store = CredentialStore(home: homeURL)
-
     let configURL = URL(fileURLWithPath: "stupid-app.yml")
     guard let data = try? Data(contentsOf: configURL) else {
       throw ProjectError.unreadableConfig(configURL.path)
@@ -76,11 +70,8 @@ struct ReleaseUploadCommand: AsyncParsableCommand {
     let ipaURL = try locateIPA(config: config, outputDir: outputDir)
     let versions = try readPackagedVersions(config: config, product: config.product)
 
-    // 2. Load the App Store Connect key and resolve the app record by bundle ID.
-    let apiKey = try store.loadASCKey()
-    let client = ASCClient(jwt: {
-      try ASCJWTGenerator(key: apiKey).generate()
-    })
+    // 2. Resolve App Store Connect access and the app record by bundle ID.
+    let client = try ASCContext.resolve(home: home, purpose: "release upload").client()
     let operations = ASCOperations(client: client)
     let bundleID = appBundleIDOverride ?? config.bundleID
     guard let appID = try operations.findApp(bundleID: bundleID) else {
