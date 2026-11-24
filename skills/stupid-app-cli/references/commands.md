@@ -125,6 +125,9 @@ The single provisioning command. Options:
   name is used.
 - `--udid <udid>` — physical device UDID; development setup runs only when given.
 - `--device-name <name>` — device display name for registration.
+- `--platform <ios|tvos>` — profile platform (`IOS_*` or `TVOS_*` profile types);
+  defaults to `stupid-app.yml`'s `platform`, else `ios`. Devices and bundle IDs stay `IOS`
+  in App Store Connect for both.
 - `--import-key <pem>` / `--import-cert <pem>` / `--cert-id <id>` — import an
   existing identity and its App Store Connect certificate resource ID instead of
   minting one.
@@ -169,6 +172,8 @@ Lists or registers App Store Connect devices. `--name` defaults to `iPhone`.
 ```text
 stupid-app device list [--usbmux <addr>] [--home <dir>] [--json]
 stupid-app device pair --usb [--udid <udid>] [--usbmux <addr>] [--timeout <sec>] [--replace-lockdown-record] [--home <dir>]
+stupid-app device pair --network [--host <ip> --port <port>] [--pin <pin> | --pin-file <path>] [--timeout <sec>] [--home <dir>]
+stupid-app device container --udid <udid> --bundle-id <id> (--ls <dir> | --pull <file> [--output <path>]) [--home <dir>]
 stupid-app device crash [--path <file>] [--udid <udid>] [--filter <name>] [--network] [--json] [--home <dir>]
 ```
 
@@ -183,6 +188,20 @@ USB. `--usbmux` accepts a Unix socket or `HOST:PORT`. `--timeout` defaults to 30
 seconds — raise it (e.g. `180`) when the on-device Trust dialog needs time.
 `--replace-lockdown-record` writes a fresh lockdown trust record instead of
 reusing the existing one. Consult `device pair --help` for host-specific setup.
+
+`device pair --network` pairs a device with no USB trust path, such as an Apple TV.
+Open Settings > Remotes and Devices > Remote App and Devices on the TV; the command
+discovers its `_remotepairing-manual-pairing._tcp` advertisement (macOS DNS-SD; pass
+`--host`/`--port` elsewhere), runs Pair-Setup with the PIN the TV then shows (prompted
+for, `--pin`, or read from `--pin-file` once it appears, for non-interactive runs), stores
+the record, then reads the device UDID over the paired tunnel and maps it. It prints the
+UDID for `signing setup --udid` and `run --network --udid`.
+
+`device container` reads an installed development app's data container on a
+network-paired device (iPhone or Apple TV) through `house_arrest` over the CoreDevice
+tunnel: `--ls Library/Caches` lists a directory, `--pull Library/Caches/app.log` prints a
+file or writes it to `--output`. Useful for app-written logs, since live device logs are
+not streamed over the network yet.
 
 `device crash` parses an iOS crash report and prints a human-readable summary
 (termination namespace/code/reason, exception, application-specific detail) or,
@@ -209,7 +228,10 @@ Builds, signs once (Apple Development), packages, installs, and launches.
 - `--usb` — install over a USB-connected device.
 - `--network` — discover over mDNS, open a process-local CoreDevice tunnel,
   install and launch on macOS and Linux. Pair via
-  `device pair --usb` beforehand. Supports one tunnel per process and 16 service
+  `device pair --usb` (or `--network` for Apple TV) beforehand. tvOS launch needs the
+  developer disk image mounted, which stupid-app does not do yet: the app installs and
+  the command then fails at launch; open the app from the Apple TV home screen.
+  Supports one tunnel per process and 16 service
   streams, with MTU capped at 1500 and bounded buffers.
 - `--simulator` — builds for the simulator SDK, ad-hoc signs, boots, installs and
   launches: via `simctl` with Xcode (macOS), or on Linux with the imported

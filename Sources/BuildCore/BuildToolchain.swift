@@ -47,28 +47,15 @@ public struct BuildToolchain: Sendable {
     let resolvedOverride = sdkVersionOverride
     let hostSDKVersion: @Sendable () throws -> String
     switch (mode, platform) {
-    case (.xcodeInPlace(let installation), .simulator):
-      let simulatorVersion = installation.iphoneSimulatorSDKVersion
+    case (.xcodeInPlace(let installation), _):
+      // Use the SDK of the selected Xcode installation rather than re-detecting via
+      // xcode-select, which can resolve a different Xcode than the one the command was
+      // given. This matches the packer's own xcode-in-place sdkVersion closure.
       hostSDKVersion = { @Sendable in
         if let resolvedOverride {
           return try Self.validatedOverride(resolvedOverride)
         }
-        guard let simulatorVersion else {
-          throw BuildError.missingSimulatorSDK(installation.appURL.path)
-        }
-        return simulatorVersion
-      }
-    case (.xcodeInPlace(let installation), .device):
-      // Use the SDK version of the selected Xcode installation rather than
-      // re-detecting via xcode-select, which can resolve a different Xcode than the
-      // one the command was given. This matches the packer's own xcode-in-place
-      // sdkVersion closure.
-      let installationSDKVersion = installation.iphoneosSDKVersion
-      hostSDKVersion = { @Sendable in
-        if let resolvedOverride {
-          return try Self.validatedOverride(resolvedOverride)
-        }
-        return installationSDKVersion
+        return try installation.sdk(for: platform).version
       }
     case (.importedBundle, _):
       // The device and the simulator each have their own imported bundle

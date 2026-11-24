@@ -43,16 +43,23 @@ struct BuildCommand: AsyncParsableCommand {
         // against Xcode's SDK without an artifact bundle; otherwise the imported
         // `stupid-app` bundle is required.
         let mode = HostSDKMode.detect()
+        let platform = TargetPlatform(os: config.resolvedPlatform, environment: .device)
+        if platform.os != .ios, case .importedBundle = mode {
+            throw BuildError.platformRequiresXcode(platform.os.displayName)
+        }
         let toolchain = BuildToolchain.resolve(
             swiftPath: swiftPath,
             sdkID: sdkID,
-            targetTriple: "arm64-apple-ios",
+            targetTriple: platform.targetTriple,
             mode: mode,
+            platform: platform,
             sdkVersionOverride: sdkVersionOverride
         )
         let resolvedSwift = toolchain.swiftPath
 
-        let planner = Planner(projectRoot: projectRoot, config: config, swiftPath: resolvedSwift)
+        let planner = Planner(
+            projectRoot: projectRoot, config: config, swiftPath: resolvedSwift,
+            targetTriple: platform.targetTriple, platform: platform)
         let plan = try planner.makePlan()
 
         let buildConfiguration: BuildConfiguration = configuration == .release ? .release : .debug
@@ -67,6 +74,7 @@ struct BuildCommand: AsyncParsableCommand {
             plan: plan,
             config: config,
             swiftPath: resolvedSwift,
+            targetTriple: platform.targetTriple,
             sdkID: sdkID,
             sdkInput: toolchain.sdkInput,
             sdkVersion: toolchain.hostSDKVersion,

@@ -71,7 +71,25 @@ struct SigningSetupCommand: AsyncParsableCommand {
     @Option(name: .customLong("home"), help: "Credential store directory.")
     var home: String?
 
+    @Option(
+        name: .customLong("platform"),
+        help: "Profile platform: ios or tvos (default: stupid-app.yml's platform, else ios).")
+    var platform: String?
+
+    /// Whether profiles are created as tvOS profiles: `--platform`, else the project's
+    /// `stupid-app.yml` platform.
+    private var isTVOS: Bool {
+        if let platform { return platform == AppleOS.tvos.rawValue }
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: "stupid-app.yml")),
+            let config = try? AppConfig.decode(data)
+        else { return false }
+        return config.resolvedPlatform == .tvos
+    }
+
     mutating func run() async throws {
+        if let platform, AppleOS(rawValue: platform) == nil {
+            throw ProjectError.invalidPlatform(platform)
+        }
         // Store the App Store Connect key and team ID when supplied, so a fresh user
         // needs no separate `credentials add`.
         if keyID != nil || issuerID != nil || p8Path != nil {
@@ -195,7 +213,7 @@ struct SigningSetupCommand: AsyncParsableCommand {
         // capability enabled later to an existing profile, so one made before it would fail at signing.
         let baseProfileName = "\(bundleID) AppStore"
         let profileName = appliedProfileName(baseProfileName)
-        let existing = try operations.listProfiles(profileType: .appStore)
+        let existing = try operations.listProfiles(profileType: .appStore(tvOS: isTVOS))
         let candidates = existing.filter { $0.bundleIdentifier == bundleID && Self.isProfileName($0.name, base: profileName) }
         var stale: [ASCOperations.ProfileSummary] = []
         var reused = false
@@ -223,7 +241,8 @@ struct SigningSetupCommand: AsyncParsableCommand {
             let profileID = try operations.createAppStoreProfile(
                 name: newName,
                 bundleIDResourceID: bundleResourceID,
-                certificateID: certificateID
+                certificateID: certificateID,
+                profileType: .appStore(tvOS: isTVOS)
             )
             let content = try operations.downloadProfile(id: profileID)
             if let reason = unauthorizedEntitlement(in: content, configuration: .distribution, bundleID: bundleID, teamID: context.teamID) {
@@ -253,7 +272,7 @@ struct SigningSetupCommand: AsyncParsableCommand {
         try enableRequestedCapabilities(
             operations: operations, bundleIDResourceID: bundleResourceID, bundleID: bundleID)
 
-        let device = try operations.getOrRegisterDevice(udid: deviceUDID, name: deviceName ?? "iPhone")
+        let device = try operations.getOrRegisterDevice(udid: deviceUDID, name: deviceName ?? (isTVOS ? "Apple TV" : "iPhone"))
         print("Device \(device.id) (\(device.udid ?? deviceUDID))")
 
         // 2. Reuse an existing active development identity when present, else import
@@ -301,7 +320,7 @@ struct SigningSetupCommand: AsyncParsableCommand {
         // device lists never force a manual delete/recreate round-trip.
         let baseProfileName = "\(bundleID) Development"
         let profileName = appliedProfileName(baseProfileName)
-        let existing = try operations.listProfiles(profileType: .development)
+        let existing = try operations.listProfiles(profileType: .development(tvOS: isTVOS))
             .filter { $0.bundleIdentifier == bundleID }
         let existingNames = Set(existing.map(\.name))
 
@@ -351,7 +370,8 @@ struct SigningSetupCommand: AsyncParsableCommand {
                 name: newName,
                 bundleIDResourceID: bundleResourceID,
                 certificateID: certificateID,
-                deviceIDs: deviceIDs)
+                deviceIDs: deviceIDs,
+                profileType: .development(tvOS: isTVOS))
             let parsed = try MobileProvisionParser.parse(created.content)
             guard parsed.provisionedDevices.contains(deviceUDID) else {
                 throw SigningSetupError.profileProvisionsWrongDevices(bundleID, deviceUDID)

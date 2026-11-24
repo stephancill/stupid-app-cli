@@ -404,3 +404,27 @@ struct AppConfigTests {
                 == defaultURL)
     }
 }
+struct AppConfigPlatformTests {
+  private func config(platform: String?, deviceFamily: String? = nil) -> AppConfig {
+    AppConfig(
+      version: 1, product: "Fixture", bundleID: "net.example.fixture", deploymentTarget: "26.0",
+      infoPath: "Info.plist", deviceFamily: deviceFamily, platform: platform)
+  }
+
+  @Test("platform defaults to iOS and accepts tvos")
+  func resolvesPlatform() throws {
+    #expect(config(platform: nil).resolvedPlatform == .ios)
+    try config(platform: "tvos").validate()
+    #expect(config(platform: "tvos").resolvedPlatform == .tvos)
+  }
+
+  @Test("an unknown platform or a tvOS deviceFamily fails loudly")
+  func rejectsInvalidPlatform() {
+    #expect(throws: ProjectError.invalidPlatform("watchos")) {
+      try config(platform: "watchos").validate()
+    }
+    #expect(throws: ProjectError.deviceFamilyOnTVOS) {
+      try config(platform: "tvos", deviceFamily: "iphone").validate()
+    }
+  }
+}

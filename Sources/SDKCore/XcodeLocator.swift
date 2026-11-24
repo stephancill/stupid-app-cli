@@ -47,6 +47,25 @@ public struct XcodeInstallation: Sendable, Equatable {
     self.iphoneSimulatorSDKVersion = iphoneSimulatorSDKVersion
     self.iphoneSimulatorSDKBuild = iphoneSimulatorSDKBuild
   }
+
+  /// One platform SDK inside this Xcode (`AppleTVOS`, `iPhoneSimulator`, ...).
+  public struct PlatformSDK: Sendable, Equatable {
+    public var url: URL
+    public var version: String
+    public var build: String?
+
+    public init(url: URL, version: String, build: String?) {
+      self.url = url
+      self.version = version
+      self.build = build
+    }
+  }
+
+  /// Resolves the SDK of an Xcode platform directory name (`iPhoneOS`, `AppleTVOS`,
+  /// `AppleTVSimulator`, ...), or nil when this Xcode does not have it.
+  public func platformSDK(_ platformDirectory: String) -> PlatformSDK? {
+    XcodeLocator.platformSDK(in: developerDirectory, platform: platformDirectory)
+  }
 }
 
 /// Detects a usable Xcode installation for in-place (Xcode-present) builds.
@@ -237,6 +256,15 @@ public enum XcodeLocator {
           xcodeVersion(appURL: $1).version, options: [.numeric]) == .orderedDescending
       }
       .map { $0.appendingPathComponent("Contents/Developer", isDirectory: true) }
+  }
+
+  static func platformSDK(
+    in developerDirectory: URL, platform: String
+  ) -> XcodeInstallation.PlatformSDK? {
+    guard let url = sdkURL(in: developerDirectory, platform: platform),
+      let version = sdkVersion(at: url)
+    else { return nil }
+    return XcodeInstallation.PlatformSDK(url: url, version: version, build: sdkBuild(at: url))
   }
 
   private static func hasIPhoneOSSDK(at developerDirectory: URL) -> Bool {

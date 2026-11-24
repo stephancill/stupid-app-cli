@@ -12,6 +12,7 @@ import Foundation
   /// every process. The system resolver daemon does have the needed access, so browsing
   /// through `dnssd` is both correct and portable.
   final class DNSSDDiscoveryBrowser {
+    private let serviceType: String
     private var browseRef: DNSServiceRef?
     private var childRefs: [DNSServiceRef] = []
 
@@ -26,11 +27,14 @@ import Foundation
     private var resolved: [String: RemotepairingDiscovery.Advertisement] = [:]
     private var addresses: [String: [RemotepairingDiscovery.Address]] = [:]
 
+    init(serviceType: String = "_remotepairing._tcp") {
+      self.serviceType = serviceType
+    }
+
     /// Browses for up to `timeout` seconds and returns assembled advertisements.
     func browse(timeout: Double) throws -> [RemotepairingDiscovery.Advertisement] {
       var browseRef: DNSServiceRef?
       let context = Unmanaged.passUnretained(self).toOpaque()
-      let serviceType = "_remotepairing._tcp"
       let domain = "local."
       let error = DNSServiceBrowse(
         &browseRef, 0, 0, serviceType, domain, browseCallback, context)

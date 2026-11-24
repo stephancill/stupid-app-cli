@@ -81,18 +81,8 @@ public struct Packer: Sendable {
     } else {
       switch input {
       case .xcodeInPlace(let installation):
-        switch plan.platform {
-        case .device:
-          self.sdkVersion = { @Sendable in installation.iphoneosSDKVersion }
-        case .simulator:
-          let simulatorVersion = installation.iphoneSimulatorSDKVersion
-          self.sdkVersion = { @Sendable in
-            guard let simulatorVersion else {
-              throw BuildError.missingSimulatorSDK(installation.appURL.path)
-            }
-            return simulatorVersion
-          }
-        }
+        let platform = plan.platform
+        self.sdkVersion = { @Sendable in try installation.sdk(for: platform).version }
       case .importedBundle(let sdkID):
         let resolvedSDKID = sdkID
         let resolvedTriple = targetTriple
@@ -297,7 +287,7 @@ public struct Packer: Sendable {
       let package = Package(
           name: "\(product)-Builder",
           platforms: [
-              .iOS("\(plan.deploymentTarget)")
+              .\(plan.platform.packageDescriptionPlatform)("\(plan.deploymentTarget)")
           ],
           dependencies: [
               .package(path: "\(projectRoot.path)")
@@ -378,16 +368,7 @@ public struct Packer: Sendable {
       // Xcode in place: build against Xcode's SDK with Xcode's toolchain `swift` and
       // Xcode's own linker. The explicit `--sdk`/`--triple` replace the `--swift-sdk`
       // bundle so no artifact SDK is registered or materialized.
-      let sdkURL: URL
-      switch plan.platform {
-      case .device:
-        sdkURL = installation.iphoneOSSDKURL
-      case .simulator:
-        guard let simulatorSDK = installation.iphoneSimulatorSDKURL else {
-          throw BuildError.missingSimulatorSDK(installation.appURL.path)
-        }
-        sdkURL = simulatorSDK
-      }
+      let sdkURL = try installation.sdk(for: plan.platform).url
       swift = installation.toolchainSwiftURL.path
       // Emit the const-values App Intents metadata generation consumes. Xcode enables
       // const-value emission and supplies the protocol list by default; SwiftPM does
@@ -504,10 +485,19 @@ public struct Packer: Sendable {
       }
     }
 
+    var tvosIconKeys: [String: Sendable] = [:]
     // Icon: generate the full App Store icon set from one square source PNG,
     // plus a compiled `Assets.car` so App Store Connect can resolve
     // `CFBundleIconName` for iOS 11+ SDK builds.
-    if let iconPath = config.iconPath {
+    if let iconPath = config.iconPath, plan.platform.os == .tvos {
+      let iconURL = projectRoot.appendingPathComponent(iconPath)
+      guard iconURL.pathExtension.lowercased() == "png" else {
+        throw BuildError.unsupportedResource(iconPath)
+      }
+      tvosIconKeys = try TVOSIconCatalog.compile(
+        sourceURL: iconURL, outputDirectory: appDir, platform: plan.platform,
+        deploymentTarget: plan.deploymentTarget, sdkInput: sdkInput)
+    } else if let iconPath = config.iconPath {
       let iconURL = projectRoot.appendingPathComponent(iconPath)
       guard iconURL.pathExtension.lowercased() == "png" else {
         throw BuildError.unsupportedResource(iconPath)
@@ -518,7 +508,9 @@ public struct Packer: Sendable {
 
     // Merged Info.plist.
     var info = plan.infoPlist
-    if config.iconPath != nil {
+    if plan.platform.os == .tvos {
+      info.merge(tvosIconKeys) { _, icon in icon }
+    } else if config.iconPath != nil {
       Self.injectIconKeys(into: &info)
     }
     Self.injectBuildSystemKeys(
@@ -633,16 +625,7 @@ public struct Packer: Sendable {
   /// App Intents; a module that declares them then fails loudly in the generator.
   private func appIntentsToolchain() throws -> AppIntentsMetadata.Toolchain? {
     guard case .xcodeInPlace(let installation) = sdkInput else { return nil }
-    let sdkRoot: URL
-    switch plan.platform {
-    case .device:
-      sdkRoot = installation.iphoneOSSDKURL
-    case .simulator:
-      guard let simulatorSDK = installation.iphoneSimulatorSDKURL else {
-        throw BuildError.missingSimulatorSDK(installation.appURL.path)
-      }
-      sdkRoot = simulatorSDK
-    }
+    let sdkRoot = try installation.sdk(for: plan.platform).url
     return AppIntentsMetadata.Toolchain(
       processorURL: installation.toolchainBinDirectory
         .appendingPathComponent("appintentsmetadataprocessor"),
@@ -651,19 +634,14 @@ public struct Packer: Sendable {
         .deletingLastPathComponent(),
       sdkRoot: sdkRoot,
       xcodeVersion: Self.numericXcodeVersion(installation.version),
-      platformFamily: "iOS",
+      platformFamily: plan.platform.os.displayName,
       deploymentTarget: plan.deploymentTarget,
       targetTriple: appIntentsTargetTriple()
     )
   }
 
   private func appIntentsTargetTriple() -> String {
-    switch plan.platform {
-    case .device:
-      return "arm64-apple-ios\(plan.deploymentTarget)"
-    case .simulator:
-      return "arm64-apple-ios\(plan.deploymentTarget)-simulator"
-    }
+    plan.platform.tripleWithVersion(plan.deploymentTarget)
   }
 
   /// Resolves the build-system provenance used by App Store Connect. The imported
@@ -673,25 +651,13 @@ public struct Packer: Sendable {
   private func resolveBuildSystemMetadata() throws -> BuildSystemMetadata {
     switch sdkInput {
     case .xcodeInPlace(let installation):
-      switch plan.platform {
-      case .device:
-        return BuildSystemMetadata(
-          iphoneosSDKVersion: installation.iphoneosSDKVersion,
-          iphoneosSDKBuild: installation.iphoneosSDKBuild,
-          xcodeVersion: installation.version,
-          xcodeBuild: installation.build
-        )
-      case .simulator:
-        guard let simulatorVersion = installation.iphoneSimulatorSDKVersion else {
-          throw BuildError.missingSimulatorSDK(installation.appURL.path)
-        }
-        return BuildSystemMetadata(
-          iphoneosSDKVersion: simulatorVersion,
-          iphoneosSDKBuild: installation.iphoneSimulatorSDKBuild,
-          xcodeVersion: installation.version,
-          xcodeBuild: installation.build
-        )
-      }
+      let sdk = try installation.sdk(for: plan.platform)
+      return BuildSystemMetadata(
+        iphoneosSDKVersion: sdk.version,
+        iphoneosSDKBuild: sdk.build,
+        xcodeVersion: installation.version,
+        xcodeBuild: installation.build
+      )
     case .importedBundle(let sdkID):
       guard
         let bundle = try SDKVersion.installedBundle(

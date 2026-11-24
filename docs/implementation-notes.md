@@ -16,6 +16,82 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth. Historical entries record the implementation at their date. Use the current handover and bundled command reference for operational instructions.
 
+## 2026-11-24 - Release 0.0.33: Apple TV Support
+
+### Summary
+
+- Ships tvOS apps (entry below): `platform: tvos`, tvOS icons and profiles,
+  `device pair --network` for Apple TV, `run --network` install, and `run --simulator` on
+  the tvOS simulator.
+- New `device container --udid <udid> --bundle-id <id> (--ls <dir> | --pull <file>)` reads a
+  development app's data container over the network through `house_arrest`
+  (`VendContainer`, then AFC), built on a shared `NetworkDeviceSession` that opens the
+  paired tunnel. Verified against an Apple TV HD: listing `Library/Caches` and pulling an
+  app-written log.
+- A live log stream over `os_trace_relay` was tried and left out: the device accepts
+  `StartActivity` and answers `RequestSuccessful`, but no entries arrive through the
+  userspace tunnel. Same protocol as pymobiledevice3; likely a tunnel issue with a
+  continuous high-volume stream. Follow-up.
+
+## 2026-11-24 - tvOS Apps: Build, Signing, Network Pairing, Install
+
+### Summary
+
+- `platform: tvos` in `stupid-app.yml`. `TargetPlatform` became an OS plus environment
+  struct; triples, linker platform names, SDK selection (`XcodeInstallation.sdk(for:)`, a
+  generic per-platform SDK lookup), `DT*` keys, the synthetic builder's `platforms` entry,
+  XCFramework slice matching, App Intents platform family and simulator selection (by
+  runtime prefix) all derive from it. Mach-O inspection names tvOS platforms 3 and 8.
+- tvOS Info.plist: `UIDeviceFamily` [3], `LSRequiresIPhoneOS`, no orientations.
+- tvOS icons: `TVOSIconCatalog` writes a brand-assets catalog (two-layer app icon stacks,
+  App Store stack, top shelf and wide top shelf) from the square source and compiles it
+  with `actool`, merging its partial Info.plist (`CFBundleIcons`, `TVTopShelfImage`). Layer
+  PNGs are encoded with ImageIO; the pure-Swift encoder took minutes on the 4640x1440 top
+  shelf image in a debug build.
+- Signing: `ProfileType` gained `TVOS_APP_DEVELOPMENT`/`TVOS_APP_STORE`; `signing setup`
+  selects them from the project platform or `--platform`.
+- `device pair --network` (`NetworkManualPairer`): discovery of
+  `_remotepairing-manual-pairing._tcp` over DNS-SD (the browser now takes a service type),
+  handshake, Pair-Verify validation, and the existing Pair-Setup driven through a JSON
+  transport that maps `data`/`streamEncrypted` base64 strings to XPC data. Pair-Setup
+  gained a PIN-provider overload because the TV shows its PIN only after M1, and an
+  optional remote-unlock step. `--pin-file` waits for the PIN in a file for
+  non-interactive callers. After pairing, the UDID is read from the RSD peer info through
+  the paired tunnel and saved in the UDID mapping.
+
+### Why
+
+To build, sign and deploy Apple TV apps with the same CLI, starting with a tvOS port of a
+SwiftPM torrent client.
+
+### Verification
+
+- Apple TV HD (tvOS 26.6): network pairing with the on-screen PIN, UDID resolution,
+  development profile creation, `run --network` install and bundle verification, and the
+  installed app running when opened from the home screen.
+- `stupid-app build` of a tvOS fixture: Mach-O platform `tvos`, `appletvos` keys, compiled
+  `Assets.car` with icon and top shelf keys. iOS builds unchanged.
+- New tests: `TVOSPlatformTests` (names, triples, tvOS Info.plist), `AppConfigPlatformTests`
+  (default, tvOS, invalid platform, tvOS `deviceFamily`), `NetworkManualPairerTests` (JSON
+  <-> XPC bridge for pairing data and encrypted streams).
+- Full suite: one failure, `RemotePairingIdentityTests` timing out after 10 s under parallel
+  load; it passes in isolation.
+
+### Findings
+
+- An unpaired Apple TV returns empty `identifier`/`udid` in the handshake and advertises a
+  different `_remotepairing._tcp` identifier once paired; records are matched by key, so
+  the record name only needs to be stable.
+- `createRemoteUnlockKey` returns no `hostKey` on tvOS.
+- Launch fails with "RSD peer does not offer com.apple.coredevice.appservice" until the
+  developer disk image is mounted.
+
+### Follow-Up
+
+- Native personalized DDI mounting so `run --network` can launch on tvOS.
+- tvOS release path: App Store profile kind in `release archive`/`signing fetch`, `TV_OS`
+  build upload platform.
+
 ## 2026-11-21 - Release 0.0.32: Apple Certificates Compiled In
 
 ### Summary

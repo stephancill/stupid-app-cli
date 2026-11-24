@@ -29,6 +29,10 @@ public struct AppConfig: Codable, Equatable, Sendable {
     /// means `universal` (iPhone and iPad). Use `iphone` for apps that should present
     /// the phone layout on iPad and on Apple silicon Mac.
     public var deviceFamily: String?
+    /// Optional operating system the app targets: `ios` (default) or `tvos`. A tvOS app
+    /// builds against the AppleTVOS SDKs, declares the Apple TV device family, and is
+    /// provisioned with tvOS profiles; it cannot also set `deviceFamily`.
+    public var platform: String?
 
     public init(
         version: Int,
@@ -41,7 +45,8 @@ public struct AppConfig: Codable, Equatable, Sendable {
         resources: [String]? = nil,
         extensions: [ExtensionConfig]? = nil,
         capabilities: [CapabilityConfig]? = nil,
-        deviceFamily: String? = nil
+        deviceFamily: String? = nil,
+        platform: String? = nil
     ) {
         self.version = version
         self.product = product
@@ -54,6 +59,12 @@ public struct AppConfig: Codable, Equatable, Sendable {
         self.extensions = extensions
         self.capabilities = capabilities
         self.deviceFamily = deviceFamily
+        self.platform = platform
+    }
+
+    /// The validated operating system, defaulting to `.ios` when omitted.
+    public var resolvedPlatform: AppleOS {
+        platform.flatMap(AppleOS.init(rawValue:)) ?? .ios
     }
 
     /// The validated device family, defaulting to `.universal` when omitted. `validate()`
@@ -99,6 +110,14 @@ public struct AppConfig: Codable, Equatable, Sendable {
         if let deviceFamily {
             guard DeviceFamily(rawValue: deviceFamily) != nil else {
                 throw ProjectError.invalidDeviceFamily(deviceFamily)
+            }
+        }
+        if let platform {
+            guard let os = AppleOS(rawValue: platform) else {
+                throw ProjectError.invalidPlatform(platform)
+            }
+            if os == .tvos, deviceFamily != nil {
+                throw ProjectError.deviceFamilyOnTVOS
             }
         }
         try Self.validateRelativePath(infoPath, field: "infoPath", projectRoot: projectRoot)
@@ -329,6 +348,29 @@ public struct AppConfig: Codable, Equatable, Sendable {
     }()
 }
 
+/// The Apple operating system an app targets.
+public enum AppleOS: String, Equatable, Sendable, CaseIterable {
+    case ios
+    case tvos
+
+    /// The App Store Connect platform name for builds and app store versions. Bundle IDs
+    /// and devices stay `IOS` for tvOS: the portal shares one App ID and device platform.
+    public var ascBuildPlatform: String {
+        switch self {
+        case .ios: return "IOS"
+        case .tvos: return "TV_OS"
+        }
+    }
+
+    /// Human-readable name used in messages.
+    public var displayName: String {
+        switch self {
+        case .ios: return "iOS"
+        case .tvos: return "tvOS"
+        }
+    }
+}
+
 /// The iOS device families an app and its bundled extensions declare. Written to the
 /// built `UIDeviceFamily`; `universal` is the default that preserves the prior
 /// iPhone-and-iPad behavior.
@@ -378,6 +420,8 @@ public enum ProjectError: Error, Equatable, Sendable, CustomStringConvertible {
     case duplicateExtensionBundleID(String)
     case invalidExtensionDeploymentTarget(String, String)
     case invalidDeviceFamily(String)
+    case invalidPlatform(String)
+    case deviceFamilyOnTVOS
     case missingCapabilityField(String, String)
     case duplicateCapabilityKey(String, String)
 
@@ -415,6 +459,10 @@ public enum ProjectError: Error, Equatable, Sendable, CustomStringConvertible {
             return "Duplicate extension bundle identifier '\(id)'. Each extension must have a unique bundle ID."
         case let .invalidExtensionDeploymentTarget(prefix, target):
             return "\(prefix): invalid extension deployment target '\(target)'. Use a numeric version such as '17.0'."
+        case let .invalidPlatform(value):
+            return "Invalid platform '\(value)'. Use one of: ios, tvos."
+        case .deviceFamilyOnTVOS:
+            return "deviceFamily applies only to iOS apps; remove it for platform: tvos."
         case let .invalidDeviceFamily(value):
             return "Invalid deviceFamily '\(value)'. Use 'iphone', 'ipad', or 'universal'."
         case let .missingCapabilityField(field, capabilityField):

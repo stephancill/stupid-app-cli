@@ -62,15 +62,33 @@ public struct CoreDeviceRemotePairing: Sendable {
     pin: String = "000000",
     initialSequenceNumber: Int64 = 0
   ) throws -> SavedRecord {
+    try pair(
+      transport: transport, identifier: identifier, hostname: hostname,
+      pinProvider: { pin }, initialSequenceNumber: initialSequenceNumber)
+  }
+
+  /// Pair-Setup where the PIN is only known after the device answers the first setup
+  /// message: an Apple TV shows its PIN on screen at that point.
+  public func pair(
+    transport: @escaping Transport,
+    identifier: String,
+    hostname: String,
+    pinProvider: () throws -> String,
+    initialSequenceNumber: Int64 = 0,
+    requiresRemoteUnlock: Bool = true
+  ) throws -> SavedRecord {
     var session = Session(transport: transport, sequenceNumber: initialSequenceNumber)
     let serverValues = try session.requestConsent(hostname: hostname)
     var client = try session.srpClient(
-      serverPublic: serverValues.serverPublic, salt: serverValues.salt, pin: pin)
+      serverPublic: serverValues.serverPublic, salt: serverValues.salt, pin: try pinProvider())
     client.sequenceNumber = max(client.sequenceNumber, session.sequenceNumber)
     try client.verifyProof()
     try client.saveRecordOnPeer(identifier: identifier, hostname: hostname)
     client.initSessionKeys()
-    let remoteUnlock = try client.createRemoteUnlock()
+    // Apple TV answers createRemoteUnlockKey without a host key; it has no remote
+    // unlock, so network-paired records store an empty one.
+    let remoteUnlock =
+      requiresRemoteUnlock ? try client.createRemoteUnlock() : (try? client.createRemoteUnlock()) ?? ""
     return SavedRecord(
       publicKey: client.ed25519PublicKey,
       privateKey: client.ed25519PrivateKey,

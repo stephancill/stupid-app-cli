@@ -7,7 +7,10 @@ struct DeviceCommand: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "device",
     abstract: "Manage local device pairing, diagnostics, and inventory.",
-    subcommands: [DeviceListCommand.self, DevicePairCommand.self, DeviceCrashCommand.self]
+    subcommands: [
+      DeviceListCommand.self, DevicePairCommand.self, DeviceCrashCommand.self,
+      DeviceContainerCommand.self,
+    ]
   )
 }
 
@@ -99,11 +102,38 @@ struct DeviceListCommand: AsyncParsableCommand {
 struct DevicePairCommand: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "pair",
-    abstract: "Bootstrap lockdown and CoreDevice remote pairing over USB."
+    abstract: "Bootstrap CoreDevice remote pairing over USB, or over the network (Apple TV)."
   )
 
   @Flag(name: .customLong("usb"), help: "Pair the USB-connected device.")
   var usb = false
+
+  @Flag(
+    name: .customLong("network"),
+    help:
+      "Pair a device waiting on the network, such as an Apple TV on Settings > Remotes and Devices > Remote App and Devices.")
+  var network = false
+
+  @Option(
+    name: .customLong("host"),
+    help: "Network pairing: the device's address (discovered when omitted).")
+  var host: String?
+
+  @Option(
+    name: .customLong("port"),
+    help: "Network pairing: the device's manual-pairing port (discovered when omitted).")
+  var port: UInt16?
+
+  @Option(
+    name: .customLong("pin"),
+    help: "Network pairing: the PIN the device shows (prompted for when omitted).")
+  var pin: String?
+
+  @Option(
+    name: .customLong("pin-file"),
+    help:
+      "Network pairing: wait for this file and read the PIN from it (for non-interactive runs).")
+  var pinFile: String?
 
   @Option(
     name: .customLong("udid"),
@@ -129,8 +159,11 @@ struct DevicePairCommand: AsyncParsableCommand {
   var home: String?
 
   mutating func run() async throws {
-    guard usb else {
+    guard usb != network else {
       throw DevicePairError.usbRequired
+    }
+    if network {
+      return try pairNetwork()
     }
 
     let homeURL =
@@ -182,14 +215,103 @@ struct DevicePairCommand: AsyncParsableCommand {
   }
 }
 
+extension DevicePairCommand {
+  private func pairNetwork() throws {
+    let homeURL =
+      home.map { URL(fileURLWithPath: $0) }
+      ?? FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent(".stupid-app/credentials", isDirectory: true)
+    try CredentialStore(home: homeURL).ensureDirectory()
+
+    let targetHost: String
+    let targetPort: UInt16
+    var advertisedIdentifier: String?
+    if let host, let port {
+      targetHost = host
+      targetPort = port
+    } else {
+      print("Looking for a device waiting to pair...")
+      let candidates = try RemotepairingDiscovery.browseManualPairing(timeout: min(timeout, 5))
+        .compactMap { advertisement -> (String, String, UInt16, String?)? in
+          guard let port = advertisement.port, let port = UInt16(exactly: port),
+            let address =
+              advertisement.addresses.first(where: { !$0.ip.contains(":") })
+              ?? advertisement.addresses.first
+          else { return nil }
+          return (
+            advertisement.instance, address.scopedIP, port,
+            advertisement.properties["identifier"]
+          )
+        }
+      guard candidates.count == 1, let candidate = candidates.first else {
+        throw DevicePairError.networkDeviceSelection(candidates.map(\.0))
+      }
+      print("Found \(candidate.0) at \(candidate.1):\(candidate.2)")
+      targetHost = candidate.1
+      targetPort = candidate.2
+      advertisedIdentifier = candidate.3
+    }
+
+    let suppliedPIN = pin
+    let pinFileURL = pinFile.map { URL(fileURLWithPath: $0) }
+    let pinWait = max(timeout, 120)
+    let pairer = NetworkManualPairer(
+      host: targetHost, port: targetPort, advertisedIdentifier: advertisedIdentifier,
+      pairingDirectory: homeURL.appendingPathComponent("pairing", isDirectory: true),
+      timeoutSeconds: max(timeout, 120),
+      progress: { print($0) })
+    let peer = try pairer.pair(pinProvider: {
+      if let suppliedPIN { return suppliedPIN }
+      if let pinFileURL {
+        print("The device is showing a PIN. Waiting for it in \(pinFileURL.path)...")
+        let deadline = Date().addingTimeInterval(pinWait)
+        while Date() < deadline {
+          if let text = try? String(contentsOf: pinFileURL, encoding: .utf8) {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { return trimmed }
+          }
+          Thread.sleep(forTimeInterval: 0.5)
+        }
+        throw DevicePairError.pinRequired
+      }
+      print("Enter the PIN shown on the device: ", terminator: "")
+      guard let line = readLine()?.trimmingCharacters(in: .whitespaces), !line.isEmpty else {
+        throw DevicePairError.pinRequired
+      }
+      return line
+    })
+    print("Paired \(peer.name ?? peer.identifier).")
+    var udid = peer.udid
+    if udid == nil {
+      print("Reading the device UDID over the paired tunnel...")
+      udid = try pairer.resolveUDID(identifier: peer.identifier)
+    }
+    if let udid {
+      print("UDID: \(udid)")
+      print("Next: stupid-app signing setup --kind development --udid \(udid)")
+      print("Then: stupid-app run --network --udid \(udid)")
+    } else {
+      print("The device did not report its UDID; remote identifier \(peer.identifier).")
+    }
+  }
+}
+
 enum DevicePairError: Error, CustomStringConvertible {
   case usbRequired
   case deviceSelection(Int)
+  case networkDeviceSelection([String])
+  case pinRequired
 
   var description: String {
     switch self {
     case .usbRequired:
-      return "Device pairing currently requires --usb."
+      return "Select exactly one of --usb or --network."
+    case .networkDeviceSelection(let names):
+      return names.isEmpty
+        ? "No device is waiting to pair. On the Apple TV open Settings > Remotes and Devices > Remote App and Devices, then retry (or pass --host and --port)."
+        : "Several devices are waiting to pair (\(names.joined(separator: ", "))). Pass --host and --port."
+    case .pinRequired:
+      return "Network pairing needs the PIN shown on the device (--pin)."
     case .deviceSelection(let count):
       return
         "Expected exactly one USB-connected device, found \(count). Pass --udid to select a device."
@@ -336,6 +458,54 @@ enum DeviceCrashError: Error, CustomStringConvertible {
       return "The crash report could not be parsed: \(detail)."
     case .device(let detail):
       return "The on-device crash report could not be retrieved: \(detail)."
+    }
+  }
+}
+
+struct DeviceContainerCommand: AsyncParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "container",
+    abstract:
+      "List or pull files from a development app's data container on a network-paired device."
+  )
+
+  @Option(name: .customLong("udid"), help: "UDID of a device paired for network use.")
+  var udid: String
+
+  @Option(name: .customLong("bundle-id"), help: "Bundle ID of the installed development app.")
+  var bundleID: String
+
+  @Option(name: .customLong("ls"), help: "Container directory to list, e.g. Library/Caches.")
+  var listPath: String?
+
+  @Option(name: .customLong("pull"), help: "Container file to read, e.g. Library/Caches/app.log.")
+  var pullPath: String?
+
+  @Option(name: .customLong("output"), help: "Write the pulled file here instead of stdout.")
+  var output: String?
+
+  @Option(name: .customLong("home"), help: "Credential store directory.")
+  var home: String?
+
+  mutating func run() throws {
+    guard (listPath == nil) != (pullPath == nil) else {
+      throw ValidationError("Pass exactly one of --ls or --pull.")
+    }
+    let homeURL =
+      home.map { URL(fileURLWithPath: $0) }
+      ?? FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent(".stupid-app/credentials", isDirectory: true)
+    let container = NetworkAppContainer(
+      udid: udid, bundleID: bundleID,
+      pairingDirectory: homeURL.appendingPathComponent("pairing", isDirectory: true))
+    let data = try container.perform(
+      listPath.map { .list($0) } ?? .read(pullPath ?? ""))
+    if let output {
+      try data.write(to: URL(fileURLWithPath: output))
+      print("Wrote \(data.count) bytes to \(output)")
+    } else {
+      FileHandle.standardOutput.write(data)
+      if listPath != nil { print("") }
     }
   }
 }

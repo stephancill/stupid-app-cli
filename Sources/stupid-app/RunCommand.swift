@@ -73,6 +73,10 @@ struct RunCommand: AsyncParsableCommand {
     }
     let config = try AppConfig.decode(data)
     let projectRoot = URL(fileURLWithPath: ".")
+    let os = config.resolvedPlatform
+    if os == .tvos, usb || mac {
+      throw RunError.unsupportedTVOSTransport
+    }
 
     if simulator {
       return try runSimulator(projectRoot: projectRoot, config: config)
@@ -92,14 +96,21 @@ struct RunCommand: AsyncParsableCommand {
     }
 
     let mode = HostSDKMode.detect()
+    let platform = TargetPlatform(os: os, environment: .device)
+    if os != .ios, case .importedBundle = mode {
+      throw BuildError.platformRequiresXcode(os.displayName)
+    }
     let toolchain = BuildToolchain.resolve(
       swiftPath: swiftPath,
       sdkID: sdkID,
-      targetTriple: TargetPlatform.device.targetTriple,
-      mode: mode
+      targetTriple: platform.targetTriple,
+      mode: mode,
+      platform: platform
     )
     let resolvedSwift = toolchain.swiftPath
-    let planner = Planner(projectRoot: projectRoot, config: config, swiftPath: resolvedSwift)
+    let planner = Planner(
+      projectRoot: projectRoot, config: config, swiftPath: resolvedSwift,
+      targetTriple: platform.targetTriple, platform: platform)
     let plan = try planner.makePlan()
 
     // Locate every development profile before building so a stale or missing profile is
@@ -155,6 +166,7 @@ struct RunCommand: AsyncParsableCommand {
       plan: plan,
       config: config,
       swiftPath: resolvedSwift,
+      targetTriple: platform.targetTriple,
       sdkID: sdkID,
       sdkInput: toolchain.sdkInput,
       sdkVersion: toolchain.hostSDKVersion,
@@ -167,7 +179,7 @@ struct RunCommand: AsyncParsableCommand {
     // each nested extension first, then the app in deep mode.
     let ipaDir =
       projectRoot
-      .appendingPathComponent(".build/arm64-apple-ios/debug", isDirectory: true)
+      .appendingPathComponent(".build/\(platform.targetTriple)/debug", isDirectory: true)
     var ipaURL: URL
     var signedAppURL: URL
     if plan.extensions.isEmpty {
@@ -295,6 +307,10 @@ struct RunCommand: AsyncParsableCommand {
 
   private func runSimulator(projectRoot: URL, config: AppConfig) throws {
     let mode = HostSDKMode.detect()
+    let platform = TargetPlatform(os: config.resolvedPlatform, environment: .simulator)
+    if platform.os != .ios, case .importedBundle = mode {
+      throw BuildError.platformRequiresXcode(platform.os.displayName)
+    }
     // Without Xcode the simulator is x86Sim's (Linux), built with the imported simulator
     // SDK; the device SDK's default identifier means the simulator one there.
     let isX86Sim: Bool
@@ -303,17 +319,17 @@ struct RunCommand: AsyncParsableCommand {
     let toolchain = BuildToolchain.resolve(
       swiftPath: swiftPath,
       sdkID: simulatorSDKID,
-      targetTriple: TargetPlatform.simulator.targetTriple,
+      targetTriple: platform.targetTriple,
       mode: mode,
-      platform: .simulator
+      platform: platform
     )
     let resolvedSwift = toolchain.swiftPath
     let planner = Planner(
       projectRoot: projectRoot,
       config: config,
       swiftPath: resolvedSwift,
-      targetTriple: TargetPlatform.simulator.targetTriple,
-      platform: .simulator
+      targetTriple: platform.targetTriple,
+      platform: platform
     )
     let plan = try planner.makePlan()
     let packer = Packer(
@@ -321,7 +337,7 @@ struct RunCommand: AsyncParsableCommand {
       plan: plan,
       config: config,
       swiftPath: resolvedSwift,
-      targetTriple: TargetPlatform.simulator.targetTriple,
+      targetTriple: platform.targetTriple,
       sdkID: simulatorSDKID,
       sdkInput: toolchain.sdkInput,
       sdkVersion: toolchain.hostSDKVersion,
@@ -366,7 +382,7 @@ struct RunCommand: AsyncParsableCommand {
       extensionEntitlements: extensionEntitlements,
       projectRoot: projectRoot)
 
-    let device = try selectSimulatorDevice(udid: udid)
+    let device = try selectSimulatorDevice(udid: udid, os: platform.os)
     print("Using simulator \(device.name) (\(device.udid))")
 
     let state = device.state.lowercased()
@@ -593,8 +609,11 @@ struct RunCommand: AsyncParsableCommand {
     }
   }
 
-  private func selectSimulatorDevice(udid: String?) throws -> Simctl.Device {
-    let devices = try Simctl.listDevices()
+  private func selectSimulatorDevice(udid: String?, os: AppleOS) throws -> Simctl.Device {
+    let runtimePrefix = "com.apple.CoreSimulator.SimRuntime.\(os.displayName)-"
+    let devices = try Simctl.listDevices().filter {
+      $0.runtimeIdentifier.hasPrefix(runtimePrefix)
+    }
     if let udid {
       guard let device = devices.first(where: { $0.udid == udid }) else {
         throw RunError.simulatorNotFound(udid)
@@ -631,6 +650,7 @@ enum RunError: Error, CustomStringConvertible {
   case simulatorNotFound(String)
   case noSimulatorDevice
   case localMacMismatch
+  case unsupportedTVOSTransport
 
   var description: String {
     switch self {
@@ -659,6 +679,9 @@ enum RunError: Error, CustomStringConvertible {
     case .noSimulatorDevice:
       return
         "No simulator device is available. Install a runtime or run `stupid-app simulators` to list them."
+    case .unsupportedTVOSTransport:
+      return
+        "tvOS apps deploy with --network (after `stupid-app device pair --network`) or --simulator; --usb and --mac are iOS-only."
     case .localMacMismatch:
       return "The supplied --udid does not identify this Mac. Omit --udid when using --mac."
     }

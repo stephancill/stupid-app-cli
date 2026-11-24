@@ -94,6 +94,8 @@ stupid-app signing setup [...]     Bootstrap credentials + provision identities/
 stupid-app signing fetch            Download the distribution certificate and App Store profiles (read-only)
 stupid-app devices                  List App Store Connect devices
 stupid-app device pair --usb        Pair lockdown natively, then bootstrap CoreDevice pairing
+stupid-app device pair --network    Pair an Apple TV over the network with its on-screen PIN
+stupid-app device container ...     List or pull files from a dev app's container over the network
 stupid-app run --usb                Build, sign, install, and launch over USB
 stupid-app run --network --udid ... Build, sign, install, and launch over the network
 stupid-app run --simulator [--udid] Build, ad-hoc sign, install, and launch in a simulator

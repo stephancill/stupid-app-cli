@@ -8,6 +8,29 @@ Historical work belongs in `docs/implementation-notes.md`. This document should 
 
 ## Current Status
 
+**tvOS apps (2026-11-24).** `stupid-app.yml` takes `platform: tvos` (default `ios`).
+`TargetPlatform` is now an OS (`ios`/`tvos`) plus environment (`device`/`simulator`), and
+every SDK, triple, linker platform, `DT*` key and `CFBundleSupportedPlatforms` value derives
+from it. tvOS builds need Xcode in place (imported SDK bundles stay iOS-only and fail
+loudly): the Info.plist declares `UIDeviceFamily` 3, and the icon is a brand-assets catalog
+(layered app icon, App Store icon, top shelf images generated from `iconPath`) compiled by
+`actool` (`TVOSIconCatalog`), whose partial Info.plist is merged. `signing setup` creates
+`TVOS_APP_DEVELOPMENT`/`TVOS_APP_STORE` profiles for tvOS projects (`--platform` overrides);
+devices and bundle IDs remain `IOS` in App Store Connect. `device pair --network` pairs an
+Apple TV over the network (`NetworkManualPairer`): it browses
+`_remotepairing-manual-pairing._tcp`, runs the shared CoreDevice Pair-Setup with the
+on-screen PIN in RPPairing JSON frames (an unpaired TV reports no identifier or UDID, so
+the advertised identifier names the record; `createRemoteUnlockKey` has no host key on
+tvOS and is optional there), then reads the UDID through the paired tunnel and maps it.
+`run --network` installs on the Apple TV. Verified on an Apple TV HD (tvOS 26): pair,
+development profile, install. Open: launching needs `com.apple.coredevice.appservice`,
+which a tvOS device only offers once the personalized developer disk image is mounted; a
+native DDI mount (TSS personalization + mobile_image_mounter) is the next step, so tvOS
+apps are opened from the home screen meanwhile. `device container` lists and pulls files from a
+development app's container over the network (`house_arrest`), the supported way to read
+app-written logs; live log streaming over the userspace tunnel is not working yet. `release archive`/`upload` are not yet
+tvOS-aware (App Store profile kind and `TV_OS` build platform).
+
 **Release sessions (2026-11-21).** A host can archive and upload without the App Store
 Connect key or the distribution private key. With `STUPID_APP_RELEASE_SESSION` set to an
 approved session URL from a signing broker, `ASCContext` sends every App Store Connect

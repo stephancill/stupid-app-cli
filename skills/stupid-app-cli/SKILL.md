@@ -196,6 +196,14 @@ iconPath: Resources/AppIcon.png
 #     type: APP_GROUPS
 ```
 
+`platform: tvos` (default `ios`) builds an Apple TV app: AppleTVOS/AppleTVSimulator SDKs,
+`UIDeviceFamily` 3, a layered tvOS icon and top shelf images compiled from `iconPath` with
+Xcode's `actool`, and tvOS (`TVOS_APP_DEVELOPMENT`/`TVOS_APP_STORE`) profiles from
+`signing setup` (`--platform tvos` outside a project). tvOS needs an Xcode-present macOS
+host; it cannot also set `deviceFamily`. Pair the Apple TV with `device pair --network`,
+deploy with `run --network` (open the app on the TV yourself until disk-image mounting
+lands) or `run --simulator` with the tvOS simulator runtime installed.
+
 `deviceFamily` selects the iOS device families the app and its bundled extensions
 declare (`UIDeviceFamily`): `iphone`, `ipad`, or `universal` (the default). An
 iPhone-only app omits the iPad orientation key, so iPadOS and Apple silicon Mac

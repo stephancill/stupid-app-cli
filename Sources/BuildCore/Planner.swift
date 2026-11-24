@@ -41,7 +41,7 @@ public struct Planner: Sendable {
         }
         resources = Array(Set(resources))
 
-        let deploymentTarget = root.iosDeploymentTarget ?? config.deploymentTarget
+        let deploymentTarget = root.deploymentTarget(for: platform) ?? config.deploymentTarget
         let infoPlist = try synthesizeInfoPlist(
             product: library.name,
             bundleID: config.bundleID,
@@ -68,7 +68,8 @@ public struct Planner: Sendable {
                 }
                 extensionResources = Array(Set(extensionResources))
                 let extensionDeploymentTarget =
-                    extensionConfig.deploymentTarget ?? root.iosDeploymentTarget ?? config.deploymentTarget
+                    extensionConfig.deploymentTarget ?? root.deploymentTarget(for: platform)
+                    ?? config.deploymentTarget
                 // Nested bundles root their Info.plist so relative source `Resources`
                 // that were copied against the app root are located from the project root.
                 let extensionInfo = try synthesizeInfoPlist(
@@ -253,15 +254,15 @@ public struct Planner: Sendable {
                     name, "'\(libraryPath)' is not a static archive (.a)")
             }
         }
-        let variant: String? = platform == .simulator ? "simulator" : nil
+        let variant: String? = platform.isSimulator ? "simulator" : nil
         let hasSlice = libraries.contains { library in
-            library["SupportedPlatform"] as? String == "ios"
+            library["SupportedPlatform"] as? String == platform.tripleOS
                 && library["SupportedPlatformVariant"] as? String == variant
                 && (library["SupportedArchitectures"] as? [String])?.contains("arm64") == true
         }
         guard hasSlice else {
             throw BuildError.unsupportedBinaryTarget(
-                name, "it has no arm64 iOS\(variant.map { " \($0)" } ?? "") library")
+                name, "it has no arm64 \(platform.os.displayName)\(variant.map { " \($0)" } ?? "") library")
         }
     }
 
@@ -287,9 +288,11 @@ public struct Planner: Sendable {
             // The app and every bundled extension declare the same device families so
             // App Store validation never sees an extension supporting more families than
             // its containing app.
-            "UIDeviceFamily": deviceFamily.deviceFamilyIdentifiers,
+            "UIDeviceFamily": platform.os == .tvos ? [3] : deviceFamily.deviceFamilyIdentifiers,
         ]
-        if !isExtension {
+        if !isExtension, platform.os == .tvos {
+            info["LSRequiresIPhoneOS"] = true
+        } else if !isExtension {
             info["LSRequiresIPhoneOS"] = true
             info["UISupportedInterfaceOrientations"] = ["UIInterfaceOrientationPortrait"]
             // iPad support requires all four orientations (App Store validation
@@ -377,8 +380,8 @@ public struct ExtensionPlan: Sendable {
 }
 
 private extension PackageDump {
-    var iosDeploymentTarget: String? {
-        platforms?.first { $0.name == "ios" }?.version
+    func deploymentTarget(for platform: TargetPlatform) -> String? {
+        platforms?.first { $0.name == platform.tripleOS }?.version
     }
 
     var packageLayoutHash: String {
@@ -549,6 +552,8 @@ public enum BuildError: Error, Equatable, Sendable, CustomStringConvertible {
     case infoPlistInvalid(String)
     case unsupportedResource(String)
     case missingSimulatorSDK(String)
+    case missingPlatformSDK(app: String, platform: String)
+    case platformRequiresXcode(String)
     case simulatorRequiresXcode
     case macroPluginMissing(String)
     case swiftVersionMismatch(sdk: String, sdkSwift: String, host: String)
@@ -583,6 +588,10 @@ public enum BuildError: Error, Equatable, Sendable, CustomStringConvertible {
             return "Unsupported resource '\(path)'. Only PNG icons and Planner-recognized SwiftPM resources are supported in version 1."
         case let .missingSimulatorSDK(app):
             return "Xcode at \(app) has no iPhoneSimulator SDK, but a simulator build requires one. Install a simulator runtime or add the iPhoneSimulator platform."
+        case let .missingPlatformSDK(app, platform):
+            return "Xcode at \(app) has no \(platform) SDK, but this build requires one. Install the \(platform) platform in Xcode's Components settings."
+        case let .platformRequiresXcode(os):
+            return "\(os) builds currently require an Xcode-present macOS host; imported SDK bundles cover iOS only."
         case .simulatorRequiresXcode:
             return "Simulator builds require an Xcode-present host because simulators cannot exist without Xcode. Build for a physical device or install Xcode."
         case let .macroPluginMissing(path):

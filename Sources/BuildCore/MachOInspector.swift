@@ -111,6 +111,8 @@ public enum MachOInspector {
         case 2: return "ios"
         case 1: return "macos"
         case 7: return "ios-simulator"
+        case 3: return "tvos"
+        case 8: return "tvos-simulator"
         default: return "unknown"
         }
     }

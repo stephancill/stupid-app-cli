@@ -304,6 +304,22 @@ public struct RemotepairingDiscovery: Sendable {
     #endif
   }
 
+  /// Discovers devices waiting to pair over the network (an Apple TV on Settings >
+  /// Remotes and Devices > Remote App and Devices advertises
+  /// `_remotepairing-manual-pairing._tcp`). Darwin only: it browses through DNS-SD.
+  public static func browseManualPairing(timeout: Double) throws -> [Advertisement] {
+    #if canImport(dnssd)
+      guard timeout > 0 else {
+        throw DiscoveryError.invalidInput("timeout must be positive")
+      }
+      return try DNSSDDiscoveryBrowser(serviceType: "_remotepairing-manual-pairing._tcp")
+        .browse(timeout: timeout)
+    #else
+      throw DiscoveryError.invalidInput(
+        "manual-pairing discovery needs DNS-SD; pass the device's --host and --port")
+    #endif
+  }
+
   func browseMulticast(timeout: Double) throws -> [Advertisement] {
     guard timeout > 0 else {
       throw DiscoveryError.invalidInput("timeout must be positive")

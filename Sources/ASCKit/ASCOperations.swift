@@ -336,6 +336,18 @@ public struct ASCOperations: Sendable {
     public enum ProfileType: String, Sendable {
         case appStore = "IOS_APP_STORE"
         case development = "IOS_APP_DEVELOPMENT"
+        case tvosAppStore = "TVOS_APP_STORE"
+        case tvosDevelopment = "TVOS_APP_DEVELOPMENT"
+
+        /// The App Store profile type for an OS (`ios` or `tvos`).
+        public static func appStore(tvOS: Bool) -> ProfileType {
+            tvOS ? .tvosAppStore : .appStore
+        }
+
+        /// The development profile type for an OS (`ios` or `tvos`).
+        public static func development(tvOS: Bool) -> ProfileType {
+            tvOS ? .tvosDevelopment : .development
+        }
     }
 
     /// Fetches the profile resource id for an exact profile name and type, if any.
@@ -426,10 +438,13 @@ public struct ASCOperations: Sendable {
     }
 
     /// Creates an iOS App Store profile for one bundle-ID resource and certificate.
-    public func createAppStoreProfile(name: String, bundleIDResourceID: String, certificateID: String) throws -> String {
+    public func createAppStoreProfile(
+        name: String, bundleIDResourceID: String, certificateID: String,
+        profileType: ProfileType = .appStore
+    ) throws -> String {
         try createProfile(
             name: name,
-            profileType: .appStore,
+            profileType: profileType,
             bundleIDResourceID: bundleIDResourceID,
             certificateID: certificateID,
             deviceIDs: []
@@ -578,11 +593,12 @@ public struct ASCOperations: Sendable {
         name: String,
         bundleIDResourceID: String,
         certificateID: String,
-        deviceIDs: [String]
+        deviceIDs: [String],
+        profileType: ProfileType = .development
     ) throws -> (id: String, content: Data) {
         let id = try createProfile(
             name: name,
-            profileType: .development,
+            profileType: profileType,
             bundleIDResourceID: bundleIDResourceID,
             certificateID: certificateID,
             deviceIDs: deviceIDs)
