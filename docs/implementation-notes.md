@@ -16,6 +16,18 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth. Historical entries record the implementation at their date. Use the current handover and bundled command reference for operational instructions.
 
+## 2026-11-28 - Release 0.0.34: Dynamic Frameworks
+
+### Summary
+
+- Ships dynamic-framework binary targets (entry below): local or remote
+  (`url:checksum:`) XCFrameworks of dynamic frameworks are embedded under
+  `App.app/Frameworks/`, thinned to arm64, and signed leaf-first before the app on device,
+  release and simulator paths; remote static archives are accepted too.
+- Known limits: extensions cannot embed dynamic frameworks yet, loose `.dylib`s are still
+  refused, and App Store processing, TestFlight and physical-device installs with embedded
+  frameworks are not yet qualified.
+
 ## 2026-11-28 - Dynamic Framework Binary Targets
 
 ### Summary
