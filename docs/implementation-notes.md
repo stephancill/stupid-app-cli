@@ -16,6 +16,69 @@ Do not include personal information, credentials, private keys, tokens, certific
 
 The current project plan and architecture live in `docs/engineering-handover.md`. Update that document when an implementation-note entry changes current truth. Historical entries record the implementation at their date. Use the current handover and bundled command reference for operational instructions.
 
+## 2026-11-28 - Dynamic Framework Binary Targets
+
+### Summary
+
+- Binary targets may be dynamic-framework XCFrameworks, local or remote
+  (`.binaryTarget(url:checksum:)`), and remote static archives are accepted too. The
+  motivating dependency was the NativeScript iOS runtime, which ships only remote dynamic
+  XCFrameworks (`NativeScript`, `NativeScriptDefaultMetadata`, `TKLiveSync`).
+- `XCFrameworkSlice` (BuildCore) selects a platform's arm64 library and reports whether it
+  is a static archive or a framework; every library in one XCFramework must be the same
+  kind. `Planner.binaryTargetResource` replaces `validateStaticXCFramework`: static
+  archives plan nothing, dynamic frameworks plan a `.framework(target:location:)` resource.
+  SwiftPM reports a remote binary target's path as `remote/archive/<name>.xcframework.zip`
+  and unpacks it to `<scratch>/artifacts/<package identity>/<target>/`, so the packer
+  resolves and validates remote slices after the build.
+- `Packer.embedFramework` copies the slice's framework to `Frameworks/`, dropping
+  `Headers`, `PrivateHeaders`, `Modules` and `_CodeSignature`, thins a universal executable
+  to arm64 with the new `MachOThinner` (simulator slices ship arm64 + x86_64), and requires
+  `MH_DYLIB`. Versioned frameworks, duplicate framework names, and dynamic frameworks linked
+  by an extension fail loudly.
+- Signing: `NativeAppClassifier` accepts `.framework` bundles (`Plan.isFramework`),
+  `NativeMachOEditor` and `NativeSignatureVerifier` accept `MH_DYLIB`, and `NativeSigner`
+  signs a framework without entitlement slots and with exec-segment flags 0 (Xcode's shape);
+  passing entitlements for a framework is refused. App signatures are byte-for-byte
+  unchanged. `EmbeddedFrameworks` signs (or, for simulators, ad-hoc signs) every
+  `Frameworks/*.framework` leaf-first; `SigningPipeline` then signs the app in deep mode when
+  frameworks exist, `DeepSigningPipeline` signs them before the app, and `run --simulator`
+  ad-hoc signs them before the app.
+
+### Decisions
+
+- Frameworks are sealed by the app's deep `CodeResources` the same way nested `.appex`
+  bundles already are (their files hashed, their own signature internals excluded), which
+  is the layout already qualified through App Store processing for extensions.
+- Extensions do not embed dynamic frameworks yet: sharing one copy needs the app's
+  `Frameworks/` plus an `@executable_path/../../Frameworks` rpath in the extension, which
+  needs its own qualification.
+- Loose `.dylib` signing is out of scope; the classifier still rejects them.
+
+### Verification
+
+- `swift test`: all suites pass except `RemotePairingIdentityTests`, which needs a
+  connected device (usbmuxd timed out with none attached). New: `XCFrameworkTests`
+  (static/dynamic/remote planning, rejections, embedding with stripping and thinning,
+  thinning errors) and an embedded-framework real-identity signing test with the synthetic
+  certificate chain (framework CodeDirectory, CMS, no entitlement slots, app seal coverage).
+- NativeScript-based SwiftUI app on the Xcode-present macOS host: `stupid-app run
+  --simulator` embedded the three frameworks, ad-hoc signed them and the app (`codesign
+  --verify --strict --deep` passes), launched it, and its JavaScript called UIKit,
+  CoreLocation, UserNotifications and SQLite. `stupid-app build` for the device produced
+  thin arm64 frameworks linked through `@rpath`. `release archive` with a real Apple
+  Distribution identity and App Store profile produced an IPA whose app and frameworks pass
+  `codesign --verify --strict --deep`; each framework carries the team's distribution
+  signature and no entitlements.
+
+### Follow-Up
+
+- Qualify App Store processing, TestFlight install, and `run --usb`/`--network` on a
+  physical device with an app embedding dynamic frameworks.
+- Qualify the imported-bundle Linux path (SwiftPM's remote artifact download and framework
+  linking through the imported SDK).
+- Embed dynamic frameworks for extensions; sign loose dylibs.
+
 ## 2026-11-24 - Release 0.0.33: Apple TV Support
 
 ### Summary

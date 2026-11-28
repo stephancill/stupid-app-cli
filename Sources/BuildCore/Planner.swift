@@ -214,7 +214,12 @@ public struct Planner: Sendable {
                 throw BuildError.targetNotFound(next.target, package.dump.name)
             }
             if target.moduleType == "BinaryTarget" {
-                try validateStaticXCFramework(name: target.name, path: target.path, packageRoot: package.url)
+                if let framework = try binaryTargetResource(
+                    name: target.name, path: target.path, packageRoot: package.url,
+                    packageIdentity: next.package)
+                {
+                    resources.append(framework)
+                }
                 continue
             }
             if let declaredResources = target.resources, !declaredResources.isEmpty {
@@ -231,38 +236,32 @@ public struct Planner: Sendable {
         }
     }
 
-    /// Binary targets are supported only as local XCFrameworks of static archives. Those link into
-    /// the executable, so the bundle embeds and signs nothing extra; dynamic frameworks would need
-    /// embedding and nested signing, which version 1 does not do.
-    func validateStaticXCFramework(name: String, path: String?, packageRoot: URL? = nil) throws {
-        guard let path, path.hasSuffix(".xcframework"), !path.hasPrefix("/") else {
-            throw BuildError.unsupportedBinaryTarget(
-                name, "it is not a local .xcframework inside the package (remote and artifact-bundle binaries are unsupported)")
+    /// Binary targets are XCFrameworks with an arm64 library for the build's platform. A static
+    /// archive links into the executable and adds nothing to the bundle (nil). A dynamic framework
+    /// becomes a `.framework` resource the packer embeds under `Frameworks/` and signing seals.
+    /// A remote binary target is only downloaded by the build, so the packer validates its slice.
+    func binaryTargetResource(
+        name: String, path: String?, packageRoot: URL? = nil, packageIdentity: String
+    ) throws -> BuildPlan.Resource? {
+        guard let path else {
+            throw BuildError.unsupportedBinaryTarget(name, "SwiftPM reports no path for it")
         }
-        let infoURL = (packageRoot ?? projectRoot).appendingPathComponent(path).appendingPathComponent("Info.plist")
-        guard
-            let data = try? Data(contentsOf: infoURL),
-            let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-            let libraries = info["AvailableLibraries"] as? [[String: Any]], !libraries.isEmpty
-        else {
-            throw BuildError.unsupportedBinaryTarget(name, "\(path)/Info.plist lists no AvailableLibraries")
-        }
-        for library in libraries {
-            let libraryPath = library["LibraryPath"] as? String ?? "<missing LibraryPath>"
-            guard libraryPath.hasSuffix(".a") else {
+        if path.hasPrefix("remote/") {
+            guard path.hasSuffix(".xcframework.zip") else {
                 throw BuildError.unsupportedBinaryTarget(
-                    name, "'\(libraryPath)' is not a static archive (.a)")
+                    name, "its remote archive is not a zipped .xcframework (artifact bundles are unsupported)")
             }
+            return .framework(target: name, location: .remote(packageIdentity: packageIdentity))
         }
-        let variant: String? = platform.isSimulator ? "simulator" : nil
-        let hasSlice = libraries.contains { library in
-            library["SupportedPlatform"] as? String == platform.tripleOS
-                && library["SupportedPlatformVariant"] as? String == variant
-                && (library["SupportedArchitectures"] as? [String])?.contains("arm64") == true
-        }
-        guard hasSlice else {
+        guard path.hasSuffix(".xcframework"), !path.hasPrefix("/") else {
             throw BuildError.unsupportedBinaryTarget(
-                name, "it has no arm64 \(platform.os.displayName)\(variant.map { " \($0)" } ?? "") library")
+                name, "it is not an .xcframework inside the package or a remote zipped .xcframework (artifact bundles are unsupported)")
+        }
+        let xcframework = (packageRoot ?? projectRoot).appendingPathComponent(path, isDirectory: true)
+        let slice = try XCFrameworkSlice.select(xcframework: xcframework, platform: platform, targetName: name)
+        switch slice.kind {
+        case .staticArchive: return nil
+        case .dynamicFramework: return .framework(target: name, location: .local(xcframework))
         }
     }
 
@@ -342,6 +341,8 @@ public struct BuildPlan: Sendable {
         /// SwiftPM's `<package>_<target>.bundle`; `package` is the declaring manifest's name.
         case bundle(package: String, target: String)
         case library(name: String)
+        /// A binary target's dynamic framework, embedded as `Frameworks/<Name>.framework`.
+        case framework(target: String, location: XCFrameworkLocation)
         case root(source: String)
     }
 }
@@ -575,9 +576,9 @@ public enum BuildError: Error, Equatable, Sendable, CustomStringConvertible {
         case let .targetNotFound(name, package):
             return "Could not find target '\(name)' in package '\(package)'."
         case let .unsupportedModule(name):
-            return "Unsupported build input '\(name)'. Version 1 supports pure Swift/PMM resources and static-library XCFrameworks only; plugins and other inputs fail loudly."
+            return "Unsupported build input '\(name)'. Version 1 supports pure Swift/PMM resources and XCFrameworks only; plugins and other inputs fail loudly."
         case let .unsupportedBinaryTarget(name, reason):
-            return "Unsupported binary target '\(name)': \(reason). Version 1 links local XCFrameworks of static libraries (.a) with an arm64 slice for the build's platform; repackage the dependency that way or depend on its sources."
+            return "Unsupported binary target '\(name)': \(reason). stupid-app supports XCFrameworks (local, or remote zipped) of static libraries (.a) or iOS dynamic frameworks with an arm64 slice for the build's platform; repackage the dependency that way or depend on its sources."
         case let .dependencyResolutionFailed(output):
             return "Resolving the package's dependencies failed (`swift package show-dependencies`). Check network access and access to each dependency's repository, then retry or run `swift package resolve` in the project.\n\(output)"
         case let .infoPlistMissing(path):

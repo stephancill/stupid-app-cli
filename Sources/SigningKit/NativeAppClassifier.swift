@@ -6,6 +6,9 @@ public enum NativeAppClassifier {
     public let executableURL: URL
     public let executableName: String
     public let bundleIdentifier: String
+    /// A `.framework`: its executable is a dylib, so it carries no entitlements and is not
+    /// the main binary.
+    public let isFramework: Bool
   }
 
   /// How strictly to treat nested signable bundles.
@@ -36,8 +39,8 @@ public enum NativeAppClassifier {
 
   public static func classify(appBundle: URL, mode: Mode) throws -> Plan {
     let root = appBundle.standardizedFileURL
-    guard root.pathExtension == "app" || root.pathExtension == "appex" else {
-      throw Error.malformed("input is not an .app/.appex bundle")
+    guard ["app", "appex", "framework"].contains(root.pathExtension) else {
+      throw Error.malformed("input is not an .app/.appex/.framework bundle")
     }
     let infoURL = root.appendingPathComponent("Info.plist")
     guard let infoData = try? Data(contentsOf: infoURL),
@@ -116,6 +119,6 @@ public enum NativeAppClassifier {
     }
     return Plan(
       appBundle: root, executableURL: executableURL, executableName: executableName,
-      bundleIdentifier: bundleIdentifier)
+      bundleIdentifier: bundleIdentifier, isFramework: root.pathExtension == "framework")
   }
 }

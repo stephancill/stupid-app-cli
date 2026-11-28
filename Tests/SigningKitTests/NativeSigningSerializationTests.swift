@@ -159,6 +159,72 @@ struct NativeSigningSerializationTests {
     #expect(!cms.hasTimestamp)
   }
 
+  @Test("signs an embedded framework as a leaf, then seals it into the app in deep mode")
+  func signsEmbeddedFramework() throws {
+    let certificates = try certificateFixture()
+    let app = try makeFixtureApp()
+    defer { try? FileManager.default.removeItem(at: app) }
+    let framework = app.appendingPathComponent("Frameworks/Demo.framework", isDirectory: true)
+    try FileManager.default.createDirectory(at: framework, withIntermediateDirectories: true)
+    let frameworkInfo = try PropertyListSerialization.data(
+      fromPropertyList: [
+        "CFBundleExecutable": "Demo", "CFBundleIdentifier": "net.example.demo",
+        "CFBundlePackageType": "FMWK",
+      ], format: .xml, options: 0)
+    try frameworkInfo.write(to: framework.appendingPathComponent("Info.plist"))
+    var dylib = makeUnsignedMachO()
+    dylib.replaceSubrange(12..<16, with: le32s(6))  // MH_DYLIB
+    let frameworkExecutable = framework.appendingPathComponent("Demo")
+    try dylib.write(to: frameworkExecutable)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o755], ofItemAtPath: frameworkExecutable.path)
+    let signingIdentity = identity(
+      certificates, signer: .privateKey(pem: certificates.leafKey.pkcs8PEMRepresentation))
+
+    // An unsigned framework keeps the app from signing shallow.
+    #expect(throws: NativeAppClassifier.Error.self) {
+      try NativeAppClassifier.classify(appBundle: app, mode: .shallow)
+    }
+    #expect(throws: NativeSigner.Error.frameworkEntitlements) {
+      try NativeSigner().sign(
+        appBundle: framework, identity: signingIdentity,
+        entitlements: ["get-task-allow": true], teamID: "TEAMID1234")
+    }
+
+    let signed = try EmbeddedFrameworks.sign(
+      in: app, identity: signingIdentity, teamID: "TEAMID1234")
+    #expect(signed.map(\.lastPathComponent) == ["Demo.framework"])
+    try NativeSigner().sign(
+      appBundle: app, identity: signingIdentity,
+      entitlements: ["application-identifier": "TEAMID1234.net.example.fixture"],
+      teamID: "TEAMID1234", mode: .deep)
+
+    let frameworkBinary = try Data(contentsOf: frameworkExecutable)
+    let frameworkResources = try Data(
+      contentsOf: framework.appendingPathComponent("_CodeSignature/CodeResources"))
+    let frameworkSignature = try NativeSignatureVerifier.verifyCodeDirectoryHashes(
+      executable: frameworkBinary,
+      externalSpecialSlots: [1: frameworkInfo, 3: frameworkResources])
+    #expect(frameworkSignature.codeDirectory.identifier == "net.example.demo")
+    #expect(frameworkSignature.codeDirectory.teamIdentifier == "TEAMID1234")
+    #expect(frameworkSignature.codeDirectory.executableSegmentFlags == 0)
+    #expect(frameworkSignature.entitlements.isEmpty)
+    #expect(!frameworkSignature.blobs.contains { $0.slot == 5 || $0.slot == 7 })
+    _ = try NativeSignatureVerifier.verifyCMS(
+      executable: frameworkBinary, trustedRootCertificatesPEM: [certificates.rootPEM])
+
+    // The app's seal covers the signed framework's executable and resource seal.
+    let appResources = try PropertyListSerialization.propertyList(
+      from: Data(contentsOf: app.appendingPathComponent("_CodeSignature/CodeResources")),
+      format: nil) as? [String: Any]
+    let files2 = try #require(appResources?["files2"] as? [String: Any])
+    #expect(files2["Frameworks/Demo.framework/Demo"] != nil)
+    #expect(files2["Frameworks/Demo.framework/_CodeSignature/CodeResources"] != nil)
+    _ = try NativeSignatureVerifier.verifyCMS(
+      executable: try Data(contentsOf: app.appendingPathComponent("Fixture")),
+      trustedRootCertificatesPEM: [certificates.rootPEM])
+  }
+
   @Test("a remote signer is asked once per bundle and yields the same signature as the key")
   func remoteSignerSignsOnceWithIdenticalOutput() throws {
     let certificates = try certificateFixture()

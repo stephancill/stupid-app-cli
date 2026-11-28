@@ -26,6 +26,7 @@ import Foundation
     case missingCertificateChain
     case unstableSignatureSize
     case verificationFailed(String)
+    case frameworkEntitlements
 
     public var description: String {
       switch self {
@@ -36,6 +37,8 @@ import Foundation
         return "Native signing could not stabilize the deterministic embedded-signature size."
       case .verificationFailed(let detail):
         return "Native post-sign verification failed: \(detail)."
+      case .frameworkEntitlements:
+        return "Native signing refuses entitlements for a .framework: frameworks are signed without them."
       }
     }
   }
@@ -63,26 +66,32 @@ import Foundation
     let commonName = try NativeCMS.certificateCommonName(identity.leafCertificatePEM)
     let requirements = try NativeSigningSerialization.requirementSet(
       identifier: plan.bundleIdentifier, leafCommonName: commonName)
-    let xml = try PropertyListSerialization.data(
-      fromPropertyList: entitlements, format: .xml, options: 0)
-    let xmlBlob = NativeEmbeddedSignature.blob(magic: 0xFADE_7171, payload: xml)
-    let derBlob = NativeEmbeddedSignature.blob(
-      magic: 0xFADE_7172,
-      payload: try NativeSigningSerialization.entitlementDER(entitlements))
-    let specialContent: [UInt32: Data] = [
-      1: infoData, 2: requirements, 3: codeResources, 5: xmlBlob, 7: derBlob,
-    ]
+    // A framework is signed as Xcode signs it: no entitlement slots, not the main binary.
+    guard !plan.isFramework || entitlements.isEmpty else { throw Error.frameworkEntitlements }
+    var specialContent: [UInt32: Data] = [1: infoData, 2: requirements, 3: codeResources]
+    var entitlementBlobs: [(UInt32, Data)] = []
+    if !plan.isFramework {
+      let xml = try PropertyListSerialization.data(
+        fromPropertyList: entitlements, format: .xml, options: 0)
+      let xmlBlob = NativeEmbeddedSignature.blob(magic: 0xFADE_7171, payload: xml)
+      let derBlob = NativeEmbeddedSignature.blob(
+        magic: 0xFADE_7172,
+        payload: try NativeSigningSerialization.entitlementDER(entitlements))
+      specialContent[5] = xmlBlob
+      specialContent[7] = derBlob
+      entitlementBlobs = [(5, xmlBlob), (7, derBlob)]
+    }
     let specialHashes = specialContent.mapValues(NativeEmbeddedSignature.digest)
-    var executableSegmentFlags: UInt64 = 0x1  // MAIN_BINARY
+    var executableSegmentFlags: UInt64 = plan.isFramework ? 0 : 0x1  // MAIN_BINARY
     if entitlements["get-task-allow"] as? Bool == true {
       executableSegmentFlags |= 0x10  // ALLOW_UNSIGNED
     }
 
     func superBlob(codeDirectory: Data, cms: Data) -> Data {
-      NativeEmbeddedSignature.superBlob([
-        (0, codeDirectory), (2, requirements), (5, xmlBlob), (7, derBlob),
-        (0x1_0000, NativeEmbeddedSignature.blob(magic: 0xFADE_0B01, payload: cms)),
-      ])
+      NativeEmbeddedSignature.superBlob(
+        [(0, codeDirectory), (2, requirements)] + entitlementBlobs + [
+          (0x1_0000, NativeEmbeddedSignature.blob(magic: 0xFADE_0B01, payload: cms))
+        ])
     }
 
     // Settle the embedded-signature size with a same-size placeholder CMS, then sign the
@@ -137,7 +146,7 @@ import Foundation
       [.posixPermissions: 0o755], ofItemAtPath: plan.executableURL.path)
   }
 
-  /// Ad-hoc signs one `.app` or `.appex` for a simulator, the signature `codesign -s -`
+  /// Ad-hoc signs one `.app`, `.appex` or `.framework` for a simulator, the signature `codesign -s -`
   /// makes: a CodeDirectory flagged `CS_ADHOC` with no team, an empty requirement set and
   /// an empty CMS wrapper. Only simulator builds use it (the scoped simulator exception);
   /// device and release output always gets a real identity through `sign`. Sign nested
@@ -150,6 +159,7 @@ import Foundation
   ) throws {
     let csAdhoc: UInt32 = 0x0000_0002
     let plan = try NativeAppClassifier.classify(appBundle: appBundle, mode: mode)
+    guard !plan.isFramework || entitlements.isEmpty else { throw Error.frameworkEntitlements }
     let infoData = try Data(contentsOf: plan.appBundle.appendingPathComponent("Info.plist"))
     let executable = try Data(contentsOf: plan.executableURL)
     let codeResources = try NativeCodeResources.write(
@@ -171,7 +181,7 @@ import Foundation
       entitlementBlobs = [(5, xmlBlob), (7, derBlob)]
     }
     let specialHashes = specialContent.mapValues(NativeEmbeddedSignature.digest)
-    var executableSegmentFlags: UInt64 = 0x1  // MAIN_BINARY
+    var executableSegmentFlags: UInt64 = plan.isFramework ? 0 : 0x1  // MAIN_BINARY
     if entitlements["get-task-allow"] as? Bool == true {
       executableSegmentFlags |= 0x10  // ALLOW_UNSIGNED
     }

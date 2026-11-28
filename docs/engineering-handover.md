@@ -8,6 +8,14 @@ Historical work belongs in `docs/implementation-notes.md`. This document should 
 
 ## Current Status
 
+**Dynamic frameworks (2026-11-28).** Binary targets may now be dynamic-framework
+XCFrameworks, local or remote zipped, and remote binary targets are accepted for static
+archives too. The packer embeds the platform slice under `App.app/Frameworks/` (headers and
+old signature stripped, executable thinned to arm64) and every signing path signs each
+framework as a leaf before sealing the app in deep mode. See "Supported Project Model".
+Qualified locally (simulator run, `codesign --verify --strict --deep` of a distribution
+IPA); App Store processing, TestFlight and physical-device installs remain open.
+
 **tvOS apps (2026-11-24).** `stupid-app.yml` takes `platform: tvos` (default `ios`).
 `TargetPlatform` is now an OS (`ios`/`tvos`) plus environment (`device`/`simulator`), and
 every SDK, triple, linker platform, `DT*` key and `CFBundleSupportedPlatforms` value derives
@@ -555,12 +563,30 @@ Initial supported inputs:
   `appintentsmetadataprocessor`, packaging `Metadata.appintents` at the bundle root so
   Siri and the Shortcuts app can discover the declarations. An extension that declares an
   explicit `appIntentsMetadata` path keeps its checked-in directory instead.
-- Binary targets that are local XCFrameworks of static libraries (`.a`) with an arm64
-  slice for the build's platform. The planner validates the XCFramework's `Info.plist`;
-  SwiftPM links the archive into the executable, so nothing is embedded or signed beyond
-  the app binary. Covered by `StaticXCFrameworkTests` (Info.plist fixtures, plus an
-  Xcode-present end-to-end build that links a real static archive). Verified on the
-  Xcode-present macOS path only; the imported-bundle Linux path is not yet qualified.
+- Binary targets that are XCFrameworks with an arm64 library for the build's platform,
+  local (`.binaryTarget(path:)`) or remote zipped (`.binaryTarget(url:checksum:)`), of
+  either kind (every library in one XCFramework must be the same kind):
+  - Static libraries (`.a`): SwiftPM links the archive into the executable, so nothing is
+    embedded or signed beyond the app binary.
+  - Dynamic iOS frameworks: the planner records a `.framework` resource (a remote one is
+    resolved after the build from `<scratch>/artifacts/<package>/<target>/`). The packer
+    copies the slice's `<Name>.framework` to `App.app/Frameworks/` without `Headers`,
+    `PrivateHeaders`, `Modules` and `_CodeSignature`, thins a universal executable to
+    arm64 (`MachOThinner`), and requires an `MH_DYLIB`; versioned (macOS-layout)
+    frameworks and two binary targets embedding the same framework name fail loudly. The
+    app's existing `@executable_path/Frameworks` rpath loads them. Signing signs each
+    embedded framework as its own leaf (the bundle's identity and team, no profile, no
+    entitlement slots, no main-binary exec-segment flag) and then the app in deep mode, on
+    device, release and simulator (ad-hoc) paths alike (`EmbeddedFrameworks`). An app
+    extension that links a dynamic framework fails loudly; only the app embeds them so far.
+  The planner validates a local XCFramework's `Info.plist` up front. Covered by
+  `XCFrameworkTests` (planning, embedding, thinning, plus an Xcode-present end-to-end build
+  that links a real static archive) and the embedded-framework signing test in
+  `NativeSigningSerializationTests`. Dynamic frameworks were verified on the Xcode-present
+  macOS path with the NativeScript runtime (three remote dynamic frameworks): `run
+  --simulator` launched and ran the app, and a `release archive` IPA passed `codesign
+  --verify --strict --deep`. App Store processing, TestFlight, physical-device install, and
+  the imported-bundle Linux path are not yet qualified for dynamic frameworks.
 - Other C-family dependencies only after explicit fixture coverage exists.
 
 Inputs that must initially fail loudly:
@@ -583,8 +609,11 @@ Inputs that must initially fail loudly:
   `appIntentsMetadata` extension path (e.g. unrecognized catalogs that still require
   Apple tooling).
 - ExtensionKit products.
-- Binary targets that are remote or artifact bundles, or XCFrameworks containing
-  frameworks (static or dynamic) or lacking an arm64 slice for the platform.
+- Binary targets that are artifact bundles, XCFrameworks mixing static archives and
+  frameworks, XCFrameworks lacking an arm64 slice for the platform, macOS-layout
+  (versioned) frameworks, and dynamic frameworks linked by an app extension.
+- Loose dynamic libraries (`.dylib`, e.g. SwiftPM dynamic library products) in a bundle to
+  be signed: the native signer signs `.framework` bundles only.
 
 ## Proposed Command Surface
 

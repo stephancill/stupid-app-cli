@@ -87,6 +87,7 @@ public enum NativeSignatureVerifier {
   private static let machO64LittleEndianMagic: UInt32 = 0xFEED_FACF
   private static let cpuTypeARM64: UInt32 = 0x0100_000C
   private static let machOExecutable: UInt32 = 2
+  private static let machODylib: UInt32 = 6
   private static let loadCommandCodeSignature: UInt32 = 0x1D
   private static let embeddedSignatureMagic: UInt32 = 0xFADE_0CC0
   private static let codeDirectoryMagic: UInt32 = 0xFADE_0C02
@@ -230,8 +231,9 @@ public enum NativeSignatureVerifier {
     guard try readUInt32LE(executable, at: 4) == cpuTypeARM64 else {
       throw Error.unsupported("expected ARM64 CPU type")
     }
-    guard try readUInt32LE(executable, at: 12) == machOExecutable else {
-      throw Error.unsupported("expected MH_EXECUTE file type")
+    let fileType = try readUInt32LE(executable, at: 12)
+    guard fileType == machOExecutable || fileType == machODylib else {
+      throw Error.unsupported("expected MH_EXECUTE or MH_DYLIB file type")
     }
 
     let commandCount = try int(try readUInt32LE(executable, at: 16), field: "load-command count")
@@ -318,7 +320,13 @@ public enum NativeSignatureVerifier {
     let codeDirectory = try parseCodeDirectory(codeDirectoryBlob.data)
     let designatedRequirement = try parseDesignatedRequirement(
       blobs, codeIdentifier: codeDirectory.identifier)
-    let entitlements = try parseAndCompareEntitlements(blobs)
+    // A framework's dylib is signed without entitlements, as Xcode signs it.
+    let hasEntitlementSlots = blobs.contains {
+      $0.slot == xmlEntitlementsSlot || $0.slot == derEntitlementsSlot
+    }
+    let entitlements =
+      fileType == machODylib && !hasEntitlementSlots
+      ? [:] : try parseAndCompareEntitlements(blobs)
     return Signature(
       signatureOffset: codeSignature.offset,
       signatureSize: codeSignature.size,

@@ -468,6 +468,11 @@ public struct Packer: Sendable {
           at: frameworksDir, withIntermediateDirectories: true)
         try FileManager.default.copyItem(
           at: dylib, to: frameworksDir.appendingPathComponent("lib\(name).dylib"))
+      case .framework(let target, let location):
+        try Self.embedFramework(
+          target: target, location: location,
+          scratch: buildScratchDirectory(for: plan.product), platform: plan.platform,
+          into: appDir)
       case .root(let source):
         let sourceURL = projectRoot.appendingPathComponent(source)
         guard FileManager.default.fileExists(atPath: sourceURL.path) else {
@@ -569,6 +574,19 @@ public struct Packer: Sendable {
           at: frameworksDir, withIntermediateDirectories: true)
         try FileManager.default.copyItem(
           at: dylib, to: frameworksDir.appendingPathComponent("lib\(name).dylib"))
+      case .framework(let target, let location):
+        // A static archive links into the extension; only an embedded framework is refused.
+        let xcframework = try Self.xcframeworkURL(
+          target: target, location: location,
+          scratch: buildScratchDirectory(for: extensionPlan.product))
+        let slice = try XCFrameworkSlice.select(
+          xcframework: xcframework, platform: plan.platform, targetName: target)
+        guard slice.kind == .staticArchive else {
+          throw BuildError.unsupportedBinaryTarget(
+            target,
+            "extension '\(extensionPlan.product)' links it as a dynamic framework, and only the app can embed dynamic frameworks so far"
+          )
+        }
       case .root(let source):
         let sourceURL = projectRoot.appendingPathComponent(source)
         guard FileManager.default.fileExists(atPath: sourceURL.path) else {
@@ -717,6 +735,87 @@ public struct Packer: Sendable {
     let minor = parts.indices.contains(1) ? parts[1] : 0
     let patch = parts.indices.contains(2) ? parts[2] : 0
     return String(format: "%04d", major * 100 + minor * 10 + patch)
+  }
+
+  static func xcframeworkURL(
+    target: String, location: XCFrameworkLocation, scratch: URL
+  ) throws -> URL {
+    switch location {
+    case .local(let url): return url
+    case .remote(let packageIdentity):
+      return try XCFrameworkSlice.remoteArtifact(
+        scratch: scratch, packageIdentity: packageIdentity, targetName: target)
+    }
+  }
+
+  /// Framework content only needed to compile against it; Xcode strips it when embedding too.
+  static let frameworkBuildOnlyEntries: Set<String> = [
+    "Headers", "PrivateHeaders", "Modules", "_CodeSignature",
+  ]
+
+  /// Copies a binary target's dynamic framework for `platform` into
+  /// `<bundle>/Frameworks/<Name>.framework`, without its headers, module map, or previous
+  /// signature, and with its executable thinned to arm64. Signing re-signs it before the
+  /// bundle. A remote binary target that turns out to be a static archive embeds nothing.
+  static func embedFramework(
+    target: String, location: XCFrameworkLocation, scratch: URL, platform: TargetPlatform,
+    into bundleDir: URL
+  ) throws {
+    let xcframework = try xcframeworkURL(target: target, location: location, scratch: scratch)
+    let slice = try XCFrameworkSlice.select(
+      xcframework: xcframework, platform: platform, targetName: target)
+    guard slice.kind == .dynamicFramework else { return }
+
+    let source = slice.url
+    let entries = try FileManager.default.contentsOfDirectory(atPath: source.path)
+    guard !entries.contains("Versions") else {
+      throw BuildError.unsupportedBinaryTarget(
+        target, "\(source.lastPathComponent) uses the versioned macOS framework layout")
+    }
+    let frameworksDir = bundleDir.appendingPathComponent("Frameworks", isDirectory: true)
+    try FileManager.default.createDirectory(at: frameworksDir, withIntermediateDirectories: true)
+    let destination = frameworksDir.appendingPathComponent(
+      source.lastPathComponent, isDirectory: true)
+    guard !FileManager.default.fileExists(atPath: destination.path) else {
+      throw BuildError.unsupportedBinaryTarget(
+        target, "another binary target already embeds \(source.lastPathComponent)")
+    }
+    try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+    for entry in entries.sorted() where !frameworkBuildOnlyEntries.contains(entry) {
+      let child = source.appendingPathComponent(entry)
+      let values = try child.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+      if values.isDirectory == true, values.isSymbolicLink != true {
+        try copyTree(from: child, to: destination.appendingPathComponent(entry, isDirectory: true))
+      } else {
+        try FileManager.default.copyItem(at: child, to: destination.appendingPathComponent(entry))
+      }
+    }
+
+    guard
+      let infoData = try? Data(contentsOf: destination.appendingPathComponent("Info.plist")),
+      let info = try? PropertyListSerialization.propertyList(from: infoData, format: nil)
+        as? [String: Any],
+      let executableName = info["CFBundleExecutable"] as? String, !executableName.isEmpty,
+      !executableName.contains("/"),
+      let identifier = info["CFBundleIdentifier"] as? String, !identifier.isEmpty
+    else {
+      throw BuildError.unsupportedBinaryTarget(
+        target,
+        "\(source.lastPathComponent)/Info.plist lacks CFBundleExecutable or CFBundleIdentifier")
+    }
+    let executable = destination.appendingPathComponent(executableName)
+    let binary = try MachOThinner.arm64(
+      try Data(contentsOf: executable), name: "\(source.lastPathComponent)/\(executableName)")
+    let machHeaderFileType = binary.withUnsafeBytes {
+      $0.loadUnaligned(fromByteOffset: 12, as: UInt32.self).littleEndian
+    }
+    guard machHeaderFileType == 6 else {  // MH_DYLIB
+      throw BuildError.unsupportedBinaryTarget(
+        target, "\(source.lastPathComponent)/\(executableName) is not a dynamic library")
+    }
+    try binary.write(to: executable, options: .atomic)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o755], ofItemAtPath: executable.path)
   }
 
   private static func copyTree(from source: URL, to destination: URL) throws {

@@ -519,9 +519,10 @@ struct RunCommand: AsyncParsableCommand {
           appBundle: pluginsDir.appendingPathComponent(appex, isDirectory: true),
           entitlements: try entitlements(extensionEntitlements[product].flatMap { $0 }))
       }
+      let frameworks = try EmbeddedFrameworks.adHocSign(in: appURL)
       try signer.adHocSign(
         appBundle: appURL, entitlements: try entitlements(entitlementsPath),
-        mode: appexes.isEmpty ? .shallow : .deep)
+        mode: appexes.isEmpty && frameworks.isEmpty ? .shallow : .deep)
     } catch let error as RunError {
       throw error
     } catch {

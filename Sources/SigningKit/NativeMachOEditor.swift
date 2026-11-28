@@ -23,8 +23,8 @@ enum NativeMachOEditor {
   static func layout(executable: Data, signatureSize: Int) throws -> Layout {
     var data = Data(executable)
     guard data.count >= 32, read32(data, 0) == 0xFEED_FACF, read32(data, 4) == 0x0100_000C,
-      read32(data, 12) == 2
-    else { throw Error.unsupported("expected thin little-endian ARM64 MH_EXECUTE") }
+      [2, 6].contains(read32(data, 12))
+    else { throw Error.unsupported("expected thin little-endian ARM64 MH_EXECUTE or MH_DYLIB") }
     let commandCount = Int(read32(data, 16))
     let commandBytes = Int(read32(data, 20))
     let commandsEnd = try add(32, commandBytes)

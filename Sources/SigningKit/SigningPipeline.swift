@@ -106,15 +106,20 @@ public enum SigningPipeline {
     // One native real signing pass. The public Apple chain is pinned and selected from
     // the leaf issuer; unsupported chain rotations fail without an external fallback.
     let chain = try AppleSigningTrust.chain(forLeafCertificatePEM: input.identity.certificatePEM)
+    let signingIdentity = NativeSigner.IdentityInput(
+      signer: input.identity.signer,
+      leafCertificatePEM: input.identity.certificatePEM,
+      intermediateCertificatePEM: chain.intermediateCertificatePEM,
+      trustedRootCertificatesPEM: [chain.rootCertificatePEM])
+    // Embedded frameworks are signed first; the app then seals them in deep mode.
+    let frameworks = try EmbeddedFrameworks.sign(
+      in: input.unsignedApp, identity: signingIdentity, teamID: input.teamID)
     try NativeSigner().sign(
       appBundle: input.unsignedApp,
-      identity: .init(
-        signer: input.identity.signer,
-        leafCertificatePEM: input.identity.certificatePEM,
-        intermediateCertificatePEM: chain.intermediateCertificatePEM,
-        trustedRootCertificatesPEM: [chain.rootCertificatePEM]),
+      identity: signingIdentity,
       entitlements: derived,
-      teamID: input.teamID)
+      teamID: input.teamID,
+      mode: frameworks.isEmpty ? .shallow : .deep)
 
     let ipaURL = try IPAPacker.pack(
       appBundle: input.unsignedApp,
@@ -289,6 +294,14 @@ public enum DeepSigningPipeline {
     }
 
     // Sign the containing app last so it seals the now-signed nested bundles.
+    let appChain = try AppleSigningTrust.chain(forLeafCertificatePEM: input.identity.certificatePEM)
+    let appIdentity = NativeSigner.IdentityInput(
+      signer: input.identity.signer,
+      leafCertificatePEM: input.identity.certificatePEM,
+      intermediateCertificatePEM: appChain.intermediateCertificatePEM,
+      trustedRootCertificatesPEM: [appChain.rootCertificatePEM])
+    _ = try EmbeddedFrameworks.sign(
+      in: input.unsignedApp, identity: appIdentity, teamID: input.teamID)
     let appDerived = try EntitlementDeriver.derive(
       sourceURL: input.sourceEntitlementsURL,
       configuration: input.configuration,
@@ -298,14 +311,9 @@ public enum DeepSigningPipeline {
     )
     let embeddedApp = input.unsignedApp.appendingPathComponent("embedded.mobileprovision")
     try FileManager.default.copyItem(at: input.profileURL, to: embeddedApp)
-    let appChain = try AppleSigningTrust.chain(forLeafCertificatePEM: input.identity.certificatePEM)
     try NativeSigner().sign(
       appBundle: input.unsignedApp,
-      identity: .init(
-        signer: input.identity.signer,
-        leafCertificatePEM: input.identity.certificatePEM,
-        intermediateCertificatePEM: appChain.intermediateCertificatePEM,
-        trustedRootCertificatesPEM: [appChain.rootCertificatePEM]),
+      identity: appIdentity,
       entitlements: appDerived,
       teamID: input.teamID,
       mode: .deep)
@@ -323,5 +331,43 @@ public enum DeepSigningPipeline {
       profile: appProfile,
       extensions: extensionResults
     )
+  }
+}
+
+/// Dynamic frameworks the packer embedded under `<bundle>/Frameworks/`. Each is signed as its
+/// own leaf (no profile, no entitlements) before the bundle that contains it, which then seals
+/// the signed frameworks in deep mode.
+public enum EmbeddedFrameworks {
+  /// `<bundle>/Frameworks/*.framework`, in a stable order.
+  public static func list(in bundle: URL) throws -> [URL] {
+    let directory = bundle.appendingPathComponent("Frameworks", isDirectory: true)
+    guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
+    return try FileManager.default.contentsOfDirectory(atPath: directory.path)
+      .filter { $0.hasSuffix(".framework") }
+      .sorted()
+      .map { directory.appendingPathComponent($0, isDirectory: true) }
+  }
+
+  /// Signs every embedded framework with the bundle's identity and returns them.
+  @discardableResult
+  public static func sign(
+    in bundle: URL, identity: NativeSigner.IdentityInput, teamID: String
+  ) throws -> [URL] {
+    let frameworks = try list(in: bundle)
+    for framework in frameworks {
+      try NativeSigner().sign(
+        appBundle: framework, identity: identity, entitlements: [:], teamID: teamID)
+    }
+    return frameworks
+  }
+
+  /// Ad-hoc signs every embedded framework for a simulator and returns them.
+  @discardableResult
+  public static func adHocSign(in bundle: URL) throws -> [URL] {
+    let frameworks = try list(in: bundle)
+    for framework in frameworks {
+      try NativeSigner().adHocSign(appBundle: framework, entitlements: [:])
+    }
+    return frameworks
   }
 }
